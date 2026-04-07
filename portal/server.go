@@ -51,6 +51,7 @@ type ServerConfig struct {
 	MaxPort           int
 	UDPEnabled        bool
 	TCPEnabled        bool
+	HeadlessShellURL  string
 }
 
 type Server struct {
@@ -69,6 +70,7 @@ type Server struct {
 	cfg               ServerConfig
 	trustedProxyCIDRs []*net.IPNet
 	relaySet          *discovery.RelaySet
+	thumbnails        *thumbnailService
 	shutdownOnce      sync.Once
 }
 
@@ -150,6 +152,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		tcpPorts:          tcpPorts,
 		identity:          identity,
 		trustedProxyCIDRs: trustedProxyCIDRs,
+		thumbnails:        newThumbnailService(cfg.HeadlessShellURL),
 	}
 
 	if cfg.DiscoveryEnabled {
@@ -300,6 +303,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		if s.acmeManager != nil {
 			s.acmeManager.Stop()
 		}
+		if s.thumbnails != nil {
+			s.thumbnails.Close()
+		}
 	})
 	return shutdownErr
 }
@@ -326,6 +332,9 @@ func (s *Server) LeaseSnapshots() []types.Lease {
 		}
 		if snap.Ready == 0 && since >= 3*time.Minute {
 			continue
+		}
+		if snap.Metadata.Thumbnail == "" && s.thumbnails != nil && s.thumbnails.Has(snap.Hostname) {
+			snap.Lease.Metadata.Thumbnail = types.PathThumbnailPrefix + snap.Hostname
 		}
 		out = append(out, snap.Lease)
 	}
@@ -466,6 +475,9 @@ func (s *Server) runLeaseJanitor(ctx context.Context, interval time.Duration) er
 						Str("hostname", lease.Hostname).
 						Str("address", lease.Address).
 						Msg("delete expired lease ens gasless txt")
+				}
+				if s.thumbnails != nil {
+					s.thumbnails.Remove(lease.Hostname)
 				}
 				lease.Close()
 			}
