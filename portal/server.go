@@ -22,6 +22,7 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/portal/keyless"
 	"github.com/gosuda/portal-tunnel/v2/portal/policy"
 	"github.com/gosuda/portal-tunnel/v2/portal/transport"
+	"github.com/gosuda/portal-tunnel/v2/portal/utils/thumbnail"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
@@ -70,7 +71,7 @@ type Server struct {
 	cfg               ServerConfig
 	trustedProxyCIDRs []*net.IPNet
 	relaySet          *discovery.RelaySet
-	thumbnails        *thumbnailService
+	thumbnails        *thumbnail.Service
 	shutdownOnce      sync.Once
 }
 
@@ -152,7 +153,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		tcpPorts:          tcpPorts,
 		identity:          identity,
 		trustedProxyCIDRs: trustedProxyCIDRs,
-		thumbnails:        newThumbnailService(cfg.HeadlessShellURL),
+		thumbnails:        thumbnail.NewService(cfg.HeadlessShellURL),
 	}
 
 	if cfg.DiscoveryEnabled {
@@ -333,8 +334,10 @@ func (s *Server) LeaseSnapshots() []types.Lease {
 		if snap.Ready == 0 && since >= 3*time.Minute {
 			continue
 		}
-		if snap.Metadata.Thumbnail == "" && s.thumbnails != nil && s.thumbnails.Has(snap.Hostname) {
-			snap.Metadata.Thumbnail = types.PathThumbnailPrefix + snap.Hostname
+		if snap.Metadata.Thumbnail == "" && s.thumbnails != nil {
+			if _, _, ok := s.thumbnails.Get(snap.Hostname); ok {
+				snap.Metadata.Thumbnail = types.PathThumbnailPrefix + snap.Hostname
+			}
 		}
 		out = append(out, snap.Lease)
 	}

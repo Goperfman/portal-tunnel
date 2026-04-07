@@ -1,4 +1,4 @@
-package portal
+package thumbnail
 
 import (
 	"context"
@@ -17,14 +17,14 @@ import (
 )
 
 const (
-	thumbnailViewportWidth  = 1280
-	thumbnailViewportHeight = 720
-	thumbnailJPEGQuality    = 80
-	thumbnailMaxBytes       = 256 << 10 // 256KB
-	thumbnailCooldown       = 30 * time.Second
-	thumbnailPageTimeout    = 15 * time.Second
-	thumbnailQueueSize      = 32
-	thumbnailContentType    = "image/jpeg"
+	viewportWidth  = 1280
+	viewportHeight = 720
+	jpegQuality    = 80
+	maxBytes       = 256 << 10 // 256KB
+	cooldown       = 30 * time.Second
+	pageTimeout    = 15 * time.Second
+	queueSize      = 32
+	ContentType    = "image/jpeg"
 )
 
 type thumbEntry struct {
@@ -32,7 +32,7 @@ type thumbEntry struct {
 	fetchedAt time.Time
 }
 
-type thumbnailService struct {
+type Service struct {
 	mu               sync.RWMutex
 	cache            map[string]*thumbEntry
 	pending          map[string]bool
@@ -41,15 +41,15 @@ type thumbnailService struct {
 	done             chan struct{}
 }
 
-func newThumbnailService(headlessShellURL string) *thumbnailService {
+func NewService(headlessShellURL string) *Service {
 	headlessShellURL = strings.TrimSpace(headlessShellURL)
 	if headlessShellURL == "" {
 		return nil
 	}
-	ts := &thumbnailService{
+	ts := &Service{
 		cache:            make(map[string]*thumbEntry),
 		pending:          make(map[string]bool),
-		queue:            make(chan string, thumbnailQueueSize),
+		queue:            make(chan string, queueSize),
 		headlessShellURL: headlessShellURL,
 		done:             make(chan struct{}),
 	}
@@ -57,7 +57,7 @@ func newThumbnailService(headlessShellURL string) *thumbnailService {
 	return ts
 }
 
-func (ts *thumbnailService) worker() {
+func (ts *Service) worker() {
 	for hostname := range ts.queue {
 		ts.capture(hostname)
 		ts.mu.Lock()
@@ -67,7 +67,7 @@ func (ts *thumbnailService) worker() {
 	close(ts.done)
 }
 
-func (ts *thumbnailService) Get(hostname string) ([]byte, string, bool) {
+func (ts *Service) Get(hostname string) ([]byte, string, bool) {
 	if ts == nil {
 		return nil, "", false
 	}
@@ -77,20 +77,10 @@ func (ts *thumbnailService) Get(hostname string) ([]byte, string, bool) {
 	if !ok || len(entry.data) == 0 {
 		return nil, "", false
 	}
-	return entry.data, thumbnailContentType, true
+	return entry.data, ContentType, true
 }
 
-func (ts *thumbnailService) Has(hostname string) bool {
-	if ts == nil {
-		return false
-	}
-	ts.mu.RLock()
-	entry, ok := ts.cache[hostname]
-	ts.mu.RUnlock()
-	return ok && len(entry.data) > 0
-}
-
-func (ts *thumbnailService) TriggerAsync(hostname string) {
+func (ts *Service) TriggerAsync(hostname string) {
 	if ts == nil || hostname == "" {
 		return
 	}
@@ -99,7 +89,7 @@ func (ts *thumbnailService) TriggerAsync(hostname string) {
 	defer ts.mu.Unlock()
 
 	if entry, ok := ts.cache[hostname]; ok {
-		if len(entry.data) > 0 || time.Since(entry.fetchedAt) < thumbnailCooldown {
+		if len(entry.data) > 0 || time.Since(entry.fetchedAt) < cooldown {
 			return
 		}
 	}
@@ -115,30 +105,30 @@ func (ts *thumbnailService) TriggerAsync(hostname string) {
 	}
 }
 
-func (ts *thumbnailService) capture(hostname string) {
+func (ts *Service) capture(hostname string) {
+	store := func(data []byte) {
+		ts.mu.Lock()
+		ts.cache[hostname] = &thumbEntry{data: data, fetchedAt: time.Now()}
+		ts.mu.Unlock()
+	}
+
 	data, err := ts.screenshot(hostname)
 	if err != nil {
 		log.Warn().Err(err).Str("hostname", hostname).Msg("thumbnail capture failed")
-		ts.cacheResult(hostname, nil)
+		store(nil)
 		return
 	}
-	if len(data) > thumbnailMaxBytes {
+	if len(data) > maxBytes {
 		log.Warn().Str("hostname", hostname).Int("size", len(data)).Msg("thumbnail too large, discarding")
-		ts.cacheResult(hostname, nil)
+		store(nil)
 		return
 	}
 
-	ts.cacheResult(hostname, data)
+	store(data)
 	log.Info().Str("hostname", hostname).Int("size", len(data)).Msg("thumbnail captured")
 }
 
-func (ts *thumbnailService) cacheResult(hostname string, data []byte) {
-	ts.mu.Lock()
-	ts.cache[hostname] = &thumbEntry{data: data, fetchedAt: time.Now()}
-	ts.mu.Unlock()
-}
-
-func (ts *thumbnailService) resolveCDPWebSocketURL() (string, error) {
+func (ts *Service) resolveCDPWebSocketURL() (string, error) {
 	parsed, err := url.Parse(ts.headlessShellURL)
 	if err != nil {
 		return "", fmt.Errorf("parse headless shell URL: %w", err)
@@ -182,7 +172,7 @@ func (ts *thumbnailService) resolveCDPWebSocketURL() (string, error) {
 	return wsURL.String(), nil
 }
 
-func (ts *thumbnailService) screenshot(hostname string) ([]byte, error) {
+func (ts *Service) screenshot(hostname string) ([]byte, error) {
 	cdpURL, err := ts.resolveCDPWebSocketURL()
 	if err != nil {
 		return nil, err
@@ -206,27 +196,27 @@ func (ts *thumbnailService) screenshot(hostname string) ([]byte, error) {
 	defer page.Close()
 
 	_ = page.SetViewport(&proto.EmulationSetDeviceMetricsOverride{
-		Width:  thumbnailViewportWidth,
-		Height: thumbnailViewportHeight,
+		Width:  viewportWidth,
+		Height: viewportHeight,
 	})
 	_ = browser.IgnoreCertErrors(true)
 
 	if err := page.Navigate("https://" + hostname); err != nil {
 		return nil, err
 	}
-	if err := page.Timeout(thumbnailPageTimeout).WaitLoad(); err != nil {
+	if err := page.Timeout(pageTimeout).WaitLoad(); err != nil {
 		return nil, err
 	}
 	time.Sleep(1 * time.Second)
 
-	quality := thumbnailJPEGQuality
+	quality := jpegQuality
 	return page.Screenshot(false, &proto.PageCaptureScreenshot{
 		Format:  proto.PageCaptureScreenshotFormatJpeg,
 		Quality: &quality,
 	})
 }
 
-func (ts *thumbnailService) Remove(hostname string) {
+func (ts *Service) Remove(hostname string) {
 	if ts == nil {
 		return
 	}
@@ -236,7 +226,7 @@ func (ts *thumbnailService) Remove(hostname string) {
 	ts.mu.Unlock()
 }
 
-func (ts *thumbnailService) Close() {
+func (ts *Service) Close() {
 	if ts == nil {
 		return
 	}
