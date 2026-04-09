@@ -21,9 +21,9 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/portal/acme"
 	"github.com/gosuda/portal-tunnel/v2/portal/discovery"
 	"github.com/gosuda/portal-tunnel/v2/portal/keyless"
+	"github.com/gosuda/portal-tunnel/v2/portal/overlay"
 	"github.com/gosuda/portal-tunnel/v2/portal/policy"
 	"github.com/gosuda/portal-tunnel/v2/portal/transport"
-	"github.com/gosuda/portal-tunnel/v2/portal/wireguard"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
@@ -117,7 +117,7 @@ type Server struct {
 	apiTLSClose io.Closer
 	quicTunnel  *quic.Listener
 
-	overlay  *wireguard.Overlay
+	overlay  *overlay.Overlay
 	relaySet *discovery.RelaySet
 	registry *leaseRegistry
 	udpPorts *transport.PortAllocator
@@ -171,7 +171,7 @@ func (s *Server) Start(ctx context.Context, apiMux *http.ServeMux) error {
 	var sniListener net.Listener
 	var apiServer *http.Server
 	var apiCloser io.Closer
-	var overlay *wireguard.Overlay
+	var overlay *overlay.Overlay
 	var quicTunnel *quic.Listener
 	defer func() {
 		if started {
@@ -597,7 +597,7 @@ func (s *Server) runQUICTunnelListener() error {
 	}
 }
 
-func (s *Server) startOverlay() (*wireguard.Overlay, error) {
+func (s *Server) startOverlay() (*overlay.Overlay, error) {
 	peerMux := http.NewServeMux()
 	peerMux.HandleFunc(types.PathRoot, s.handleRoot)
 	peerMux.HandleFunc(types.PathHealthz, s.handleHealthz)
@@ -605,10 +605,10 @@ func (s *Server) startOverlay() (*wireguard.Overlay, error) {
 		peerMux.HandleFunc(types.PathDiscovery, s.handleRelayDiscovery)
 	}
 
-	overlay, err := wireguard.NewOverlay(s.identity.Name, wireguard.Config{
+	overlay, err := overlay.NewOverlay(s.identity.Name, overlay.Config{
 		PrivateKey: s.identity.WireGuardPrivateKey,
 		PublicKey:  s.identity.WireGuardPublicKey,
-		Endpoint:   net.JoinHostPort(s.identity.Name, fmt.Sprintf("%d", utils.IntOrDefault(s.cfg.WireGuardPort, wireguard.DefaultListenPort))),
+		Endpoint:   net.JoinHostPort(s.identity.Name, fmt.Sprintf("%d", utils.IntOrDefault(s.cfg.WireGuardPort, overlay.DefaultListenPort))),
 	}, peerMux)
 	if err != nil {
 		return nil, fmt.Errorf("start wireguard overlay: %w", err)
