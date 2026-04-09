@@ -181,10 +181,12 @@ func (f *Frontend) serveAdmin(w http.ResponseWriter, r *http.Request) {
 		if !utils.RequireMethod(w, r, http.MethodGet) {
 			return
 		}
+		leases := f.server.AdminLeaseSnapshots()
+		f.attachAutomaticAdminThumbnails(leases)
 		utils.WriteAPIData(w, http.StatusOK, types.AdminSnapshotResponse{
 			ApprovalMode:       string(runtime.Approver().Mode()),
 			LandingPageEnabled: f.isLandingPageEnabled(),
-			Leases:             f.server.AdminLeaseSnapshots(),
+			Leases:             leases,
 			UDP: types.AdminUDPSettingsResponse{
 				Enabled:   runtime.IsUDPEnabled(),
 				MaxLeases: runtime.UDPMaxLeases(),

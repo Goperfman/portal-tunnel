@@ -25,7 +25,6 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/portal/wireguard"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
-	"github.com/gosuda/portal-tunnel/v2/utils/thumbnail"
 )
 
 const (
@@ -59,7 +58,6 @@ type ServerConfig struct {
 	MaxPort             int
 	UDPEnabled          bool
 	TCPEnabled          bool
-	HeadlessShellURL    string
 }
 
 type Server struct {
@@ -80,7 +78,6 @@ type Server struct {
 	cfg               ServerConfig
 	trustedProxyCIDRs []*net.IPNet
 	relaySet          *discovery.RelaySet
-	thumbnails        *thumbnail.Service
 	shutdownOnce      sync.Once
 }
 
@@ -210,7 +207,6 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		loadMgr:           policy.NewLoadManager(),
 		identity:          identity,
 		trustedProxyCIDRs: trustedProxyCIDRs,
-		thumbnails:        thumbnail.NewService(cfg.HeadlessShellURL),
 	}
 	if cfg.DiscoveryEnabled {
 		set := discovery.NewRelaySet()
@@ -387,9 +383,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		}
 		if s.acmeManager != nil {
 			s.acmeManager.Stop()
-		}
-		if s.thumbnails != nil {
-			s.thumbnails.Close()
 		}
 	})
 	return shutdownErr
@@ -602,9 +595,6 @@ func (s *Server) runLeaseJanitor(ctx context.Context, interval time.Duration) er
 						Str("hostname", lease.Hostname).
 						Str("address", lease.Address).
 						Msg("delete expired lease ens gasless txt")
-				}
-				if s.thumbnails != nil {
-					s.thumbnails.Remove(lease.Hostname)
 				}
 				lease.Close()
 			}

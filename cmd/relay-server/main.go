@@ -178,16 +178,16 @@ func runServer(ctx context.Context, cfg relayServerConfig) error {
 		MaxPort:           cfg.MaxPort,
 		UDPEnabled:        cfg.UDPEnabled,
 		TCPEnabled:        cfg.TCPEnabled,
-		HeadlessShellURL:  cfg.HeadlessShellURL,
 	})
 	if err != nil {
 		return fmt.Errorf("create relay server: %w", err)
 	}
 
-	frontend, err := NewFrontend(server, cfg.AdminSecretKey, cfg.AdminSettingsPath, cfg.LandingPageEnabled)
+	frontend, err := NewFrontend(server, cfg.AdminSecretKey, cfg.AdminSettingsPath, cfg.LandingPageEnabled, cfg.HeadlessShellURL)
 	if err != nil {
 		return fmt.Errorf("create frontend: %w", err)
 	}
+	defer frontend.Close()
 
 	if err := server.Start(ctx, frontend.Handler()); err != nil {
 		return fmt.Errorf("start relay server: %w", err)
