@@ -29,13 +29,12 @@ import (
 )
 
 const (
-	defaultLeaseTTL           = 30 * time.Second
-	defaultClaimTimeout       = 10 * time.Second
-	defaultIdleKeepalive      = 15 * time.Second
-	defaultReadyQueueLimit    = 8
-	defaultClientHelloWait    = 2 * time.Second
-	defaultControlBodyLimit   = 4 << 20
-	defaultWGRecoveryFailures = 3
+	defaultLeaseTTL         = 30 * time.Second
+	defaultClaimTimeout     = 10 * time.Second
+	defaultIdleKeepalive    = 15 * time.Second
+	defaultReadyQueueLimit  = 8
+	defaultClientHelloWait  = 2 * time.Second
+	defaultControlBodyLimit = 4 << 20
 )
 
 type ServerConfig struct {
@@ -81,7 +80,6 @@ type Server struct {
 	identity          types.Identity
 	cfg               ServerConfig
 	trustedProxyCIDRs []*net.IPNet
-	wgConfig          wireguard.Config
 	relaySet          *discovery.RelaySet
 	thumbnails        *thumbnail.Service
 	shutdownOnce      sync.Once
@@ -213,7 +211,6 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		loadMgr:           policy.NewLoadManager(),
 		identity:          identity,
 		trustedProxyCIDRs: trustedProxyCIDRs,
-		wgConfig:          wgConfig,
 		thumbnails:        thumbnail.NewService(cfg.HeadlessShellURL),
 	}
 	if cfg.DiscoveryEnabled {
@@ -221,7 +218,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		if err := set.SetSelfRelay(identity, selfRelayURL); err != nil {
 			return nil, fmt.Errorf("set self relay: %w", err)
 		}
-		if _, err := set.RegisterBootstrapRelayURLs(cfg.Bootstraps); err != nil {
+		if err := set.SetBootstrapRelayURLs(cfg.Bootstraps); err != nil {
 			return nil, err
 		}
 		s.relaySet = set
@@ -273,7 +270,7 @@ func (s *Server) Start(ctx context.Context, apiMux *http.ServeMux) error {
 	s.cancel = cancel
 	s.group = group
 
-	if s.relaySet != nil && strings.TrimSpace(s.wgConfig.PrivateKey) != "" {
+	if s.relaySet != nil && strings.TrimSpace(s.cfg.WireGuardPrivateKey) != "" {
 		if err := s.startOverlay(); err != nil {
 			acmeManager.Stop()
 			_ = apiServer.Close()
@@ -417,7 +414,7 @@ func (s *Server) wireGuardOverlayEnabled() bool {
 	if s == nil {
 		return false
 	}
-	return strings.TrimSpace(s.wgConfig.PrivateKey) != ""
+	return strings.TrimSpace(s.cfg.WireGuardPrivateKey) != ""
 }
 
 func (s *Server) LeaseSnapshots() []types.Lease {
@@ -672,12 +669,19 @@ func (s *Server) startOverlay() error {
 		peerMux.HandleFunc(types.PathDiscovery, s.handleRelayDiscovery)
 	}
 
-	overlay, err := wireguard.NewOverlay(s.wgConfig, peerMux)
+	overlay, err := wireguard.NewOverlay(wireguard.Config{
+		PrivateKey:   s.cfg.WireGuardPrivateKey,
+		PublicKey:    s.cfg.WireGuardPublicKey,
+		Endpoint:     s.cfg.WireGuardEndpoint,
+		OverlayIPv4:  s.cfg.OverlayIPv4,
+		OverlayCIDRs: s.cfg.OverlayCIDRs,
+		ListenPort:   s.cfg.DiscoveryPort,
+	}, peerMux)
 	if err != nil {
 		return fmt.Errorf("start wireguard overlay: %w", err)
 	}
 
-	if err := overlay.Sync(s.identity.Key(), s.relaySet.Snapshot()); err != nil {
+	if err := overlay.Sync(s.relaySet.View()); err != nil {
 		_ = overlay.Shutdown(context.Background())
 		return fmt.Errorf("sync wireguard peers: %w", err)
 	}
@@ -691,117 +695,19 @@ func (s *Server) runRelayDiscoveryLoop(ctx context.Context) error {
 		<-ctx.Done()
 		return nil
 	}
+	refresher, err := discovery.NewRefresher(s.relaySet, nil, s.overlay)
+	if err != nil {
+		return err
+	}
 	ticker := time.NewTicker(types.DiscoveryPollInterval)
 	defer ticker.Stop()
 
 	for {
-		bootstraps := s.relaySet.BootstrapDescriptors()
-
-		for _, bootstrap := range bootstraps {
-			resp, err := discovery.DiscoverRelayDiscovery(ctx, bootstrap.APIHTTPSAddr, nil, nil)
-			if err != nil {
-				if ctx.Err() != nil {
-					return nil
-				}
-				s.relaySet.RecordBootstrapDiscoveryFailure(bootstrap.APIHTTPSAddr, err, time.Now().UTC())
-				continue
+		if err := refresher.Refresh(ctx); err != nil {
+			if ctx.Err() != nil {
+				return nil
 			}
-
-			now := time.Now().UTC()
-			var relaySetChanged bool
-			var warnErr error
-			_, relaySetChanged, _, warnErr, err = s.relaySet.ApplyRelayDiscoveryResponse(bootstrap.Identity, bootstrap.APIHTTPSAddr, resp, now)
-			if relaySetChanged && s.overlay != nil {
-				if syncErr := s.overlay.Sync(s.identity.Key(), s.relaySet.Snapshot()); syncErr != nil {
-					if warnErr == nil {
-						warnErr = syncErr
-					}
-				}
-			}
-			if err != nil {
-				s.relaySet.MarkRelayFailure(bootstrap.APIHTTPSAddr, time.Now().UTC())
-				log.Warn().
-					Err(err).
-					Str("relay", bootstrap.APIHTTPSAddr).
-					Msg("bootstrap relay discovery failed")
-				continue
-			}
-			if warnErr != nil {
-				log.Warn().
-					Err(warnErr).
-					Str("relay", bootstrap.APIHTTPSAddr).
-					Msg("bootstrap relay discovery completed with warnings")
-			}
-		}
-		if ctx.Err() != nil {
-			return nil
-		}
-
-		if s.overlay != nil {
-			overlayClient := s.overlay.Client()
-			syncableRelays := s.relaySet.SyncableDescriptors()
-
-			for _, relay := range syncableRelays {
-				var failureErr error
-
-				if err := discovery.RequireOverlayRelayDescriptor(relay); err != nil {
-					failureErr = err
-				} else {
-					discoverURL := "http://" + net.JoinHostPort(relay.OverlayIPv4, fmt.Sprintf("%d", wireguard.DefaultPeerAPIHTTPPort))
-					resp, err := discovery.DiscoverRelayDiscovery(ctx, discoverURL, nil, overlayClient)
-					if err != nil {
-						if ctx.Err() != nil {
-							return nil
-						}
-						failureErr = err
-					} else {
-						now := time.Now().UTC()
-						var relaySetChanged bool
-						var warnErr error
-						var snapshot map[string]types.RelayState
-						_, relaySetChanged, _, warnErr, err = s.relaySet.ApplyOverlayRelayDiscoveryResponse(relay.Identity, relay.APIHTTPSAddr, resp, now)
-						if relaySetChanged {
-							snapshot = s.relaySet.Snapshot()
-							if syncErr := s.overlay.Sync(s.identity.Key(), snapshot); syncErr != nil {
-								if warnErr == nil {
-									warnErr = syncErr
-								}
-							}
-						}
-						if err != nil {
-							failureErr = err
-						} else {
-							if warnErr != nil {
-								log.Warn().
-									Err(warnErr).
-									Str("relay", relay.APIHTTPSAddr).
-									Msg("overlay relay discovery completed with warnings")
-							}
-							continue
-						}
-					}
-				}
-
-				expired, expireReason, consecutiveFailures := s.relaySet.RecordDiscoveryFailureWithRecovery(relay.Identity, relay.APIHTTPSAddr, failureErr, defaultWGRecoveryFailures, time.Now().UTC())
-				if expired {
-					if syncErr := s.overlay.Sync(s.identity.Key(), s.relaySet.Snapshot()); syncErr != nil && failureErr == nil {
-						failureErr = syncErr
-					}
-				}
-
-				event := log.Warn().
-					Err(failureErr).
-					Str("relay", relay.APIHTTPSAddr)
-				if expired {
-					event = event.
-						Bool("expired", true).
-						Str("reason", expireReason)
-					if consecutiveFailures > 0 {
-						event = event.Int("consecutive_failures", consecutiveFailures)
-					}
-				}
-				event.Msg("overlay relay discovery failed")
-			}
+			return err
 		}
 		if ctx.Err() != nil {
 			return nil

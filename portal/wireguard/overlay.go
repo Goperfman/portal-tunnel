@@ -6,13 +6,21 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/gosuda/portal-tunnel/v2/portal/discovery"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
+
+type desiredPeer struct {
+	wireGuardPublicKey string
+	wireGuardEndpoint  string
+	allowedIPs         []string
+}
 
 type Config struct {
 	PrivateKey   string
@@ -77,12 +85,18 @@ func NormalizeConfig(rootHost string, cfg Config) (Config, error) {
 }
 
 type Overlay struct {
-	stack    *stack
-	listener net.Listener
-	server   *http.Server
+	selfWireGuardPublicKey string
+	stack                  *stack
+	listener               net.Listener
+	server                 *http.Server
 }
 
 func NewOverlay(cfg Config, handler http.Handler) (*Overlay, error) {
+	selfWireGuardPublicKey := strings.TrimSpace(cfg.PublicKey)
+	if selfWireGuardPublicKey == "" {
+		return nil, errors.New("wireguard public key is required")
+	}
+
 	stack, err := newStack(cfg)
 	if err != nil {
 		return nil, err
@@ -100,9 +114,10 @@ func NewOverlay(cfg Config, handler http.Handler) (*Overlay, error) {
 	}
 
 	return &Overlay{
-		stack:    stack,
-		listener: listener,
-		server:   server,
+		selfWireGuardPublicKey: selfWireGuardPublicKey,
+		stack:                  stack,
+		listener:               listener,
+		server:                 server,
 	}, nil
 }
 
@@ -154,21 +169,40 @@ func (o *Overlay) Client() *http.Client {
 	}
 }
 
-func (o *Overlay) Sync(selfIdentityKey string, snapshot map[string]types.RelayState) error {
+func (o *Overlay) DiscoverRelay(ctx context.Context, relay types.RelayDescriptor) (types.DiscoveryResponse, error) {
+	if o == nil || o.stack == nil {
+		return types.DiscoveryResponse{}, errors.New("overlay is not initialized")
+	}
+	if strings.TrimSpace(relay.OverlayIPv4) == "" {
+		return types.DiscoveryResponse{}, errors.New("relay overlay ipv4 is required")
+	}
+
+	var resp types.DiscoveryResponse
+	baseURL := &url.URL{
+		Scheme: "http",
+		Host:   net.JoinHostPort(relay.OverlayIPv4, fmt.Sprintf("%d", DefaultPeerAPIHTTPPort)),
+	}
+	if err := utils.HTTPDoAPIPath(ctx, o.Client(), baseURL, http.MethodGet, types.PathDiscovery, nil, nil, &resp); err != nil {
+		return types.DiscoveryResponse{}, err
+	}
+	return resp, nil
+}
+
+func (o *Overlay) Sync(view map[string]discovery.RelayState) error {
 	if o == nil || o.stack == nil {
 		return nil
 	}
-	return o.stack.ApplyPeers(peersForSnapshot(selfIdentityKey, snapshot))
+	return o.stack.ApplyPeers(peersForView(o.selfWireGuardPublicKey, view))
 }
 
-func peersForSnapshot(selfIdentityKey string, snapshot map[string]types.RelayState) []types.DesiredPeer {
-	peers := make([]types.DesiredPeer, 0, len(snapshot))
-	for _, state := range snapshot {
-		if state.Expired {
+func peersForView(selfWireGuardPublicKey string, view map[string]discovery.RelayState) []desiredPeer {
+	peers := make([]desiredPeer, 0, len(view))
+	for _, relay := range view {
+		if relay.Expired || relay.Banned {
 			continue
 		}
-		desc := state.Descriptor
-		if desc.Key() == selfIdentityKey || !desc.SupportsOverlayPeer {
+		desc := relay.Descriptor
+		if desc.WireGuardPublicKey == selfWireGuardPublicKey || !desc.SupportsOverlayPeer {
 			continue
 		}
 		if desc.WireGuardPublicKey == "" || desc.WireGuardEndpoint == "" || desc.OverlayIPv4 == "" {
@@ -177,14 +211,14 @@ func peersForSnapshot(selfIdentityKey string, snapshot map[string]types.RelaySta
 
 		allowedIPs := []string{desc.OverlayIPv4 + "/32"}
 		allowedIPs = append(allowedIPs, desc.OverlayCIDRs...)
-		peers = append(peers, types.DesiredPeer{
-			WireGuardPublicKey: desc.WireGuardPublicKey,
-			WireGuardEndpoint:  desc.WireGuardEndpoint,
-			AllowedIPs:         allowedIPs,
+		peers = append(peers, desiredPeer{
+			wireGuardPublicKey: desc.WireGuardPublicKey,
+			wireGuardEndpoint:  desc.WireGuardEndpoint,
+			allowedIPs:         allowedIPs,
 		})
 	}
 	sort.Slice(peers, func(i, j int) bool {
-		return peers[i].WireGuardPublicKey < peers[j].WireGuardPublicKey
+		return peers[i].wireGuardPublicKey < peers[j].wireGuardPublicKey
 	})
 	return peers
 }

@@ -221,7 +221,9 @@ func TestMITMProbeDetectionBansListener(t *testing.T) {
 		registered: make(chan struct{}),
 		banMITM:    true,
 	}
-	listener.relaySet.SetBootstrapRelayURLs([]string{relayURL.String()})
+	if err := listener.relaySet.SetBootstrapRelayURLs([]string{relayURL.String()}); err != nil {
+		t.Fatalf("SetBootstrapRelayURLs() error = %v", err)
+	}
 	listener.mitmManager = newMITMManager(context.Background(), listener)
 
 	listener.mitmManager.logResult(MITMProbeReport{
@@ -254,7 +256,9 @@ func TestMITMProbeDetectionWarnsWithoutBanningListener(t *testing.T) {
 		registered: make(chan struct{}),
 		banMITM:    false,
 	}
-	listener.relaySet.SetBootstrapRelayURLs([]string{relayURL.String()})
+	if err := listener.relaySet.SetBootstrapRelayURLs([]string{relayURL.String()}); err != nil {
+		t.Fatalf("SetBootstrapRelayURLs() error = %v", err)
+	}
 	listener.mitmManager = newMITMManager(context.Background(), listener)
 
 	listener.mitmManager.logResult(MITMProbeReport{

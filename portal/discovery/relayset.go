@@ -1,130 +1,108 @@
 package discovery
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/rs/zerolog/log"
-
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
-type RelayView struct {
-	Descriptor  types.RelayDescriptor
-	FirstSeenAt time.Time
-	LastSeenAt  time.Time
-}
+type relayStatus uint8
 
-type RelayLocalState struct {
+const (
+	relayStatusHinted relayStatus = iota
+	relayStatusConfirmed
+	relayStatusExpired
+)
+
+// RelayState is the single relay shape shared by discovery storage and overlay sync.
+// Package-private fields are internal-only local state.
+type RelayState struct {
+	Descriptor          types.RelayDescriptor
+	FirstSeenAt         time.Time
+	LastSeenAt          time.Time
 	Banned              bool
-	BanReason           string
-	Bootstrap           bool
-	Advertised          bool
 	Expired             bool
-	Reachable           bool
-	ConsecutiveFailures int
-	LastSuccessAt       time.Time
-	LastFailureAt       time.Time
+	status              relayStatus
+	consecutiveFailures int
 }
 
-type RelaySummary struct {
-	Known       int
-	Banned      int
-	Bootstrap   int
-	Advertised  int
-	Expired     int
-	Syncable    int
-	Reachable   int
-	Unreachable int
+func (s RelayState) isDefaultLocalState() bool {
+	return !s.Banned && s.status == relayStatusHinted && s.consecutiveFailures == 0
 }
 
-// RelaySet owns the shared relay discovery view: known relay URLs, stable relay
-// id/url mappings, the latest validated descriptor seen for each relay, and common
-// process-local relay state such as ban/reachability/failure tracking.
-//
-// Runtime-specific policy such as bootstrap classification, relay lifecycle, or
-// listener ownership belongs in the caller's projection.
+// RelaySet owns the shared relay discovery view: configured bootstrap relay URLs,
+// the latest validated descriptor seen for each relay, and local runtime state
+// such as ban/reachability/failure tracking.
 type RelaySet struct {
-	mu                  sync.RWMutex
-	knownRelayURLs      []string
-	relayKeysByURL      map[string]string
-	relays              map[string]RelayView
-	localByURL          map[string]RelayLocalState
-	lastStatusReachable map[string]bool
-	lastStatusSummary   RelaySummary
-	haveLastStatus      bool
-	selfRelayKey        string
-	selfRelayURL        string
+	mu             sync.RWMutex
+	knownRelayURLs []string
+	relayKeysByURL map[string]string
+	relays         map[string]RelayState
+	localByURL     map[string]RelayState
+	selfRelayKey   string
+	selfRelayURL   string
 }
 
-const defaultDiscoveryRecoveryFailures = 3
+type relayDescriptorProjection struct {
+	state     RelayState
+	relayURL  string
+	bootstrap bool
+}
 
 func NewRelaySet() *RelaySet {
 	return &RelaySet{
 		relayKeysByURL: make(map[string]string),
-		relays:         make(map[string]RelayView),
-		localByURL:     make(map[string]RelayLocalState),
+		relays:         make(map[string]RelayState),
+		localByURL:     make(map[string]RelayState),
 	}
 }
 
-func (s *RelaySet) isSelfRelayURLLocked(relayURL string) bool {
-	if s == nil {
+func relayExpiredAt(state RelayState, now time.Time) bool {
+	if state.status == relayStatusExpired {
+		return true
+	}
+	if state.Descriptor.ExpiresAt.IsZero() {
 		return false
 	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	return !state.Descriptor.ExpiresAt.After(now)
+}
+
+func (s *RelaySet) isSelfRelayURLLocked(relayURL string) bool {
 	relayURL = strings.TrimSpace(relayURL)
 	return relayURL != "" && s.selfRelayURL != "" && relayURL == s.selfRelayURL
 }
 
 func (s *RelaySet) isSelfRelayDescriptorLocked(desc types.RelayDescriptor) bool {
-	if s == nil {
-		return false
-	}
-	if s.selfRelayKey != "" {
-		if relayKey := desc.Key(); relayKey != "" && relayKey == s.selfRelayKey {
-			return true
-		}
+	if relayKey := desc.Key(); relayKey != "" && s.selfRelayKey != "" && relayKey == s.selfRelayKey {
+		return true
 	}
 	return s.isSelfRelayURLLocked(desc.APIHTTPSAddr)
 }
 
-func (s *RelaySet) pruneSelfRelayLocked() {
-	if s == nil {
+func (s *RelaySet) storeLocalStateLocked(relayURL string, state RelayState) {
+	relayURL = strings.TrimSpace(relayURL)
+	if relayURL == "" {
 		return
 	}
-	if s.selfRelayURL != "" {
-		filtered := s.knownRelayURLs[:0]
-		for _, relayURL := range s.knownRelayURLs {
-			if s.isSelfRelayURLLocked(relayURL) {
-				continue
-			}
-			filtered = append(filtered, relayURL)
-		}
-		s.knownRelayURLs = filtered
-		delete(s.localByURL, s.selfRelayURL)
-		delete(s.relayKeysByURL, s.selfRelayURL)
+	if state.isDefaultLocalState() {
+		delete(s.localByURL, relayURL)
+		return
 	}
-	if s.selfRelayKey != "" {
-		if view, ok := s.relays[s.selfRelayKey]; ok {
-			delete(s.localByURL, view.Descriptor.APIHTTPSAddr)
-			delete(s.relayKeysByURL, view.Descriptor.APIHTTPSAddr)
-		}
-		delete(s.relays, s.selfRelayKey)
-	}
+	s.localByURL[relayURL] = state
 }
 
-// SetSelfRelay configures the relay set with the local relay identity so it
-// can skip self-references when evaluating discovery hints.
 func (s *RelaySet) SetSelfRelay(identity types.Identity, relayURL string) error {
-	if s == nil {
-		return nil
-	}
 	relayURL = strings.TrimSpace(relayURL)
 	if relayURL != "" {
 		normalized, err := utils.NormalizeRelayURL(relayURL)
@@ -138,56 +116,36 @@ func (s *RelaySet) SetSelfRelay(identity types.Identity, relayURL string) error 
 	defer s.mu.Unlock()
 	s.selfRelayKey = identity.Key()
 	s.selfRelayURL = relayURL
-	s.pruneSelfRelayLocked()
-	s.logStatusChange()
+	if s.selfRelayURL != "" {
+		filtered := s.knownRelayURLs[:0]
+		for _, knownRelayURL := range s.knownRelayURLs {
+			if s.isSelfRelayURLLocked(knownRelayURL) {
+				continue
+			}
+			filtered = append(filtered, knownRelayURL)
+		}
+		s.knownRelayURLs = filtered
+		delete(s.localByURL, s.selfRelayURL)
+		delete(s.relayKeysByURL, s.selfRelayURL)
+	}
+	if s.selfRelayKey != "" {
+		if record, ok := s.relays[s.selfRelayKey]; ok {
+			delete(s.localByURL, record.Descriptor.APIHTTPSAddr)
+			delete(s.relayKeysByURL, record.Descriptor.APIHTTPSAddr)
+		}
+		delete(s.relays, s.selfRelayKey)
+	}
 	return nil
 }
 
-func (s *RelaySet) trackedRelayURLs() []string {
-	if s == nil {
-		return nil
-	}
-
-	urls := make([]string, 0, len(s.knownRelayURLs)+len(s.relays))
-	seen := make(map[string]struct{}, len(s.knownRelayURLs)+len(s.relays))
-	for _, relayURL := range s.knownRelayURLs {
-		relayURL = strings.TrimSpace(relayURL)
-		if relayURL == "" {
-			continue
-		}
-		if _, ok := seen[relayURL]; ok {
-			continue
-		}
-		seen[relayURL] = struct{}{}
-		urls = append(urls, relayURL)
-	}
-	for _, view := range s.relays {
-		relayURL := view.Descriptor.APIHTTPSAddr
-		if relayURL == "" {
-			continue
-		}
-		if _, ok := seen[relayURL]; ok {
-			continue
-		}
-		seen[relayURL] = struct{}{}
-		urls = append(urls, relayURL)
-	}
-	return urls
-}
-
-func (s *RelaySet) ActiveRelayURLs() []string {
-	if s == nil {
-		return nil
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+func (s *RelaySet) bootstrapRelayURLsLocked() []string {
 	if len(s.knownRelayURLs) == 0 {
 		return nil
 	}
 
 	out := make([]string, 0, len(s.knownRelayURLs))
 	for _, relayURL := range s.knownRelayURLs {
-		if state, ok := s.localByURL[relayURL]; ok && state.Banned {
+		if s.isSelfRelayURLLocked(relayURL) || s.localByURL[relayURL].Banned {
 			continue
 		}
 		out = append(out, relayURL)
@@ -198,121 +156,95 @@ func (s *RelaySet) ActiveRelayURLs() []string {
 	return out
 }
 
-func relayExpiredAt(view RelayView, state RelayLocalState, now time.Time) bool {
-	if state.Expired {
-		return true
+func (s *RelaySet) descriptorProjectionsLocked() []relayDescriptorProjection {
+	if len(s.relays) == 0 {
+		return nil
 	}
-	if view.Descriptor.ExpiresAt.IsZero() {
-		return false
+
+	out := make([]relayDescriptorProjection, 0, len(s.relays))
+	for _, record := range s.relays {
+		if s.isSelfRelayDescriptorLocked(record.Descriptor) {
+			continue
+		}
+		relayURL := strings.TrimSpace(record.Descriptor.APIHTTPSAddr)
+		if relayURL == "" {
+			continue
+		}
+		bootstrap := false
+		if !s.isSelfRelayURLLocked(relayURL) {
+			for _, candidate := range s.knownRelayURLs {
+				if candidate == relayURL {
+					bootstrap = true
+					break
+				}
+			}
+		}
+		local := s.localByURL[relayURL]
+		record.Banned = local.Banned
+		record.status = local.status
+		record.consecutiveFailures = local.consecutiveFailures
+		out = append(out, relayDescriptorProjection{
+			state:     record,
+			relayURL:  relayURL,
+			bootstrap: bootstrap,
+		})
 	}
-	if now.IsZero() {
-		now = time.Now().UTC()
+	if len(out) == 0 {
+		return nil
 	}
-	return !view.Descriptor.ExpiresAt.After(now)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].relayURL < out[j].relayURL
+	})
+	return out
 }
 
-func (s *RelaySet) logStatusChange() {
+func (s *RelaySet) ActiveRelayURLs() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	now := time.Now().UTC()
-	var currentReachable map[string]bool
-	trackedRelayURLs := s.trackedRelayURLs()
-	if len(trackedRelayURLs) > 0 {
-		currentReachable = make(map[string]bool, len(trackedRelayURLs))
-		for _, relayURL := range trackedRelayURLs {
-			state := s.localByURL[relayURL]
-			currentReachable[relayURL] = !state.Banned && state.Reachable
-		}
-	}
-	summary := RelaySummary{}
-	for _, relayURL := range trackedRelayURLs {
-		summary.Known++
-		state := s.localByURL[relayURL]
-		relayKey := s.relayKeysByURL[relayURL]
-		view, ok := s.relays[relayKey]
-		expired := ok && relayExpiredAt(view, state, now) || !ok && state.Expired
-		if state.Banned {
-			summary.Banned++
-			continue
-		}
-		if state.Bootstrap {
-			summary.Bootstrap++
-		}
-		if state.Advertised && !expired {
-			summary.Advertised++
-		}
-		if expired {
-			summary.Expired++
-		}
-		if state.Reachable {
-			summary.Reachable++
-		} else {
-			summary.Unreachable++
-		}
-		if ok && !state.Bootstrap && !expired && view.Descriptor.SupportsOverlayPeer {
-			summary.Syncable++
-		}
-	}
-	if s.haveLastStatus && summary == s.lastStatusSummary && reflect.DeepEqual(currentReachable, s.lastStatusReachable) {
-		return
-	}
+	bootstrapRelayURLs := s.bootstrapRelayURLsLocked()
+	projections := s.descriptorProjectionsLocked()
 
-	activated := make([]string, 0)
-	deactivated := make([]string, 0)
-	for relayURL, reachable := range currentReachable {
-		if s.lastStatusReachable == nil || s.lastStatusReachable[relayURL] == reachable {
+	out := make([]string, 0, len(bootstrapRelayURLs)+len(projections))
+	seen := make(map[string]struct{}, len(bootstrapRelayURLs)+len(projections))
+	for _, relayURL := range bootstrapRelayURLs {
+		if _, ok := seen[relayURL]; ok {
 			continue
 		}
-		if reachable {
-			activated = append(activated, relayURL)
-		} else {
-			deactivated = append(deactivated, relayURL)
-		}
+		seen[relayURL] = struct{}{}
+		out = append(out, relayURL)
 	}
-	for relayURL, reachable := range s.lastStatusReachable {
-		if _, ok := currentReachable[relayURL]; ok || !reachable {
+	for _, projection := range projections {
+		if projection.state.Banned || projection.state.status != relayStatusConfirmed || relayExpiredAt(projection.state, now) {
 			continue
 		}
-		deactivated = append(deactivated, relayURL)
+		if _, ok := seen[projection.relayURL]; ok {
+			continue
+		}
+		seen[projection.relayURL] = struct{}{}
+		out = append(out, projection.relayURL)
 	}
-
-	event := log.Info().
-		Int("banned", summary.Banned).
-		Int("bootstrap", summary.Bootstrap).
-		Int("advertised", summary.Advertised).
-		Int("expired", summary.Expired).
-		Int("syncable", summary.Syncable).
-		Int("reachable", summary.Reachable).
-		Int("unreachable", summary.Unreachable)
-	if len(activated) > 0 {
-		event = event.Strs("activated", activated)
+	if len(out) == 0 {
+		return nil
 	}
-	if len(deactivated) > 0 {
-		event = event.Strs("deactivated", deactivated)
-	}
-	event.Msg("relay status")
-	s.lastStatusReachable = currentReachable
-	s.lastStatusSummary = summary
-	s.haveLastStatus = true
+	return out
 }
 
 func (s *RelaySet) BootstrapDescriptors() []types.RelayDescriptor {
-	if s == nil {
-		return nil
-	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if len(s.knownRelayURLs) == 0 {
+
+	bootstrapRelayURLs := s.bootstrapRelayURLsLocked()
+	if len(bootstrapRelayURLs) == 0 {
 		return nil
 	}
 
-	out := make([]types.RelayDescriptor, 0, len(s.knownRelayURLs))
-	for _, relayURL := range s.knownRelayURLs {
-		state, ok := s.localByURL[relayURL]
-		if !ok || !state.Bootstrap {
-			continue
-		}
+	out := make([]types.RelayDescriptor, 0, len(bootstrapRelayURLs))
+	for _, relayURL := range bootstrapRelayURLs {
 		if relayKey, ok := s.relayKeysByURL[relayURL]; ok {
-			if view, ok := s.relays[relayKey]; ok && view.Descriptor.APIHTTPSAddr != "" {
-				out = append(out, view.Descriptor)
+			if record, ok := s.relays[relayKey]; ok && record.Descriptor.APIHTTPSAddr != "" {
+				out = append(out, record.Descriptor)
 				continue
 			}
 		}
@@ -320,6 +252,7 @@ func (s *RelaySet) BootstrapDescriptors() []types.RelayDescriptor {
 			Identity: types.Identity{
 				Name: utils.PortalRootHost(relayURL),
 			},
+			RelayID:      relayURL,
 			APIHTTPSAddr: relayURL,
 			Version:      1,
 		})
@@ -330,362 +263,152 @@ func (s *RelaySet) BootstrapDescriptors() []types.RelayDescriptor {
 	return out
 }
 
-func (s *RelaySet) ActiveRelayDescriptors() []types.RelayDescriptor {
-	advertised := s.AdvertisedDescriptors()
-	if len(advertised) == 0 {
-		return nil
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	filtered := advertised[:0]
-	for _, desc := range advertised {
-		if s.isSelfRelayDescriptorLocked(desc) {
-			continue
-		}
-		filtered = append(filtered, desc)
-	}
-	if len(filtered) == 0 {
-		return nil
-	}
-	return append([]types.RelayDescriptor(nil), filtered...)
-}
-
-func (s *RelaySet) BanRelayURL(relayURL, reason string) bool {
-	if s == nil {
-		return false
-	}
+func (s *RelaySet) BanRelayURL(relayURL string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	relayURL = strings.TrimSpace(relayURL)
 	if relayURL == "" {
-		return false
-	}
-
-	state := s.localByURL[relayURL]
-	reason = strings.TrimSpace(reason)
-	changed := !state.Banned || strings.TrimSpace(state.BanReason) != reason
-	state.Banned = true
-	state.BanReason = reason
-	state.Reachable = false
-	s.localByURL[relayURL] = state
-	if changed {
-		s.logStatusChange()
-	}
-	return changed
-}
-
-func (s *RelaySet) MarkRelayUnreachable(relayURL string) bool {
-	if s == nil {
-		return false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	relayURL = strings.TrimSpace(relayURL)
-	if relayURL == "" {
-		return false
-	}
-
-	state := s.localByURL[relayURL]
-	if state.Banned {
-		return false
-	}
-	if !state.Reachable {
-		return false
-	}
-	state.Reachable = false
-	s.localByURL[relayURL] = state
-	s.logStatusChange()
-	return true
-}
-
-func (s *RelaySet) MarkRelayReachable(relayURL string, now time.Time) bool {
-	if s == nil {
-		return false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	relayURL = strings.TrimSpace(relayURL)
-	if relayURL == "" {
-		return false
-	}
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-
-	state := s.localByURL[relayURL]
-	changed := !state.Reachable || state.ConsecutiveFailures != 0 || state.LastSuccessAt != now
-	state.Reachable = true
-	state.ConsecutiveFailures = 0
-	state.LastSuccessAt = now
-	s.localByURL[relayURL] = state
-	if changed {
-		s.logStatusChange()
-	}
-	return changed
-}
-
-func (s *RelaySet) MarkRelayFailure(relayURL string, now time.Time) RelayLocalState {
-	if s == nil {
-		return RelayLocalState{}
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	relayURL = strings.TrimSpace(relayURL)
-	if relayURL == "" {
-		return RelayLocalState{}
-	}
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-
-	state := s.localByURL[relayURL]
-	state.Reachable = false
-	state.ConsecutiveFailures++
-	state.LastFailureAt = now
-	s.localByURL[relayURL] = state
-	s.logStatusChange()
-	return state
-}
-
-func (s *RelaySet) RecordBootstrapDiscoveryFailure(relayURL string, err error, now time.Time) {
-	state := s.MarkRelayFailure(relayURL, now)
-	if statusCode, code, unavailable := DiscoveryUnavailableStatus(err); unavailable {
-		if state.ConsecutiveFailures > 1 {
-			return
-		}
-		event := log.Info().Str("relay", relayURL)
-		if statusCode > 0 {
-			event = event.Int("status_code", statusCode)
-		}
-		if code != "" {
-			event = event.Str("code", code)
-		}
-		event.Msg("bootstrap relay discovery unavailable; peer may have discovery disabled")
 		return
 	}
 
-	log.Warn().
-		Err(err).
-		Str("relay", relayURL).
-		Msg("bootstrap relay discovery failed")
+	state := s.localByURL[relayURL]
+	state.Banned = true
+	s.storeLocalStateLocked(relayURL, state)
 }
 
 func (s *RelaySet) AdvertisedDescriptors() []types.RelayDescriptor {
-	if s == nil {
-		return nil
-	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if len(s.relays) == 0 {
+
+	now := time.Now().UTC()
+	projections := s.descriptorProjectionsLocked()
+	if len(projections) == 0 {
 		return nil
 	}
 
-	now := time.Now().UTC()
-	out := make([]types.RelayDescriptor, 0, len(s.relays))
-	for _, view := range s.relays {
-		state := s.localByURL[view.Descriptor.APIHTTPSAddr]
-		if !state.Advertised || relayExpiredAt(view, state, now) || view.Descriptor.APIHTTPSAddr == "" {
+	out := make([]types.RelayDescriptor, 0, len(projections))
+	for _, projection := range projections {
+		if projection.state.Banned || projection.state.status != relayStatusConfirmed || relayExpiredAt(projection.state, now) {
 			continue
 		}
-		out = append(out, view.Descriptor)
+		out = append(out, projection.state.Descriptor)
 	}
 	if len(out) == 0 {
 		return nil
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].APIHTTPSAddr < out[j].APIHTTPSAddr
-	})
+	return out
+}
+
+func (s *RelaySet) confirmableDescriptors() []types.RelayDescriptor {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	now := time.Now().UTC()
+	projections := s.descriptorProjectionsLocked()
+	if len(projections) == 0 {
+		return nil
+	}
+
+	out := make([]types.RelayDescriptor, 0, len(projections))
+	for _, projection := range projections {
+		if projection.bootstrap || projection.state.Banned || relayExpiredAt(projection.state, now) {
+			continue
+		}
+		out = append(out, projection.state.Descriptor)
+	}
+	if len(out) == 0 {
+		return nil
+	}
 	return out
 }
 
 func (s *RelaySet) SyncableDescriptors() []types.RelayDescriptor {
-	if s == nil {
-		return nil
-	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if len(s.relays) == 0 {
+
+	now := time.Now().UTC()
+	projections := s.descriptorProjectionsLocked()
+	if len(projections) == 0 {
 		return nil
 	}
 
-	now := time.Now().UTC()
-	out := make([]types.RelayDescriptor, 0, len(s.relays))
-	for _, view := range s.relays {
-		state := s.localByURL[view.Descriptor.APIHTTPSAddr]
-		if state.Bootstrap || relayExpiredAt(view, state, now) || !view.Descriptor.SupportsOverlayPeer {
+	out := make([]types.RelayDescriptor, 0, len(projections))
+	for _, projection := range projections {
+		if projection.bootstrap || projection.state.Banned || relayExpiredAt(projection.state, now) || !projection.state.Descriptor.SupportsOverlayPeer {
 			continue
 		}
-		out = append(out, view.Descriptor)
+		out = append(out, projection.state.Descriptor)
 	}
 	if len(out) == 0 {
 		return nil
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].APIHTTPSAddr < out[j].APIHTTPSAddr
-	})
 	return out
 }
 
-func (s *RelaySet) Snapshot() map[string]types.RelayState {
-	if s == nil {
-		return nil
-	}
+func (s *RelaySet) View() map[string]RelayState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if len(s.relays) == 0 {
-		return nil
-	}
 
 	now := time.Now().UTC()
-	snapshot := make(map[string]types.RelayState, len(s.relays))
-	for relayKey, view := range s.relays {
-		localState := s.localByURL[view.Descriptor.APIHTTPSAddr]
-		snapshot[relayKey] = types.RelayState{
-			Descriptor:          view.Descriptor,
-			Bootstrap:           localState.Bootstrap,
-			Advertised:          localState.Advertised,
-			Expired:             relayExpiredAt(view, localState, now),
-			FirstSeenAt:         view.FirstSeenAt,
-			LastSeenAt:          view.LastSeenAt,
-			ConsecutiveFailures: localState.ConsecutiveFailures,
-		}
-	}
-	return snapshot
-}
-
-func (s *RelaySet) ReplaceKnownRelayURLs(relayURLs []string) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	filtered := make([]string, 0, len(relayURLs))
-	for _, relayURL := range relayURLs {
-		relayURL = strings.TrimSpace(relayURL)
-		if relayURL == "" {
-			continue
-		}
-		duplicate := false
-		for _, existing := range filtered {
-			if existing == relayURL {
-				duplicate = true
-				break
-			}
-		}
-		if duplicate {
-			continue
-		}
-		filtered = append(filtered, relayURL)
-	}
-	s.knownRelayURLs = append([]string(nil), filtered...)
-}
-
-func (s *RelaySet) SetBootstrapRelayURLs(relayURLs []string) {
-	if s == nil {
-		return
-	}
-	normalized := make([]string, 0, len(relayURLs))
-	seen := make(map[string]struct{}, len(relayURLs))
-	for _, relayURL := range relayURLs {
-		relayURL = strings.TrimSpace(relayURL)
-		if relayURL == "" {
-			continue
-		}
-		parsed, err := utils.NormalizeRelayURL(relayURL)
-		if err != nil {
-			log.Warn().
-				Err(err).
-				Str("relay_url", relayURL).
-				Msg("skip invalid bootstrap relay url")
-			continue
-		}
-		if _, ok := seen[parsed]; ok {
-			continue
-		}
-		seen[parsed] = struct{}{}
-		normalized = append(normalized, parsed)
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	filtered := normalized[:0]
-	for _, relayURL := range normalized {
-		if s.isSelfRelayURLLocked(relayURL) {
-			continue
-		}
-		filtered = append(filtered, relayURL)
-		state := s.localByURL[relayURL]
-		state.Bootstrap = true
-		s.localByURL[relayURL] = state
-	}
-	normalized = filtered
-
-	current := make(map[string]struct{}, len(normalized))
-	for _, relayURL := range normalized {
-		current[relayURL] = struct{}{}
-	}
-
-	existing := make(map[string]struct{}, len(s.knownRelayURLs))
-	for _, relayURL := range s.knownRelayURLs {
-		existing[relayURL] = struct{}{}
-		if _, ok := current[relayURL]; !ok {
-			state := s.localByURL[relayURL]
-			if state.Bootstrap {
-				state.Bootstrap = false
-				s.localByURL[relayURL] = state
-			}
-		}
-	}
-	s.knownRelayURLs = append([]string(nil), normalized...)
-	s.logStatusChange()
-}
-
-func (s *RelaySet) mergeKnownRelayURLs(relayURLs []string) error {
-	if s == nil || len(relayURLs) == 0 {
+	projections := s.descriptorProjectionsLocked()
+	if len(projections) == 0 {
 		return nil
 	}
-	normalized, err := utils.NormalizeRelayURLs(relayURLs...)
+
+	view := make(map[string]RelayState, len(projections))
+	for _, projection := range projections {
+		relayKey := projection.state.Descriptor.Key()
+		if relayKey == "" {
+			continue
+		}
+		expired := relayExpiredAt(projection.state, now)
+		view[relayKey] = RelayState{
+			Descriptor:  projection.state.Descriptor,
+			FirstSeenAt: projection.state.FirstSeenAt,
+			LastSeenAt:  projection.state.LastSeenAt,
+			Banned:      projection.state.Banned,
+			Expired:     expired,
+		}
+	}
+	if len(view) == 0 {
+		return nil
+	}
+	return view
+}
+
+func (s *RelaySet) SetBootstrapRelayURLs(inputs []string) error {
+	normalized, err := utils.NormalizeRelayURLs(inputs...)
 	if err != nil {
 		return err
 	}
-	if len(normalized) == 0 {
-		return nil
-	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	existing := make(map[string]struct{}, len(s.knownRelayURLs))
-	for _, relayURL := range s.knownRelayURLs {
-		existing[relayURL] = struct{}{}
+	filtered := utils.RemoveRelayURL(normalized, s.selfRelayURL)
+
+	keep := make(map[string]struct{}, len(filtered))
+	for _, relayURL := range filtered {
+		keep[relayURL] = struct{}{}
 	}
 
-	changed := false
-	for _, relayURL := range normalized {
-		if s.isSelfRelayURLLocked(relayURL) {
+	for _, relayURL := range s.knownRelayURLs {
+		if _, ok := keep[relayURL]; ok {
 			continue
 		}
-		if _, ok := existing[relayURL]; ok {
+		if _, ok := s.relayKeysByURL[relayURL]; ok {
 			continue
 		}
-		existing[relayURL] = struct{}{}
-		s.knownRelayURLs = append(s.knownRelayURLs, relayURL)
-		state := s.localByURL[relayURL]
-		s.localByURL[relayURL] = state
-		changed = true
+		if state := s.localByURL[relayURL]; state.isDefaultLocalState() {
+			delete(s.localByURL, relayURL)
+		}
 	}
-	if changed {
-		s.logStatusChange()
-	}
+
+	s.knownRelayURLs = append([]string(nil), filtered...)
 	return nil
 }
 
 func (s *RelaySet) registerDescriptor(desc types.RelayDescriptor, now time.Time) (string, bool, bool, error) {
-	if s == nil {
-		return "", false, false, nil
-	}
 	normalized, err := NormalizeDescriptor(desc)
 	if err != nil {
 		return "", false, false, err
@@ -697,131 +420,123 @@ func (s *RelaySet) registerDescriptor(desc types.RelayDescriptor, now time.Time)
 	if knownRelayKey, ok := s.relayKeysByURL[normalized.APIHTTPSAddr]; ok && knownRelayKey != relayKey {
 		return "", false, false, errors.New("descriptor identity does not match known relay url")
 	}
-
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
 
-	view, ok := s.relays[relayKey]
+	record, ok := s.relays[relayKey]
 	added := !ok
 	if !ok {
-		view.FirstSeenAt = now
+		record.FirstSeenAt = now
 	}
-	previousURL := view.Descriptor.APIHTTPSAddr
-	previousDescriptor := view.Descriptor
-	view.Descriptor = normalized
-	view.LastSeenAt = now
-	s.relays[relayKey] = view
+	previousURL := record.Descriptor.APIHTTPSAddr
+	previousDescriptor := record.Descriptor
+	record.Descriptor = normalized
+	record.LastSeenAt = now
+	s.relays[relayKey] = record
 	s.relayKeysByURL[normalized.APIHTTPSAddr] = relayKey
 	if previousURL != "" && previousURL != normalized.APIHTTPSAddr {
 		delete(s.relayKeysByURL, previousURL)
+		state := s.localByURL[previousURL]
+		bootstrap := false
+		if !s.isSelfRelayURLLocked(previousURL) {
+			if slices.Contains(s.knownRelayURLs, previousURL) {
+				bootstrap = true
+			}
+		}
+		if !bootstrap && state.isDefaultLocalState() {
+			delete(s.localByURL, previousURL)
+		}
 	}
 
 	changed := added || !reflect.DeepEqual(previousDescriptor, normalized)
 	return relayKey, added, changed, nil
 }
 
-func relayDiscoveryURLs(selfDescriptor types.RelayDescriptor, relayDescriptors []types.RelayDescriptor) []string {
-	relayURLs := make([]string, 0, 1+len(relayDescriptors))
-	if apiURL := selfDescriptor.APIHTTPSAddr; apiURL != "" {
-		relayURLs = append(relayURLs, apiURL)
-	}
-	for _, relayDescriptor := range relayDescriptors {
-		if apiURL := relayDescriptor.APIHTTPSAddr; apiURL != "" {
-			relayURLs = append(relayURLs, apiURL)
-		}
-	}
-	if len(relayURLs) == 0 {
-		return nil
-	}
-	return relayURLs
-}
-
-func (s *RelaySet) applyDiscoveryDescriptors(targetIdentity types.Identity, targetURL string, selfDescriptor types.RelayDescriptor, relayDescriptors []types.RelayDescriptor, now time.Time) (relaySetChanged bool, addedRelayCount int, err error) {
-	if s == nil {
-		return false, 0, nil
-	}
+func (s *RelaySet) applyDiscoveryDescriptorsLocked(targetIdentity types.Identity, targetURL string, selfDescriptor types.RelayDescriptor, relayDescriptors []types.RelayDescriptor, now time.Time) (relaySetChanged bool, err error) {
 	if strings.TrimSpace(targetIdentity.Name) == "" && strings.TrimSpace(targetIdentity.Address) == "" {
-		return false, 0, errors.New("target relay identity is required")
+		return false, errors.New("target relay identity is required")
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
 	if err := ValidateDescriptorTarget(selfDescriptor, targetIdentity, targetURL); err != nil {
-		return false, 0, err
+		return false, err
 	}
 
-	apply := func(desc types.RelayDescriptor, advertise, countAdded bool) error {
+	apply := func(desc types.RelayDescriptor, advertise bool) error {
+		if !advertise && s.isSelfRelayDescriptorLocked(desc) {
+			return nil
+		}
+
 		_, added, descriptorChanged, err := s.registerDescriptor(desc, now)
 		if err != nil {
 			return err
 		}
-		localState := s.localByURL[desc.APIHTTPSAddr]
-		wasAdvertised := localState.Advertised
-		wasExpired := localState.Expired
-		if advertise {
-			localState.Advertised = true
-		}
-		localState.Expired = false
-		s.localByURL[desc.APIHTTPSAddr] = localState
 
-		changed := added || descriptorChanged || advertise && !wasAdvertised || wasExpired
-		if added && countAdded {
-			addedRelayCount++
+		localState := s.localByURL[desc.APIHTTPSAddr]
+		previousState := localState
+		if advertise {
+			localState.status = relayStatusConfirmed
+			localState.consecutiveFailures = 0
+		} else if localState.status != relayStatusConfirmed {
+			localState.status = relayStatusHinted
+			localState.consecutiveFailures = 0
 		}
+		s.storeLocalStateLocked(desc.APIHTTPSAddr, localState)
+
+		changed := added || descriptorChanged || !reflect.DeepEqual(previousState, localState)
 		if changed {
 			relaySetChanged = true
 		}
 		return nil
 	}
 
-	if err := apply(selfDescriptor, true, false); err != nil {
-		return false, 0, err
+	if err := apply(selfDescriptor, true); err != nil {
+		return false, err
 	}
 	for _, relayDescriptor := range relayDescriptors {
-		if s.isSelfRelayDescriptorLocked(relayDescriptor) {
-			continue
-		}
-		if err := apply(relayDescriptor, false, true); err != nil {
-			return false, 0, err
+		if err := apply(relayDescriptor, false); err != nil {
+			return false, err
 		}
 	}
 	state := s.localByURL[selfDescriptor.APIHTTPSAddr]
-	state.Reachable = true
-	state.ConsecutiveFailures = 0
-	state.LastSuccessAt = now
-	s.localByURL[selfDescriptor.APIHTTPSAddr] = state
-	s.logStatusChange()
-	return relaySetChanged, addedRelayCount, nil
+	state.status = relayStatusConfirmed
+	state.consecutiveFailures = 0
+	s.storeLocalStateLocked(selfDescriptor.APIHTTPSAddr, state)
+	return relaySetChanged, nil
 }
 
-func (s *RelaySet) ApplyRelayDiscoveryResponse(targetIdentity types.Identity, targetURL string, resp types.DiscoveryResponse, now time.Time) (relayURLs []string, relaySetChanged bool, addedRelayCount int, warnErr error, err error) {
+func (s *RelaySet) ApplyRelayDiscoveryResponse(targetIdentity types.Identity, targetURL string, resp types.DiscoveryResponse, now time.Time) (relaySetChanged bool, warnErr error, err error) {
 	selfDescriptor, relayDescriptors, validateErr := ValidateRelayDiscoveryResponse(resp, now)
 	warnErr = validateErr
 	if selfDescriptor.Key() == "" {
-		return nil, false, 0, warnErr, validateErr
+		return false, warnErr, validateErr
 	}
 	s.mu.Lock()
-	relaySetChanged, addedRelayCount, err = s.applyDiscoveryDescriptors(targetIdentity, targetURL, selfDescriptor, relayDescriptors, now)
+	relaySetChanged, err = s.applyDiscoveryDescriptorsLocked(targetIdentity, targetURL, selfDescriptor, relayDescriptors, now)
 	s.mu.Unlock()
 	if err != nil {
-		return nil, false, 0, warnErr, err
+		return false, warnErr, err
 	}
-	return relayDiscoveryURLs(selfDescriptor, relayDescriptors), relaySetChanged, addedRelayCount, warnErr, nil
+	return relaySetChanged, warnErr, nil
 }
 
-func (s *RelaySet) ApplyOverlayRelayDiscoveryResponse(targetIdentity types.Identity, targetURL string, resp types.DiscoveryResponse, now time.Time) (relayURLs []string, relaySetChanged bool, addedRelayCount int, warnErr error, err error) {
+func (s *RelaySet) ApplyOverlayRelayDiscoveryResponse(targetIdentity types.Identity, targetURL string, resp types.DiscoveryResponse, now time.Time) (relaySetChanged bool, warnErr error, err error) {
 	selfDescriptor, relayDescriptors, validateErr := ValidateRelayDiscoveryResponse(resp, now)
 	warnErr = validateErr
 	if selfDescriptor.Key() == "" {
-		return nil, false, 0, warnErr, validateErr
+		return false, warnErr, validateErr
 	}
 	if err := RequireOverlayRelayDescriptor(selfDescriptor); err != nil {
-		return nil, false, 0, warnErr, err
+		return false, warnErr, err
 	}
 
 	filteredRelayDescriptors := make([]types.RelayDescriptor, 0, len(relayDescriptors))
 	for _, relayDescriptor := range relayDescriptors {
+		if s.isSelfRelayDescriptorLocked(relayDescriptor) {
+			continue
+		}
 		if err := RequireOverlayRelayDescriptor(relayDescriptor); err != nil {
 			if warnErr == nil {
 				warnErr = err
@@ -832,198 +547,43 @@ func (s *RelaySet) ApplyOverlayRelayDiscoveryResponse(targetIdentity types.Ident
 	}
 
 	s.mu.Lock()
-	relaySetChanged, addedRelayCount, err = s.applyDiscoveryDescriptors(targetIdentity, targetURL, selfDescriptor, filteredRelayDescriptors, now)
+	relaySetChanged, err = s.applyDiscoveryDescriptorsLocked(targetIdentity, targetURL, selfDescriptor, filteredRelayDescriptors, now)
 	s.mu.Unlock()
 	if err != nil {
-		return nil, false, 0, warnErr, err
+		return false, warnErr, err
 	}
-	return relayDiscoveryURLs(selfDescriptor, filteredRelayDescriptors), relaySetChanged, addedRelayCount, warnErr, nil
+	return relaySetChanged, warnErr, nil
 }
 
-func (s *RelaySet) ApplyRelayDiscoveryResponseSimple(targetIdentity types.Identity, targetURL string, resp types.DiscoveryResponse, now time.Time) error {
-	relayURLs, _, _, warnErr, err := s.ApplyRelayDiscoveryResponse(targetIdentity, targetURL, resp, now)
-	if warnErr != nil {
-		log.Warn().
-			Err(warnErr).
-			Str("relay", targetURL).
-			Msg("relay discovery response completed with warnings")
-	}
-	if err != nil {
-		return err
-	}
-
-	targetRelayURL := strings.TrimSpace(resp.Self.APIHTTPSAddr)
-	if targetRelayURL == "" && len(relayURLs) > 0 {
-		targetRelayURL = relayURLs[0]
-	}
-	if targetRelayURL == "" {
-		return nil
-	}
-	if err := s.mergeKnownRelayURLs([]string{targetRelayURL}); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *RelaySet) RegisterBootstrapRelayURLs(inputs []string) ([]string, error) {
-	if s == nil || len(inputs) == 0 {
-		return nil, nil
-	}
-
-	normalized, err := utils.NormalizeRelayURLs(inputs...)
-	if err != nil {
-		return nil, err
-	}
-	normalized, err = utils.ExcludeLocalRelayURLs(normalized...)
-	if err != nil {
-		return nil, err
-	}
-	if len(normalized) == 0 {
-		return nil, nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	existing := make(map[string]struct{}, len(s.knownRelayURLs))
-	for _, relayURL := range s.knownRelayURLs {
-		existing[relayURL] = struct{}{}
-	}
-	added := make([]string, 0, len(normalized))
-	for _, relayURL := range normalized {
-		if _, ok := existing[relayURL]; ok {
-			continue
-		}
-		existing[relayURL] = struct{}{}
-		s.knownRelayURLs = append(s.knownRelayURLs, relayURL)
-		added = append(added, relayURL)
-	}
-	for _, relayURL := range normalized {
-		state := s.localByURL[relayURL]
-		state.Bootstrap = true
-		state.Reachable = false
-		s.localByURL[relayURL] = state
-	}
-	s.logStatusChange()
-	if len(added) == 0 {
-		return nil, nil
-	}
-	return added, nil
-}
-
-func (s *RelaySet) refreshBootstrapDiscovery(ctx context.Context, rootCAPEM []byte) error {
-	bootstraps := s.BootstrapDescriptors()
-	for _, bootstrap := range bootstraps {
-		resp, err := DiscoverRelayDiscovery(ctx, bootstrap.APIHTTPSAddr, rootCAPEM, nil)
-		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			s.RecordBootstrapDiscoveryFailure(bootstrap.APIHTTPSAddr, err, time.Now().UTC())
-			continue
-		}
-
-		now := time.Now().UTC()
-		relayURLs, _, _, warnErr, applyErr := s.ApplyRelayDiscoveryResponse(bootstrap.Identity, bootstrap.APIHTTPSAddr, resp, now)
-		if warnErr != nil {
-			log.Warn().
-				Err(warnErr).
-				Str("relay", bootstrap.APIHTTPSAddr).
-				Msg("bootstrap relay discovery completed with warnings")
-		}
-		if applyErr != nil {
-			s.MarkRelayFailure(bootstrap.APIHTTPSAddr, now)
-			log.Warn().
-				Err(applyErr).
-				Str("relay", bootstrap.APIHTTPSAddr).
-				Msg("bootstrap relay discovery failed")
-			continue
-		}
-		if len(relayURLs) == 0 {
-			continue
-		}
-		if err := s.mergeKnownRelayURLs(relayURLs); err != nil {
-			log.Warn().
-				Err(err).
-				Str("relay", bootstrap.APIHTTPSAddr).
-				Msg("merge discovered relay urls")
-		}
-	}
-	return nil
-}
-
-func (s *RelaySet) RunLoop(ctx context.Context, rootCAPEM []byte, syncRuntime func() error) error {
-	if s == nil {
-		<-ctx.Done()
-		return nil
-	}
-
-	ticker := time.NewTicker(types.DiscoveryPollInterval)
-	defer ticker.Stop()
-
-	for {
-		if err := s.refreshBootstrapDiscovery(ctx, rootCAPEM); err != nil {
-			return err
-		}
-		if ctx.Err() != nil {
-			return nil
-		}
-		if syncRuntime != nil {
-			if err := syncRuntime(); err != nil {
-				return err
-			}
-		}
-
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-		}
-	}
-}
-
-func (s *RelaySet) RecordDiscoveryFailure(identity types.Identity, relayURL string, err error) (expired bool, expireReason string, consecutiveFailures int) {
-	return s.RecordDiscoveryFailureWithRecovery(identity, relayURL, err, defaultDiscoveryRecoveryFailures, time.Now().UTC())
-}
-
-func (s *RelaySet) RecordDiscoveryFailureWithRecovery(identity types.Identity, relayURL string, err error, recoveryFailures int, now time.Time) (expired bool, expireReason string, consecutiveFailures int) {
-	if s == nil {
-		return false, "", 0
-	}
+func (s *RelaySet) RecordDiscoveryFailure(identity types.Identity, relayURL string, err error, recoveryFailures int) (expired bool, expireReason string, consecutiveFailures int) {
 	relayKey := identity.Key()
 	if relayKey == "" {
 		return false, "", 0
 	}
 	relayURL = strings.TrimSpace(relayURL)
-	if relayURL == "" {
-		return false, "", 0
-	}
-	if now.IsZero() {
-		now = time.Now().UTC()
-	} else {
-		now = now.UTC()
-	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	view, ok := s.relays[relayKey]
+	record, ok := s.relays[relayKey]
 	if !ok {
+		return false, "", 0
+	}
+	if relayURL == "" || s.relayKeysByURL[relayURL] != relayKey {
+		relayURL = record.Descriptor.APIHTTPSAddr
+	}
+	if relayURL == "" {
 		return false, "", 0
 	}
 
 	localState := s.localByURL[relayURL]
-	localState.Reachable = false
-	localState.ConsecutiveFailures++
-	localState.LastFailureAt = now
-	s.localByURL[relayURL] = localState
-	s.logStatusChange()
-	if !localState.Expired && localState.ConsecutiveFailures >= recoveryFailures {
-		state := s.localByURL[view.Descriptor.APIHTTPSAddr]
-		state.Advertised = false
-		state.Expired = true
-		s.localByURL[view.Descriptor.APIHTTPSAddr] = state
-		s.logStatusChange()
-		return true, "recovery", localState.ConsecutiveFailures
+	localState.consecutiveFailures++
+	s.storeLocalStateLocked(relayURL, localState)
+	if localState.status != relayStatusExpired && localState.consecutiveFailures >= recoveryFailures {
+		state := s.localByURL[record.Descriptor.APIHTTPSAddr]
+		state.status = relayStatusExpired
+		s.storeLocalStateLocked(record.Descriptor.APIHTTPSAddr, state)
+		return true, "recovery", localState.consecutiveFailures
 	}
 
 	var apiErr *types.APIRequestError
@@ -1031,12 +591,10 @@ func (s *RelaySet) RecordDiscoveryFailureWithRecovery(identity types.Identity, r
 		(apiErr.StatusCode == http.StatusForbidden ||
 			apiErr.StatusCode == http.StatusNotFound ||
 			apiErr.StatusCode == http.StatusGone) {
-		state := s.localByURL[view.Descriptor.APIHTTPSAddr]
-		state.Advertised = false
-		state.Expired = true
-		s.localByURL[view.Descriptor.APIHTTPSAddr] = state
-		s.logStatusChange()
-		return true, "status", localState.ConsecutiveFailures
+		state := s.localByURL[record.Descriptor.APIHTTPSAddr]
+		state.status = relayStatusExpired
+		s.storeLocalStateLocked(record.Descriptor.APIHTTPSAddr, state)
+		return true, "status", localState.consecutiveFailures
 	}
-	return false, "", localState.ConsecutiveFailures
+	return false, "", localState.consecutiveFailures
 }

@@ -15,7 +15,6 @@ import (
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 
-	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
@@ -121,7 +120,7 @@ func (s *stack) DialContext(ctx context.Context, network, address string) (net.C
 	return s.net.DialContextTCPAddrPort(ctx, netip.AddrPortFrom(ip, uint16(port)))
 }
 
-func (s *stack) ApplyPeers(peers []types.DesiredPeer) error {
+func (s *stack) ApplyPeers(peers []desiredPeer) error {
 	if s == nil || s.device == nil {
 		return errors.New("wireguard is not initialized")
 	}
@@ -132,14 +131,14 @@ func (s *stack) ApplyPeers(peers []types.DesiredPeer) error {
 	nextPeerEndpoints := map[string]string{}
 
 	for _, peer := range peers {
-		peerKey := strings.TrimSpace(peer.WireGuardPublicKey)
-		publicKeyHex, err := utils.WireGuardKeyHex(peer.WireGuardPublicKey)
+		peerKey := strings.TrimSpace(peer.wireGuardPublicKey)
+		publicKeyHex, err := utils.WireGuardKeyHex(peer.wireGuardPublicKey)
 		if err != nil {
 			return fmt.Errorf("normalize peer %q public key: %w", peerKey, err)
 		}
 
 		resolvedEndpoint := ""
-		if endpoint := peer.WireGuardEndpoint; endpoint != "" {
+		if endpoint := peer.wireGuardEndpoint; endpoint != "" {
 			resolvedEndpoint, err = resolvePeerEndpoint(endpoint)
 			if err != nil {
 				s.mu.Lock()
@@ -165,7 +164,7 @@ func (s *stack) ApplyPeers(peers []types.DesiredPeer) error {
 			nextPeerEndpoints[publicKeyHex] = resolvedEndpoint
 		}
 
-		allowedIPs := utils.NormalizeIPPrefixes(peer.AllowedIPs)
+		allowedIPs := utils.NormalizeIPPrefixes(peer.allowedIPs)
 		for _, allowedIP := range allowedIPs {
 			builder.WriteString("allowed_ip=")
 			builder.WriteString(allowedIP)
