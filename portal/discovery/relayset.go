@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"reflect"
@@ -59,7 +60,11 @@ type RelaySet struct {
 	lastStatusReachable map[string]bool
 	lastStatusSummary   RelaySummary
 	haveLastStatus      bool
+	selfRelayKey        string
+	selfRelayURL        string
 }
+
+const defaultDiscoveryRecoveryFailures = 3
 
 func NewRelaySet() *RelaySet {
 	return &RelaySet{
@@ -67,6 +72,75 @@ func NewRelaySet() *RelaySet {
 		relays:         make(map[string]RelayView),
 		localByURL:     make(map[string]RelayLocalState),
 	}
+}
+
+func (s *RelaySet) isSelfRelayURLLocked(relayURL string) bool {
+	if s == nil {
+		return false
+	}
+	relayURL = strings.TrimSpace(relayURL)
+	return relayURL != "" && s.selfRelayURL != "" && relayURL == s.selfRelayURL
+}
+
+func (s *RelaySet) isSelfRelayDescriptorLocked(desc types.RelayDescriptor) bool {
+	if s == nil {
+		return false
+	}
+	if s.selfRelayKey != "" {
+		if relayKey := desc.Key(); relayKey != "" && relayKey == s.selfRelayKey {
+			return true
+		}
+	}
+	return s.isSelfRelayURLLocked(desc.APIHTTPSAddr)
+}
+
+func (s *RelaySet) pruneSelfRelayLocked() {
+	if s == nil {
+		return
+	}
+	if s.selfRelayURL != "" {
+		filtered := s.knownRelayURLs[:0]
+		for _, relayURL := range s.knownRelayURLs {
+			if s.isSelfRelayURLLocked(relayURL) {
+				continue
+			}
+			filtered = append(filtered, relayURL)
+		}
+		s.knownRelayURLs = filtered
+		delete(s.localByURL, s.selfRelayURL)
+		delete(s.relayKeysByURL, s.selfRelayURL)
+	}
+	if s.selfRelayKey != "" {
+		if view, ok := s.relays[s.selfRelayKey]; ok {
+			delete(s.localByURL, view.Descriptor.APIHTTPSAddr)
+			delete(s.relayKeysByURL, view.Descriptor.APIHTTPSAddr)
+		}
+		delete(s.relays, s.selfRelayKey)
+	}
+}
+
+// SetSelfRelay configures the relay set with the local relay identity so it
+// can skip self-references when evaluating discovery hints.
+func (s *RelaySet) SetSelfRelay(identity types.Identity, relayURL string) error {
+	if s == nil {
+		return nil
+	}
+	relayURL = strings.TrimSpace(relayURL)
+	if relayURL != "" {
+		normalized, err := utils.NormalizeRelayURL(relayURL)
+		if err != nil {
+			return err
+		}
+		relayURL = normalized
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.selfRelayKey = identity.Key()
+	s.selfRelayURL = relayURL
+	s.pruneSelfRelayLocked()
+	s.logStatusChange()
+	return nil
 }
 
 func (s *RelaySet) trackedRelayURLs() []string {
@@ -254,6 +328,27 @@ func (s *RelaySet) BootstrapDescriptors() []types.RelayDescriptor {
 		return nil
 	}
 	return out
+}
+
+func (s *RelaySet) ActiveRelayDescriptors() []types.RelayDescriptor {
+	advertised := s.AdvertisedDescriptors()
+	if len(advertised) == 0 {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	filtered := advertised[:0]
+	for _, desc := range advertised {
+		if s.isSelfRelayDescriptorLocked(desc) {
+			continue
+		}
+		filtered = append(filtered, desc)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return append([]types.RelayDescriptor(nil), filtered...)
 }
 
 func (s *RelaySet) BanRelayURL(relayURL, reason string) bool {
@@ -486,6 +581,107 @@ func (s *RelaySet) ReplaceKnownRelayURLs(relayURLs []string) {
 	s.knownRelayURLs = append([]string(nil), filtered...)
 }
 
+func (s *RelaySet) SetBootstrapRelayURLs(relayURLs []string) {
+	if s == nil {
+		return
+	}
+	normalized := make([]string, 0, len(relayURLs))
+	seen := make(map[string]struct{}, len(relayURLs))
+	for _, relayURL := range relayURLs {
+		relayURL = strings.TrimSpace(relayURL)
+		if relayURL == "" {
+			continue
+		}
+		parsed, err := utils.NormalizeRelayURL(relayURL)
+		if err != nil {
+			log.Warn().
+				Err(err).
+				Str("relay_url", relayURL).
+				Msg("skip invalid bootstrap relay url")
+			continue
+		}
+		if _, ok := seen[parsed]; ok {
+			continue
+		}
+		seen[parsed] = struct{}{}
+		normalized = append(normalized, parsed)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	filtered := normalized[:0]
+	for _, relayURL := range normalized {
+		if s.isSelfRelayURLLocked(relayURL) {
+			continue
+		}
+		filtered = append(filtered, relayURL)
+		state := s.localByURL[relayURL]
+		state.Bootstrap = true
+		s.localByURL[relayURL] = state
+	}
+	normalized = filtered
+
+	current := make(map[string]struct{}, len(normalized))
+	for _, relayURL := range normalized {
+		current[relayURL] = struct{}{}
+	}
+
+	existing := make(map[string]struct{}, len(s.knownRelayURLs))
+	for _, relayURL := range s.knownRelayURLs {
+		existing[relayURL] = struct{}{}
+		if _, ok := current[relayURL]; !ok {
+			state := s.localByURL[relayURL]
+			if state.Bootstrap {
+				state.Bootstrap = false
+				s.localByURL[relayURL] = state
+			}
+		}
+	}
+	s.knownRelayURLs = append([]string(nil), normalized...)
+	s.logStatusChange()
+}
+
+func (s *RelaySet) mergeKnownRelayURLs(relayURLs []string) error {
+	if s == nil || len(relayURLs) == 0 {
+		return nil
+	}
+	normalized, err := utils.NormalizeRelayURLs(relayURLs...)
+	if err != nil {
+		return err
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	existing := make(map[string]struct{}, len(s.knownRelayURLs))
+	for _, relayURL := range s.knownRelayURLs {
+		existing[relayURL] = struct{}{}
+	}
+
+	changed := false
+	for _, relayURL := range normalized {
+		if s.isSelfRelayURLLocked(relayURL) {
+			continue
+		}
+		if _, ok := existing[relayURL]; ok {
+			continue
+		}
+		existing[relayURL] = struct{}{}
+		s.knownRelayURLs = append(s.knownRelayURLs, relayURL)
+		state := s.localByURL[relayURL]
+		s.localByURL[relayURL] = state
+		changed = true
+	}
+	if changed {
+		s.logStatusChange()
+	}
+	return nil
+}
+
 func (s *RelaySet) registerDescriptor(desc types.RelayDescriptor, now time.Time) (string, bool, bool, error) {
 	if s == nil {
 		return "", false, false, nil
@@ -583,6 +779,9 @@ func (s *RelaySet) applyDiscoveryDescriptors(targetIdentity types.Identity, targ
 		return false, 0, err
 	}
 	for _, relayDescriptor := range relayDescriptors {
+		if s.isSelfRelayDescriptorLocked(relayDescriptor) {
+			continue
+		}
 		if err := apply(relayDescriptor, false, true); err != nil {
 			return false, 0, err
 		}
@@ -641,6 +840,31 @@ func (s *RelaySet) ApplyOverlayRelayDiscoveryResponse(targetIdentity types.Ident
 	return relayDiscoveryURLs(selfDescriptor, filteredRelayDescriptors), relaySetChanged, addedRelayCount, warnErr, nil
 }
 
+func (s *RelaySet) ApplyRelayDiscoveryResponseSimple(targetIdentity types.Identity, targetURL string, resp types.DiscoveryResponse, now time.Time) error {
+	relayURLs, _, _, warnErr, err := s.ApplyRelayDiscoveryResponse(targetIdentity, targetURL, resp, now)
+	if warnErr != nil {
+		log.Warn().
+			Err(warnErr).
+			Str("relay", targetURL).
+			Msg("relay discovery response completed with warnings")
+	}
+	if err != nil {
+		return err
+	}
+
+	targetRelayURL := strings.TrimSpace(resp.Self.APIHTTPSAddr)
+	if targetRelayURL == "" && len(relayURLs) > 0 {
+		targetRelayURL = relayURLs[0]
+	}
+	if targetRelayURL == "" {
+		return nil
+	}
+	if err := s.mergeKnownRelayURLs([]string{targetRelayURL}); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *RelaySet) RegisterBootstrapRelayURLs(inputs []string) ([]string, error) {
 	if s == nil || len(inputs) == 0 {
 		return nil, nil
@@ -686,7 +910,82 @@ func (s *RelaySet) RegisterBootstrapRelayURLs(inputs []string) ([]string, error)
 	return added, nil
 }
 
-func (s *RelaySet) RecordDiscoveryFailure(identity types.Identity, relayURL string, err error, recoveryFailures int, now time.Time) (expired bool, expireReason string, consecutiveFailures int) {
+func (s *RelaySet) refreshBootstrapDiscovery(ctx context.Context, rootCAPEM []byte) error {
+	bootstraps := s.BootstrapDescriptors()
+	for _, bootstrap := range bootstraps {
+		resp, err := DiscoverRelayDiscovery(ctx, bootstrap.APIHTTPSAddr, rootCAPEM, nil)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			s.RecordBootstrapDiscoveryFailure(bootstrap.APIHTTPSAddr, err, time.Now().UTC())
+			continue
+		}
+
+		now := time.Now().UTC()
+		relayURLs, _, _, warnErr, applyErr := s.ApplyRelayDiscoveryResponse(bootstrap.Identity, bootstrap.APIHTTPSAddr, resp, now)
+		if warnErr != nil {
+			log.Warn().
+				Err(warnErr).
+				Str("relay", bootstrap.APIHTTPSAddr).
+				Msg("bootstrap relay discovery completed with warnings")
+		}
+		if applyErr != nil {
+			s.MarkRelayFailure(bootstrap.APIHTTPSAddr, now)
+			log.Warn().
+				Err(applyErr).
+				Str("relay", bootstrap.APIHTTPSAddr).
+				Msg("bootstrap relay discovery failed")
+			continue
+		}
+		if len(relayURLs) == 0 {
+			continue
+		}
+		if err := s.mergeKnownRelayURLs(relayURLs); err != nil {
+			log.Warn().
+				Err(err).
+				Str("relay", bootstrap.APIHTTPSAddr).
+				Msg("merge discovered relay urls")
+		}
+	}
+	return nil
+}
+
+func (s *RelaySet) RunLoop(ctx context.Context, rootCAPEM []byte, syncRuntime func() error) error {
+	if s == nil {
+		<-ctx.Done()
+		return nil
+	}
+
+	ticker := time.NewTicker(types.DiscoveryPollInterval)
+	defer ticker.Stop()
+
+	for {
+		if err := s.refreshBootstrapDiscovery(ctx, rootCAPEM); err != nil {
+			return err
+		}
+		if ctx.Err() != nil {
+			return nil
+		}
+		if syncRuntime != nil {
+			if err := syncRuntime(); err != nil {
+				return err
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *RelaySet) RecordDiscoveryFailure(identity types.Identity, relayURL string, err error) (expired bool, expireReason string, consecutiveFailures int) {
+	return s.RecordDiscoveryFailureWithRecovery(identity, relayURL, err, defaultDiscoveryRecoveryFailures, time.Now().UTC())
+}
+
+func (s *RelaySet) RecordDiscoveryFailureWithRecovery(identity types.Identity, relayURL string, err error, recoveryFailures int, now time.Time) (expired bool, expireReason string, consecutiveFailures int) {
 	if s == nil {
 		return false, "", 0
 	}
@@ -700,6 +999,8 @@ func (s *RelaySet) RecordDiscoveryFailure(identity types.Identity, relayURL stri
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
 	}
 
 	s.mu.Lock()
@@ -718,6 +1019,7 @@ func (s *RelaySet) RecordDiscoveryFailure(identity types.Identity, relayURL stri
 	s.logStatusChange()
 	if !localState.Expired && localState.ConsecutiveFailures >= recoveryFailures {
 		state := s.localByURL[view.Descriptor.APIHTTPSAddr]
+		state.Advertised = false
 		state.Expired = true
 		s.localByURL[view.Descriptor.APIHTTPSAddr] = state
 		s.logStatusChange()
@@ -730,6 +1032,7 @@ func (s *RelaySet) RecordDiscoveryFailure(identity types.Identity, relayURL stri
 			apiErr.StatusCode == http.StatusNotFound ||
 			apiErr.StatusCode == http.StatusGone) {
 		state := s.localByURL[view.Descriptor.APIHTTPSAddr]
+		state.Advertised = false
 		state.Expired = true
 		s.localByURL[view.Descriptor.APIHTTPSAddr] = state
 		s.logStatusChange()

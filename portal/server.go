@@ -218,6 +218,9 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	}
 	if cfg.DiscoveryEnabled {
 		set := discovery.NewRelaySet()
+		if err := set.SetSelfRelay(identity, selfRelayURL); err != nil {
+			return nil, fmt.Errorf("set self relay: %w", err)
+		}
 		if _, err := set.RegisterBootstrapRelayURLs(cfg.Bootstraps); err != nil {
 			return nil, err
 		}
@@ -779,7 +782,7 @@ func (s *Server) runRelayDiscoveryLoop(ctx context.Context) error {
 					}
 				}
 
-				expired, expireReason, consecutiveFailures := s.relaySet.RecordDiscoveryFailure(relay.Identity, relay.APIHTTPSAddr, failureErr, defaultWGRecoveryFailures, time.Now().UTC())
+				expired, expireReason, consecutiveFailures := s.relaySet.RecordDiscoveryFailureWithRecovery(relay.Identity, relay.APIHTTPSAddr, failureErr, defaultWGRecoveryFailures, time.Now().UTC())
 				if expired {
 					if syncErr := s.overlay.Sync(s.identity.Key(), s.relaySet.Snapshot()); syncErr != nil && failureErr == nil {
 						failureErr = syncErr
