@@ -1,3 +1,126 @@
+---
+title: Architecture
+description: Portal system architecture, transport model, and protocol details.
+priority: P1
+---
+
+<script>
+import Mermaid from '$lib/components/Mermaid.svelte'
+
+const overviewDiagram = `flowchart TD
+    CB[Client Browser]
+    ETC[External TCP Client]
+    EUC[External UDP Client]
+
+    subgraph Relay["Relay Server"]
+        SNI["SNI Router :443"]
+        API["API Server / Control Plane"]
+        TCP["TCP Port Listener"]
+        QUIC["QUIC Datagram Listener"]
+    end
+
+    subgraph SDK["SDK / portal-tunnel"]
+        RC["Reverse Connect Handler"]
+        TLS["Tenant TLS Terminator"]
+        SDKUDP["UDP Forwarder"]
+    end
+
+    LS["Local Service"]
+    LU["Local UDP Service"]
+
+    CB -- TLS ClientHello --> SNI
+    SNI -- SNI route + 0x02 marker --> RC
+    RC --> TLS --> LS
+
+    ETC -- raw TCP --> TCP
+    TCP -- 0x01 marker + bridge --> RC
+
+    EUC -- UDP packet --> QUIC
+    QUIC -- QUIC DATAGRAM frame --> SDKUDP --> LU
+
+    SDK -- POST /sdk/register, GET /sdk/connect --> API`
+
+const tlsStreamDiagram = `sequenceDiagram
+    participant SDK as SDK / portal-tunnel
+    participant Relay as Relay Server
+    participant Client as Client Browser
+
+    SDK->>Relay: POST /sdk/register/challenge
+    Relay->>SDK: SIWE challenge message
+    SDK->>Relay: POST /sdk/register (signed)
+    Relay->>SDK: access_token + lease info
+
+    SDK->>Relay: GET /sdk/connect (HTTP/1.1 hijack)
+    Relay->>SDK: connection hijacked, 0x00 keepalives
+    Note over Relay: Session queued in per-lease stream ready queue
+
+    Client->>Relay: TLS ClientHello (SNI: name.relay.host)
+    Note over Relay: SNI peek, resolve lease, claim reverse session
+    Relay->>SDK: write 0x02 (TLS activation marker)
+    Note over SDK: Starts tenant TLS handshake locally via keyless signer
+    Relay->>Client: bridges raw encrypted bytes bidirectionally
+    Note over Client,SDK: End-to-end TLS, relay never sees plaintext`
+
+const tcpPortDiagram = `sequenceDiagram
+    participant SDK as SDK / portal-tunnel
+    participant Relay as Relay Server
+    participant ExtClient as External TCP Client
+
+    SDK->>Relay: POST /sdk/register (tcp_enabled=true, signed SIWE)
+    Note over Relay: Validates TCP plane enabled, allocates port from MIN_PORT-MAX_PORT
+    Relay->>SDK: tcp_addr + access_token
+
+    SDK->>Relay: GET /sdk/connect (reverse session, HTTP/1.1 hijack)
+    Note over Relay: Session queued in per-lease stream ready queue
+
+    ExtClient->>Relay: TCP connect to tcp_addr
+    Note over Relay: Accepts connection, claims reverse session
+    Relay->>SDK: write 0x01 (raw TCP activation marker)
+    Note over SDK: Receives 0x01, passes raw connection without TLS handshake
+    Relay->>ExtClient: bridges data bidirectionally (raw TCP)
+    Note over ExtClient,SDK: No TLS, pure raw TCP passthrough`
+
+const udpQuicDiagram = `sequenceDiagram
+    participant SDK as SDK / portal-tunnel
+    participant Relay as Relay Server
+    participant UDPClient as External UDP Client
+
+    SDK->>Relay: POST /sdk/register (udp_enabled=true, signed SIWE)
+    Note over Relay: Allocates UDP port from MIN_PORT-MAX_PORT
+    Relay->>SDK: udp_addr + access_token + sni_port
+
+    SDK->>Relay: QUIC connect to sni_port (ALPN: portal-tunnel, DATAGRAM enabled)
+    SDK->>Relay: Send access_token on first QUIC stream
+    Note over Relay: Validates token, registers QUIC tunnel for lease
+
+    UDPClient->>Relay: UDP packet to udp_addr
+    Note over Relay: Assigns flow ID, wraps in QUIC DATAGRAM frame
+    Relay->>SDK: QUIC DATAGRAM frame (flowID + payload)
+    Note over SDK: Decodes frame, forwards to local UDP service
+
+    SDK->>Relay: QUIC DATAGRAM frame (flowID + response)
+    Relay->>UDPClient: WriteToUDP back to original client address`
+
+const registrationDiagram = `sequenceDiagram
+    participant SDK as SDK / portal-tunnel
+    participant Relay as Relay Server
+
+    SDK->>Relay: POST /sdk/register/challenge (address)
+    Relay->>SDK: SIWE challenge message
+
+    Note over SDK: Signs SIWE message with secp256k1 identity key (personal_sign)
+
+    SDK->>Relay: POST /sdk/register (message, signature, name, tcp_enabled?, udp_enabled?)
+    Note over Relay: Validates SIWE signature, checks name availability
+    Note over Relay: Creates lease, publishes route at name.relay-host
+    Note over Relay: Allocates TCP/UDP ports if requested
+    Relay->>SDK: access_token (ES256K JWT) + lease info (tcp_addr?, udp_addr?, sni_port?)`
+</script>
+
+<div class="not-prose mb-8 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300">
+  <strong>Advanced Documentation</strong> — This page covers internal architecture details for contributors and advanced users.
+</div>
+
 # Architecture
 
 ## Overview
@@ -26,6 +149,8 @@ UDP client
   -> SDK / portal-tunnel
   -> Local UDP service
 ```
+
+<Mermaid code={overviewDiagram} />
 
 ## Architecture Invariants
 
@@ -122,6 +247,8 @@ Shared wire types, API envelope, error codes, path constants, and transport fram
 
 Result: the relay decides routing, but tenant TLS termination still happens at the SDK/tunnel side.
 
+<Mermaid code={tlsStreamDiagram} />
+
 ### Tenant TLS Self-Probe Detection
 
 1. After a real tenant connection begins I/O, the SDK may start one asynchronous self-probe for that listener if no probe is in flight and the 30-second cooldown has expired.
@@ -146,6 +273,8 @@ Result: this is a detect-only signal by default. It raises the cost of adaptive 
 
 Result: the relay allocates a dedicated TCP port per lease and bridges raw TCP without TLS. This is ideal for non-TLS protocols like Minecraft, game servers, or any raw TCP service.
 
+<Mermaid code={tcpPortDiagram} />
+
 ### UDP/QUIC Datagram Transport
 
 1. SDK/tunnel requests a register challenge with `udp_enabled=true`, signs the returned SIWE message, and completes registration.
@@ -158,6 +287,8 @@ Result: the relay allocates a dedicated TCP port per lease and bridges raw TCP w
 8. Return path: local response -> SDK -> QUIC DATAGRAM -> relay -> `WriteToUDP` to the original client.
 
 Result: raw public UDP exposure with an internal QUIC datagram backhaul. UDP and TCP port allocations are independent from the same `MIN_PORT-MAX_PORT` range.
+
+<Mermaid code={udpQuicDiagram} />
 
 ## WireGuard Overlay and Discovery
 
@@ -178,6 +309,8 @@ Result: raw public UDP exposure with an internal QUIC datagram backhaul. UDP and
 - UDP registration requires server `UDP_ENABLED=true`, a valid `MIN_PORT/MAX_PORT` range, and admin enablement. Failures: `udp_disabled` (403), `udp_capacity_exceeded` (503), `udp_port_exhausted` (503).
 - TCP port registration has equivalent three-condition gating. Failures: `tcp_port_disabled` (403), `tcp_port_capacity_exceeded` (503), `tcp_port_exhausted` (503).
 - `PORTAL_URL` is normalized to its host component only; path/query segments are ignored for routing.
+
+<Mermaid code={registrationDiagram} />
 
 ### 2. Reverse Connect
 

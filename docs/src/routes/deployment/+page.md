@@ -1,3 +1,13 @@
+---
+title: Deployment
+description: Production deployment guide for Portal relay servers.
+priority: P1
+---
+
+<div class="not-prose mb-8 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300">
+  <strong>Advanced Documentation</strong> — This page covers production relay deployment for operators.
+</div>
+
 # Portal Relay Deployment Guide
 
 This guide covers the production steps for running Portal Relay on a public domain.

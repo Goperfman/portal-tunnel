@@ -1,0 +1,151 @@
+---
+title: CLI Reference
+description: Complete reference for the Portal CLI commands, flags, and usage examples.
+---
+
+# CLI Reference
+
+The `portal` CLI exposes local services through Portal relay servers. This page documents all commands, flags, and usage patterns.
+
+## Installation
+
+### macOS / Linux
+
+```bash
+curl -fsSL https://github.com/gosuda/portal-tunnel/releases/latest/download/install.sh | bash
+```
+
+### Windows (PowerShell)
+
+```powershell
+$ProgressPreference = 'SilentlyContinue'
+irm https://github.com/gosuda/portal-tunnel/releases/latest/download/install.ps1 | iex
+```
+
+### From a relay
+
+If your relay publishes its own installer:
+
+```bash
+curl -sSL https://portal.example.com/install.sh | bash
+```
+
+The installer downloads the `portal` binary and adds it to your PATH. No configuration file is written.
+
+## Commands
+
+### `portal expose`
+
+Expose a local service to the internet.
+
+```bash
+portal expose [flags] <target>
+```
+
+**Target formats:**
+
+| Format | Example | Resolves to |
+|--------|---------|-------------|
+| Bare port | `3000` | `127.0.0.1:3000` |
+| Host:port | `localhost:8080` | `localhost:8080` |
+| URL | `http://127.0.0.1:3000` | `127.0.0.1:3000` |
+
+Instead of a positional target, you can use `--http-route` for multi-service routing.
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--relays` | string | _(registry)_ | Portal relay API URLs (comma-separated, https only) |
+| `--discovery` | bool | `true` | Include public registry relays and discover additional bootstraps |
+| `--ban-mitm` | bool | `true` | Ban relay when the MITM self-probe detects TLS termination |
+| `--identity-path` | string | `./identity.json` | Identity JSON file path; created automatically when missing |
+| `--name` | string | _(auto)_ | Public hostname prefix (single DNS label); auto-generated when omitted |
+| `--description` | string | | Service description metadata |
+| `--tags` | string | | Service tags metadata (comma-separated) |
+| `--thumbnail` | string | | Service thumbnail URL metadata |
+| `--owner` | string | | Service owner metadata |
+| `--hide` | bool | `false` | Hide service from relay listing screens |
+| `--tcp` | bool | `false` | Request a dedicated TCP port for raw TCP services (no TLS) |
+| `--http-route` | string | | HTTP route mapping in `PATH=UPSTREAM` form; repeat for multiple routes |
+
+**Examples:**
+
+Basic usage:
+
+```bash
+portal expose 3000
+```
+
+With custom name and relay:
+
+```bash
+portal expose localhost:8080 \
+  --name myapp \
+  --relays https://portal.example.com \
+  --description "My web application" \
+  --tags webapp,demo
+```
+
+TCP port routing (Minecraft server):
+
+```bash
+portal expose localhost:25565 --name minecraft --tcp
+```
+
+Multi-service HTTP routing:
+
+```bash
+portal expose --name myapp \
+  --http-route /api=http://127.0.0.1:3001 \
+  --http-route /=http://127.0.0.1:5173
+```
+
+Route matching is longest-prefix-first. `/api` matches `/api/*` and strips the `/api` prefix before proxying to the upstream. Routed HTTP mode automatically forwards `X-Forwarded-*` headers, rewrites upstream `Location` redirects, and remaps cookie paths.
+
+Disable relay discovery:
+
+```bash
+portal expose 3000 --relays https://portal.example.com --discovery=false
+```
+
+Warning-only MITM mode:
+
+```bash
+portal expose 3000 --ban-mitm=false
+```
+
+### `portal list`
+
+Print the relay URLs that the CLI will use.
+
+```bash
+portal list [flags]
+```
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--relays` | string | _(registry)_ | Additional relay URLs |
+| `--default-relays` | bool | `true` | Include public registry relays |
+
+Unlike `portal expose`, `portal list` does not run the relay discovery expansion loop. It only resolves the registry seed list plus explicit `--relays` values.
+
+## Behavior Notes
+
+- **Identity persistence** — `portal expose` loads or creates a signing identity at `identity.json` (or `--identity-path`). Reusing the same path keeps the same address across runs.
+- **Multiple relays** — Multiple relay URLs are registered independently. Each relay gets its own lease. A relay going down does not stop healthy relays from serving.
+- **Retry semantics** — Relay startup and reconnect failures are retried in the background. The tunnel starts as soon as relay URLs pass local validation.
+- **Discovery expansion** — With discovery enabled, the relay list can grow beyond the initial registry + `--relays` values through relay-to-relay synchronization.
+- **MITM enforcement** — Enabled by default. The TLS self-probe runs asynchronously after real connections begin, with a 30-second cooldown between probes.
+- **503 on unreachable local service** — When the local target is unreachable, the tunnel returns an HTTP 503 page to the client.
+- **HTTP route mode** — Cannot be combined with `--udp`. Routes are HTTP-only.
+- **TCP port requirements** — `--tcp` requires the relay to have `TCP_ENABLED=true`, a valid `MIN_PORT/MAX_PORT` range, and TCP port enabled in the admin panel.
+- **Legacy CLI removed** — Bare `portal [flags]` is no longer accepted; use `portal expose` explicitly. `APP_*`, `RELAYS`, and `DEFAULT_RELAYS` environment variables are no longer used.
+
+## Next Steps
+
+- **[Getting Started](/getting-started)** — Quick tutorial for your first tunnel
+- **[Concepts](/concepts)** — How Portal's encryption and relay model works
+- **[Deployment](/deployment)** — Run your own relay server
