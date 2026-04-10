@@ -423,15 +423,10 @@ func (l *Listener) runRenewLoop(ctx context.Context) {
 }
 
 func (l *Listener) renewLease(ctx context.Context) error {
-	l.api.mu.RLock()
-	expiresAt := l.api.expiresAt
-	l.api.mu.RUnlock()
-
-	if time.Now().Before(expiresAt) {
+	if time.Now().Before(l.api.expiresAt) {
 		requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		err := l.api.renewLease(requestCtx, l.leaseTTL)
 		cancel()
-
 		if err == nil {
 			return nil
 		}
