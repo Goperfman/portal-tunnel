@@ -113,6 +113,11 @@ func (s *RelaySet) OverlayPeerStates() []RelayState {
 		if !state.discoverable(now) || !state.Descriptor.SupportsOverlayPeer {
 			continue
 		}
+		if state.Descriptor.WireGuardPublicKey == "" ||
+			state.Descriptor.WireGuardEndpoint == "" ||
+			state.Descriptor.OverlayIPv4 == "" {
+			continue
+		}
 		out = append(out, state)
 	}
 	if len(out) == 0 {

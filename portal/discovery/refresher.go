@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"time"
@@ -28,11 +27,10 @@ type OverlayRuntime interface {
 }
 
 type Refresher struct {
-	relaySet                *RelaySet
-	httpClient              *http.Client
-	overlay                 OverlayRuntime
-	directRecoveryFailures  int
-	overlayRecoveryFailures int
+	relaySet               *RelaySet
+	httpClient             *http.Client
+	overlay                OverlayRuntime
+	directRecoveryFailures int
 }
 
 func NewRefresher(relaySet *RelaySet, rootCAPEM []byte, overlay OverlayRuntime) (*Refresher, error) {
@@ -59,26 +57,22 @@ func NewRefresher(relaySet *RelaySet, rootCAPEM []byte, overlay OverlayRuntime) 
 			},
 			Timeout: defaultRequestTimeout,
 		},
-		overlay:                 overlay,
-		directRecoveryFailures:  defaultRecoveryFailures,
-		overlayRecoveryFailures: defaultRecoveryFailures,
+		overlay:                overlay,
+		directRecoveryFailures: defaultRecoveryFailures,
 	}, nil
 }
 
 func (r *Refresher) Refresh(ctx context.Context) error {
-	if err := r.refreshHTTPS(ctx); err != nil {
-		return err
+	if r.overlay != nil {
+		err := r.refreshOverlay(ctx)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 	}
-	if r.overlay == nil {
-		return ctx.Err()
-	}
-	if err := r.overlay.Sync(r.relaySet.OverlayPeerStates()); err != nil {
-		log.Warn().
-			Err(err).
-			Msg("sync wireguard peers")
-		return ctx.Err()
-	}
-	return r.refreshOverlay(ctx)
+	return r.refreshHTTPS(ctx)
 }
 
 func (r *Refresher) refreshHTTPS(ctx context.Context) error {
@@ -94,9 +88,6 @@ func (r *Refresher) refreshHTTPS(ctx context.Context) error {
 		relay := state.Descriptor
 		baseURL, err := url.Parse(relay.APIHTTPSAddr)
 		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
 			continue
 		}
 		if utils.IsLocalRelayHost(baseURL.Hostname()) {
@@ -105,6 +96,7 @@ func (r *Refresher) refreshHTTPS(ctx context.Context) error {
 				Msg("skip loopback relay as discovery source")
 			continue
 		}
+
 		var resp types.DiscoveryResponse
 		if err := utils.HTTPDoAPIPath(ctx, r.httpClient, baseURL, http.MethodGet, types.PathDiscovery, nil, nil, &resp); err != nil {
 			if ctx.Err() != nil {
@@ -113,9 +105,7 @@ func (r *Refresher) refreshHTTPS(ctx context.Context) error {
 			continue
 		}
 
-		now := time.Now().UTC()
-		_, err = r.relaySet.ApplyRelayDiscoveryResponse(relay.Identity, relay.APIHTTPSAddr, resp, now)
-		if err != nil {
+		if _, err := r.relaySet.ApplyRelayDiscoveryResponse(relay.Identity, relay.APIHTTPSAddr, resp, time.Now().UTC()); err != nil {
 			continue
 		}
 	}
@@ -132,16 +122,10 @@ func (r *Refresher) refreshHTTPS(ctx context.Context) error {
 		if !state.discoverable(now) || state.Bootstrap {
 			continue
 		}
-		if r.overlay != nil && state.Descriptor.SupportsOverlayPeer {
-			continue
-		}
 		relay := state.Descriptor
 		baseURL, err := url.Parse(relay.APIHTTPSAddr)
 		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			r.logDirectDiscoveryFailure(relay, fmt.Errorf("parse discovery base url: %w", err), r.directRecoveryFailures)
+			r.logDirectDiscoveryFailure(relay, err, r.directRecoveryFailures)
 			continue
 		}
 		if utils.IsLocalRelayHost(baseURL.Hostname()) {
@@ -150,6 +134,7 @@ func (r *Refresher) refreshHTTPS(ctx context.Context) error {
 				Msg("skip loopback relay as discovery source")
 			continue
 		}
+
 		var resp types.DiscoveryResponse
 		if err := utils.HTTPDoAPIPath(ctx, r.httpClient, baseURL, http.MethodGet, types.PathDiscovery, nil, nil, &resp); err != nil {
 			if ctx.Err() != nil {
@@ -159,74 +144,48 @@ func (r *Refresher) refreshHTTPS(ctx context.Context) error {
 			continue
 		}
 
-		now := time.Now().UTC()
-		_, err = r.relaySet.ApplyRelayDiscoveryResponse(relay.Identity, relay.APIHTTPSAddr, resp, now)
-		if err != nil {
+		if _, err := r.relaySet.ApplyRelayDiscoveryResponse(relay.Identity, relay.APIHTTPSAddr, resp, time.Now().UTC()); err != nil {
 			r.logDirectDiscoveryFailure(relay, err, r.directRecoveryFailures)
 			continue
 		}
 	}
-	return ctx.Err()
+	return nil
 }
 
 func (r *Refresher) refreshOverlay(ctx context.Context) error {
-	r.relaySet.mu.RLock()
-	states := r.relaySet.relayStatesLocked()
-	r.relaySet.mu.RUnlock()
-
-	now := time.Now().UTC()
+	states := r.relaySet.OverlayPeerStates()
+	if len(states) == 0 {
+		return errors.New("overlay discovery unavailable")
+	}
+	if err := r.overlay.Sync(states); err != nil {
+		log.Warn().
+			Err(err).
+			Msg("sync wireguard peers")
+		return err
+	}
 	for _, state := range states {
-		if !state.discoverable(now) || state.Bootstrap || !state.Descriptor.SupportsOverlayPeer {
-			continue
-		}
 		relay := state.Descriptor
-		var failureErr error
-
 		resp, err := r.overlay.DiscoverRelay(ctx, relay)
 		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			failureErr = err
-		} else {
-			now := time.Now().UTC()
-			relaySetChanged, err := r.relaySet.ApplyRelayDiscoveryResponse(relay.Identity, relay.APIHTTPSAddr, resp, now)
-			if relaySetChanged {
-				if syncErr := r.overlay.Sync(r.relaySet.OverlayPeerStates()); syncErr != nil {
-					log.Warn().
-						Err(syncErr).
-						Str("relay", relay.APIHTTPSAddr).
-						Msg("sync wireguard peers")
-				}
-			}
-			if err != nil {
-				failureErr = err
-			} else {
-				continue
-			}
+			return err
 		}
 
-		expired, expireReason, consecutiveFailures := r.relaySet.RecordDiscoveryFailure(relay.Identity, relay.APIHTTPSAddr, failureErr, r.overlayRecoveryFailures)
-		if expired {
-			if syncErr := r.overlay.Sync(r.relaySet.OverlayPeerStates()); syncErr != nil && failureErr == nil {
-				failureErr = syncErr
-			}
+		relaySetChanged, err := r.relaySet.ApplyRelayDiscoveryResponse(relay.Identity, relay.APIHTTPSAddr, resp, time.Now().UTC())
+		if err != nil {
+			return err
 		}
-
-		event := log.Warn().
-			Err(failureErr).
-			Str("relay", relay.APIHTTPSAddr)
-		if expired {
-			event = event.
-				Bool("expired", true).
-				Str("reason", expireReason)
-			if consecutiveFailures > 0 {
-				event = event.Int("consecutive_failures", consecutiveFailures)
-			}
+		if !relaySetChanged {
+			continue
 		}
-		event.Msg("overlay relay discovery failed")
+		if err := r.overlay.Sync(r.relaySet.OverlayPeerStates()); err != nil {
+			log.Warn().
+				Err(err).
+				Str("relay", relay.APIHTTPSAddr).
+				Msg("sync wireguard peers")
+			return err
+		}
 	}
-	return ctx.Err()
+	return nil
 }
 
 func (r *Refresher) logDirectDiscoveryFailure(relay types.RelayDescriptor, err error, recoveryFailures int) {

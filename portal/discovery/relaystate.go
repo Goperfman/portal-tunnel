@@ -71,12 +71,6 @@ func (state RelayState) discoverable(now time.Time) bool {
 	if !state.Descriptor.ExpiresAt.After(now) {
 		return false
 	}
-	if state.Descriptor.SupportsOverlayPeer &&
-		(state.Descriptor.WireGuardPublicKey == "" ||
-			state.Descriptor.WireGuardEndpoint == "" ||
-			state.Descriptor.OverlayIPv4 == "") {
-		return false
-	}
 	return true
 }
 
