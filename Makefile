@@ -1,4 +1,4 @@
-.PHONY: help install fmt vet lint lint-auto test vuln tidy all run build build-frontend build-tunnel build-server clean
+.PHONY: help install fmt vet lint lint-auto test vuln tidy all run build build-frontend build-docs build-tunnel build-server clean
 
 .DEFAULT_GOAL := help
 
@@ -17,6 +17,7 @@ help:
 	@echo "  make lint-auto         - Run autofix lint/format pipeline"
 	@echo "  make build             - Build everything (frontend, tunnel, server)"
 	@echo "  make build-frontend    - Build React frontend (Tailwind CSS 4)"
+	@echo "  make build-docs        - Build documentation site (SvelteKit)"
 	@echo "  make build-tunnel      - Build portal-tunnel binaries"
 	@echo "  make build-server      - Build Go relay server (frontend built separately)"
 	@echo "  make run               - Run relay server"
@@ -67,6 +68,12 @@ build-frontend:
 	@mkdir -p cmd/relay-server/dist/app
 	@cd frontend && npm i && npm run build
 	@echo "[frontend] build complete"
+
+# Build documentation site
+build-docs:
+	@echo "[docs] building documentation site..."
+	@cd docs && bun install --frozen-lockfile && bun run build
+	@echo "[docs] build complete"
 
 # Build portal-tunnel binaries for installer distribution
 build-tunnel:
