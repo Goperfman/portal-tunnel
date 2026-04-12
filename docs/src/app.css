@@ -46,6 +46,11 @@
 	--color-text-muted: var(--text-muted);
 }
 
+/* Layout tokens */
+:root {
+	--header-h: 6.5rem; /* 104px — matches sticky header outer height (py-5 + py-2 + content) */
+}
+
 /* Hero & landing page custom properties (not in @theme — used via var() in inline styles) */
 :root {
 	--background: oklch(97% 0.005 250);
@@ -88,8 +93,10 @@
 }
 
 /* Global border color reset (matches React frontend) */
-* {
-	border-color: var(--border);
+@layer base {
+	* {
+		border-color: var(--border);
+	}
 }
 
 /* Base styles */

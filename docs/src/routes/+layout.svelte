@@ -130,7 +130,7 @@
 	<!-- Doc pages: sidebars + prose -->
 	<div class="mx-auto max-w-[90rem] lg:flex">
 		<aside class="hidden w-64 shrink-0 border-r border-gray-200 lg:block dark:border-white/8">
-			<div class="sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto p-6">
+			<div class="sticky top-[var(--header-h)] h-[calc(100vh-var(--header-h))] overflow-y-auto p-6">
 				<Sidebar />
 			</div>
 		</aside>
@@ -145,7 +145,7 @@
 		</main>
 
 		<aside class="hidden w-56 shrink-0 border-l border-gray-200 xl:block dark:border-white/8">
-			<div class="sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto py-8 pr-4">
+			<div class="sticky top-[var(--header-h)] h-[calc(100vh-var(--header-h))] overflow-y-auto py-8 pr-4">
 				<TableOfContents />
 			</div>
 		</aside>
