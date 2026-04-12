@@ -43,7 +43,7 @@
 <div class="not-prose my-6">
 	<div bind:this={container} class="flex justify-center overflow-x-auto">
 		<noscript>
-			<pre class="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm dark:border-gray-700 dark:bg-gray-800"><code>{code}</code></pre>
+			<pre class="rounded-lg border border-border bg-secondary p-4 text-sm"><code>{code}</code></pre>
 		</noscript>
 	</div>
 </div>

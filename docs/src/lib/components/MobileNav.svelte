@@ -17,7 +17,7 @@
 
 	<!-- Drawer -->
 	<div
-		class="fixed inset-y-0 left-0 z-50 w-72 overflow-y-auto border-r border-gray-200 bg-white p-6 lg:hidden dark:border-gray-700 dark:bg-gray-900"
+		class="fixed inset-y-0 left-0 z-50 w-72 overflow-y-auto border-r border-border bg-background p-6 lg:hidden"
 	>
 		<div class="mb-6 flex items-center justify-between">
 			<span class="text-lg font-bold text-gray-900 dark:text-white">Portal Docs</span>

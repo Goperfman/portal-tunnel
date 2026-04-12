@@ -64,27 +64,24 @@
 				>
 					<div class="flex h-full flex-col space-y-3">
 						<p
-							class="text-[11px] font-semibold uppercase tracking-[0.24em]"
-							style="color: oklch(75% 0.14 195 / 0.8);"
+							class="text-[11px] font-semibold uppercase tracking-[0.24em] text-primary/80"
 						>
 							{eyebrow}
 						</p>
 						<h3
-							class="text-[1.2rem] font-semibold tracking-tight sm:text-[1.32rem] sm:leading-tight"
-							style="color: var(--foreground);"
+							class="text-[1.2rem] font-semibold tracking-tight text-foreground sm:text-[1.32rem] sm:leading-tight"
 						>
 							{title}
 						</h3>
 						<p
-							class="max-w-[28ch] text-[0.95rem] leading-6"
-							style="color: var(--text-muted);"
+							class="max-w-[28ch] text-[0.95rem] leading-6 text-text-muted"
 						>
 							{description}
 						</p>
 						<div class="mt-auto pt-4">
 							<div
 								class="h-px w-12"
-								style="background: linear-gradient(to right, oklch(75% 0.14 195 / 0.55), transparent);"
+								style="background: var(--gradient-primary-fade);"
 							></div>
 						</div>
 					</div>

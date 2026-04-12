@@ -49,6 +49,7 @@
 /* Layout tokens */
 :root {
 	--header-h: 6.5rem; /* 104px — matches sticky header outer height (py-5 + py-2 + content) */
+	--gradient-primary-fade: linear-gradient(to right, oklch(75% 0.14 195 / 0.55), transparent);
 }
 
 /* Hero & landing page custom properties (not in @theme — used via var() in inline styles) */

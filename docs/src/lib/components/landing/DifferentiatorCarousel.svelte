@@ -226,22 +226,19 @@
 							<div class="relative flex h-full flex-col">
 								<div class="flex items-center gap-4">
 									<span
-										class="inline-flex rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]"
-										style="background: oklch(75% 0.14 195 / 0.12); color: var(--neon-cyan);"
+										class="inline-flex rounded-full bg-primary/[0.12] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-primary"
 									>
 										Portal
 									</span>
 								</div>
 								<div class="mt-10 space-y-3">
 									<h3
-										class="max-w-[12ch] text-[1.9rem] font-semibold leading-[0.92] tracking-tight sm:text-[2.2rem]"
-										style="color: var(--foreground);"
+										class="max-w-[12ch] text-[1.9rem] font-semibold leading-[0.92] tracking-tight text-foreground sm:text-[2.2rem]"
 									>
 										{card.title}
 									</h3>
 									<p
-										class="max-w-[34ch] text-[0.98rem] leading-6 sm:text-[1rem]"
-										style="color: var(--text-muted);"
+										class="max-w-[34ch] text-[0.98rem] leading-6 text-text-muted sm:text-[1rem]"
 									>
 										{card.description}
 									</p>
@@ -249,7 +246,7 @@
 								<div class="mt-auto pt-8">
 									<div
 										class="h-px w-16"
-										style="background: linear-gradient(to right, oklch(75% 0.14 195 / 0.55), transparent);"
+										style="background: var(--gradient-primary-fade);"
 									></div>
 								</div>
 							</div>

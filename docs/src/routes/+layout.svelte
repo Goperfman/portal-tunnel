@@ -85,7 +85,7 @@
 				href="https://github.com/gosuda/portal-tunnel"
 				target="_blank"
 				rel="noopener noreferrer"
-				class="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-border/70 bg-background/90 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:text-primary" style="color: var(--foreground);"
+				class="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-border/70 bg-background/90 text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:text-primary"
 				aria-label="View source on GitHub"
 			>
 				<svg height="22" width="22" viewBox="0 0 24 24" fill="currentColor" class="opacity-85 transition-opacity hover:opacity-100">
@@ -113,14 +113,14 @@
 	<footer class="w-full border-t bg-secondary/35">
 		<div class="flex w-full flex-col gap-6 px-6 py-8 sm:px-8 md:flex-row md:items-end md:justify-between lg:px-10">
 			<div class="space-y-1.5">
-				<a href="{base}/" class="inline-block text-lg font-bold tracking-tight transition-colors hover:text-primary" style="color: var(--foreground);">
+				<a href="{base}/" class="inline-block text-lg font-bold tracking-tight text-foreground transition-colors hover:text-primary">
 					PORTAL
 				</a>
-				<p class="text-sm" style="color: var(--text-muted);">
+				<p class="text-sm text-text-muted">
 					Public relay index and localhost tunnel launcher.
 				</p>
 			</div>
-			<nav aria-label="Footer" class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm md:justify-end" style="color: var(--text-muted);">
+			<nav aria-label="Footer" class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-text-muted md:justify-end">
 				<a href="{base}/getting-started" class="transition-colors hover:text-foreground">Docs</a>
 				<a href="https://github.com/gosuda/portal-tunnel" target="_blank" rel="noopener noreferrer" class="transition-colors hover:text-foreground">Source</a>
 			</nav>
@@ -129,7 +129,7 @@
 	{:else}
 	<!-- Doc pages: sidebars + prose -->
 	<div class="mx-auto max-w-[90rem] lg:flex">
-		<aside class="hidden w-64 shrink-0 border-r border-gray-200 lg:block dark:border-white/8">
+		<aside class="hidden w-64 shrink-0 border-r border-border lg:block">
 			<div class="sticky top-[var(--header-h)] h-[calc(100vh-var(--header-h))] overflow-y-auto p-6">
 				<Sidebar />
 			</div>
@@ -144,7 +144,7 @@
 			</div>
 		</main>
 
-		<aside class="hidden w-56 shrink-0 border-l border-gray-200 xl:block dark:border-white/8">
+		<aside class="hidden w-56 shrink-0 border-l border-border xl:block">
 			<div class="sticky top-[var(--header-h)] h-[calc(100vh-var(--header-h))] overflow-y-auto py-8 pr-4">
 				<TableOfContents />
 			</div>
