@@ -8,6 +8,7 @@
 	import TableOfContents from '$lib/components/TableOfContents.svelte';
 	import PrevNextNav from '$lib/components/PrevNextNav.svelte';
 	import { getPrevNext } from '$lib/nav';
+	import { copyCode } from '$lib/actions/copy-code';
 	import '../app.css';
 
 	let { children } = $props();
@@ -136,7 +137,7 @@
 		</aside>
 
 		<main class="min-w-0 flex-1 px-4 py-8 lg:px-8">
-			<article class="prose prose-gray dark:prose-invert mx-auto max-w-3xl">
+			<article use:copyCode={$page.url.pathname} class="prose prose-gray dark:prose-invert mx-auto max-w-3xl">
 				{@render children()}
 			</article>
 			<div class="mx-auto max-w-3xl">
