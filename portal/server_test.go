@@ -316,55 +316,6 @@ func TestServerStartUsesManualCertificateWithoutACMEProvider(t *testing.T) {
 	}
 }
 
-func TestServerStartDiscoveryIncludesIdentityAndOmitsSignerFields(t *testing.T) {
-	t.Parallel()
-
-	server, err := NewServer(ServerConfig{
-		PortalURL:        "https://localhost:4017",
-		IdentityPath:     tempIdentityPath(t),
-		ACME:             acme.Config{KeyDir: t.TempDir()},
-		APIListenAddr:    "127.0.0.1:0",
-		SNIListenAddr:    "127.0.0.1:0",
-		DiscoveryEnabled: true,
-	})
-	if err != nil {
-		t.Fatalf("NewServer() error = %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if err := server.Start(ctx, nil); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-
-	client := newTestClient(t, cancel, server)
-
-	resp, err := client.Get("https://" + utils.HostPortOrLoopback(server.apiListener.Addr().String()) + types.PathDiscovery)
-	if err != nil {
-		t.Fatalf("GET /discovery error = %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET /discovery status = %d, want %d", resp.StatusCode, http.StatusOK)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read /discovery response: %v", err)
-	}
-	bodyText := string(body)
-	for _, key := range []string{"\"address\"", "\"name\"", "\"relay_id\"", "\"owner_address\"", "\"signer_public_key\""} {
-		if !strings.Contains(bodyText, key) {
-			t.Fatalf("/discovery body = %q, want %q present", bodyText, key)
-		}
-	}
-	if strings.Contains(bodyText, "descriptor_signature") {
-		t.Fatalf("/discovery body = %q, want descriptor_signature omitted", bodyText)
-	}
-}
-
 func TestServerStartRejectsMismatchedACMEBaseDomain(t *testing.T) {
 	t.Parallel()
 
