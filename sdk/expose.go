@@ -254,9 +254,10 @@ func (e *Exposure) WaitDatagramReady(ctx context.Context) ([]string, error) {
 
 func (e *Exposure) RunHTTP(ctx context.Context, handler http.Handler, localAddr string) error {
 	var relayListener net.Listener
+	activeRelayURLs := e.relaySet.ActiveRelayURLs()
 	e.listenerMu.RLock()
 	activeListeners := make([]*Listener, 0, len(e.relayListeners))
-	for _, relayURL := range e.relaySet.ActiveRelayURLs() {
+	for _, relayURL := range activeRelayURLs {
 		listener, ok := e.relayListeners[relayURL]
 		if !ok {
 			continue
@@ -364,8 +365,8 @@ func (e *Exposure) Close() error {
 }
 
 func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
-	e.listenerMu.Lock()
 	activeRelayURLs := e.relaySet.ActiveRelayURLs()
+	e.listenerMu.Lock()
 	currentRelayURLs := make([]string, 0, len(e.relayListeners))
 	for relayURL := range e.relayListeners {
 		currentRelayURLs = append(currentRelayURLs, relayURL)

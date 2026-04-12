@@ -30,6 +30,65 @@ func NormalizeIdentity(identity types.Identity) (types.Identity, error) {
 	return normalized, nil
 }
 
+func NormalizeDescriptor(desc types.RelayDescriptor) (types.RelayDescriptor, error) {
+	desc.Name = NormalizeHostname(desc.Name)
+	desc.Address = strings.TrimSpace(desc.Address)
+	desc.APIHTTPSAddr = strings.TrimSpace(desc.APIHTTPSAddr)
+	desc.RelayID = strings.TrimSpace(desc.RelayID)
+	desc.IngressTLSAddr = strings.TrimSpace(desc.IngressTLSAddr)
+	desc.WireGuardPublicKey = strings.TrimSpace(desc.WireGuardPublicKey)
+	desc.WireGuardEndpoint = strings.TrimSpace(desc.WireGuardEndpoint)
+	desc.OverlayIPv4 = strings.TrimSpace(desc.OverlayIPv4)
+	desc.OverlayCIDRs = NormalizeIPPrefixes(desc.OverlayCIDRs)
+	desc.OwnerAddress = strings.TrimSpace(desc.OwnerAddress)
+	desc.SignerPublicKey = strings.TrimSpace(desc.SignerPublicKey)
+	if !desc.IssuedAt.IsZero() {
+		desc.IssuedAt = desc.IssuedAt.UTC()
+	}
+	if !desc.ExpiresAt.IsZero() {
+		desc.ExpiresAt = desc.ExpiresAt.UTC()
+	}
+
+	if desc.APIHTTPSAddr != "" {
+		normalized, err := NormalizeRelayURL(desc.APIHTTPSAddr)
+		if err != nil {
+			return types.RelayDescriptor{}, fmt.Errorf("normalize api https addr: %w", err)
+		}
+		desc.APIHTTPSAddr = normalized
+	}
+	if desc.RelayID != "" {
+		normalized, err := NormalizeRelayURL(desc.RelayID)
+		if err != nil {
+			return types.RelayDescriptor{}, fmt.Errorf("normalize relay id: %w", err)
+		}
+		desc.RelayID = normalized
+	}
+	if desc.RelayID == "" {
+		desc.RelayID = desc.APIHTTPSAddr
+	}
+	if desc.Address != "" {
+		normalized, err := NormalizeEVMAddress(desc.Address)
+		if err != nil {
+			return types.RelayDescriptor{}, fmt.Errorf("normalize address: %w", err)
+		}
+		desc.Address = normalized
+	}
+	if desc.OwnerAddress == "" {
+		desc.OwnerAddress = desc.Address
+	}
+	if desc.OwnerAddress != "" {
+		normalized, err := NormalizeEVMAddress(desc.OwnerAddress)
+		if err != nil {
+			return types.RelayDescriptor{}, fmt.Errorf("normalize owner address: %w", err)
+		}
+		desc.OwnerAddress = normalized
+	}
+	if desc.SignerPublicKey == "" {
+		desc.SignerPublicKey = desc.PublicKey
+	}
+	return desc, nil
+}
+
 func ResolveRelayStateDir(path string) string {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {

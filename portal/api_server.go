@@ -172,7 +172,7 @@ func (s *Server) handleRelayDiscovery(w http.ResponseWriter, r *http.Request) {
 		overlayCIDRs = append([]string(nil), cfg.OverlayCIDRs...)
 	}
 
-	self, err := discovery.NormalizeDescriptor(types.RelayDescriptor{
+	self, err := utils.NormalizeDescriptor(types.RelayDescriptor{
 		Identity:            s.identity.Base(),
 		RelayID:             s.cfg.PortalURL,
 		OwnerAddress:        s.identity.Address,

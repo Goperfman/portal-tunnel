@@ -7,6 +7,7 @@ import (
 
 	"github.com/gosuda/portal-tunnel/v2/portal/discovery"
 	"github.com/gosuda/portal-tunnel/v2/types"
+	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
 func mustRelaySet(t *testing.T, relayURLs ...string) *discovery.RelaySet {
@@ -23,7 +24,7 @@ func mustRelayDescriptor(t *testing.T, relayName, relayURL string) types.RelayDe
 	t.Helper()
 
 	now := time.Now().UTC()
-	desc, err := discovery.NormalizeDescriptor(types.RelayDescriptor{
+	desc, err := utils.NormalizeDescriptor(types.RelayDescriptor{
 		Identity: types.Identity{
 			Name: relayName,
 		},

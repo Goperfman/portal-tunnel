@@ -2,12 +2,17 @@ package discovery
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/rs/zerolog/log"
 
 	"github.com/gosuda/portal-tunnel/v2/types"
+	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
 const (
@@ -21,7 +26,7 @@ type OverlayRuntime interface {
 
 type Refresher struct {
 	relaySet                *RelaySet
-	rootCAPEM               []byte
+	httpClient              *http.Client
 	overlay                 OverlayRuntime
 	directRecoveryFailures  int
 	overlayRecoveryFailures int
@@ -31,9 +36,24 @@ func NewRefresher(relaySet *RelaySet, rootCAPEM []byte, overlay OverlayRuntime) 
 	if relaySet == nil {
 		return nil, errors.New("relay set is required")
 	}
+	httpClient := http.DefaultClient
+	if len(rootCAPEM) > 0 {
+		rootCAs, err := utils.CertPoolFromPEM(rootCAPEM)
+		if err != nil {
+			return nil, err
+		}
+		httpClient = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					MinVersion: tls.VersionTLS12,
+					RootCAs:    rootCAs,
+				},
+			},
+		}
+	}
 	return &Refresher{
 		relaySet:                relaySet,
-		rootCAPEM:               append([]byte(nil), rootCAPEM...),
+		httpClient:              httpClient,
 		overlay:                 overlay,
 		directRecoveryFailures:  defaultRecoveryFailures,
 		overlayRecoveryFailures: defaultRecoveryFailures,
@@ -58,7 +78,7 @@ func (r *Refresher) Refresh(ctx context.Context) error {
 
 func (r *Refresher) refreshHTTPS(ctx context.Context) error {
 	for _, bootstrap := range r.relaySet.BootstrapDescriptors() {
-		resp, err := DiscoverRelayDiscovery(ctx, bootstrap.APIHTTPSAddr, r.rootCAPEM, nil)
+		resp, err := r.discoverHTTPS(ctx, bootstrap)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -80,7 +100,7 @@ func (r *Refresher) refreshHTTPS(ctx context.Context) error {
 		if r.overlay != nil && relay.SupportsOverlayPeer {
 			continue
 		}
-		resp, err := DiscoverRelayDiscovery(ctx, relay.APIHTTPSAddr, r.rootCAPEM, nil)
+		resp, err := r.discoverHTTPS(ctx, relay)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -97,6 +117,19 @@ func (r *Refresher) refreshHTTPS(ctx context.Context) error {
 		}
 	}
 	return ctx.Err()
+}
+
+func (r *Refresher) discoverHTTPS(ctx context.Context, relay types.RelayDescriptor) (types.DiscoveryResponse, error) {
+	baseURL, err := url.Parse(relay.APIHTTPSAddr)
+	if err != nil {
+		return types.DiscoveryResponse{}, fmt.Errorf("parse discovery base url: %w", err)
+	}
+
+	var resp types.DiscoveryResponse
+	if err := utils.HTTPDoAPIPath(ctx, r.httpClient, baseURL, http.MethodGet, types.PathDiscovery, nil, nil, &resp); err != nil {
+		return types.DiscoveryResponse{}, err
+	}
+	return resp, nil
 }
 
 func (r *Refresher) refreshOverlay(ctx context.Context) error {
