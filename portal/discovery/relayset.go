@@ -316,6 +316,23 @@ func (s *RelaySet) RecordDiscoveryRTT(relayURL string, rtt time.Duration, measur
 	s.relays[relayURL] = state
 }
 
+func (s *RelaySet) recordRelayFailureLocked(relayURL string, state RelayState, err error, recoveryFailures int) (expired bool, expireReason string, consecutiveFailures int) {
+	state, expired, expireReason = s.policy.OnFailure(state, err, recoveryFailures)
+	s.relays[relayURL] = state
+	return expired, expireReason, state.consecutiveFailures
+}
+
+func (s *RelaySet) RecordRelayFailure(relayURL string, err error, recoveryFailures int) (expired bool, expireReason string, consecutiveFailures int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, ok := s.relays[relayURL]
+	if !ok {
+		return false, "", 0
+	}
+	return s.recordRelayFailureLocked(relayURL, state, err, recoveryFailures)
+}
+
 func (s *RelaySet) RecordDiscoveryFailure(identity types.Identity, relayURL string, err error, recoveryFailures int) (expired bool, expireReason string, consecutiveFailures int) {
 	relayKey := identity.Key()
 	if relayKey == "" {
@@ -343,8 +360,5 @@ func (s *RelaySet) RecordDiscoveryFailure(identity types.Identity, relayURL stri
 	if !ok {
 		return false, "", 0
 	}
-
-	state, expired, expireReason = s.policy.OnFailure(state, err, recoveryFailures)
-	s.relays[relayURL] = state
-	return expired, expireReason, state.consecutiveFailures
+	return s.recordRelayFailureLocked(relayURL, state, err, recoveryFailures)
 }

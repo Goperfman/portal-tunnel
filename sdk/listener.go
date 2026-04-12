@@ -147,6 +147,9 @@ func (l *Listener) runStartup(ctx context.Context) {
 				errors.Is(err, &types.APIRequestError{Code: types.APIErrorCodeTransportMismatch}) ||
 				errors.Is(err, &types.APIRequestError{Code: types.APIErrorCodeHostnameConflict}) ||
 				errors.Is(err, &types.APIRequestError{Code: types.APIErrorCodeIPBanned}) {
+				if l.relaySet != nil && l.api != nil && l.api.baseURL != nil {
+					l.relaySet.RecordRelayFailure(l.api.baseURL.String(), err, 1)
+				}
 				log.Error().
 					Err(err).
 					Str("relay_url", l.api.baseURL.String()).
@@ -669,6 +672,9 @@ func (l *Listener) retryOrClose(ctx context.Context, operation string, err error
 		Logger()
 
 	if l.retryCount > 0 && retries > l.retryCount {
+		if l.relaySet != nil && l.api != nil && l.api.baseURL != nil {
+			l.relaySet.RecordRelayFailure(l.api.baseURL.String(), err, 1)
+		}
 		if operation != "lease renewal" {
 			logger.Error().
 				Err(err).

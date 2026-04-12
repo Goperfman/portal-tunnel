@@ -71,6 +71,9 @@ func (p DefaultRelayPolicy) SelectPriority(states []RelayState, clientState Clie
 
 	out := selected[:0]
 	for _, state := range selected {
+		if state.consecutiveFailures > 0 && !state.Reachable {
+			continue
+		}
 		if clientState.RequireUDP && state.hasDescriptor() && !state.Descriptor.SupportsUDP {
 			continue
 		}
