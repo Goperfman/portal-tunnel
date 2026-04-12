@@ -7,6 +7,7 @@ import (
 
 	"github.com/gosuda/portal-tunnel/v2/portal/discovery"
 	"github.com/gosuda/portal-tunnel/v2/types"
+	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
 func mustRelaySet(t *testing.T, relayURLs ...string) *discovery.RelaySet {
@@ -23,12 +24,11 @@ func mustRelayDescriptor(t *testing.T, relayName, relayURL string) types.RelayDe
 	t.Helper()
 
 	now := time.Now().UTC()
-	desc, err := discovery.NormalizeDescriptor(types.RelayDescriptor{
+	desc, err := utils.NormalizeDescriptor(types.RelayDescriptor{
 		Identity: types.Identity{
 			Name: relayName,
 		},
 		RelayID:      relayURL,
-		Sequence:     uint64(now.UnixMilli()),
 		Version:      1,
 		IssuedAt:     now,
 		ExpiresAt:    now.Add(time.Hour),
@@ -42,11 +42,8 @@ func mustRelayDescriptor(t *testing.T, relayName, relayURL string) types.RelayDe
 
 func applyRelayDiscovery(t *testing.T, set *discovery.RelaySet, identity types.Identity, targetURL string, resp types.DiscoveryResponse, now time.Time) error {
 	t.Helper()
-	_, warnErr, err := set.ApplyRelayDiscoveryResponse(identity, targetURL, resp, now)
-	if err != nil {
-		return err
-	}
-	return warnErr
+	_, err := set.ApplyRelayDiscoveryResponse(identity, targetURL, resp, now)
+	return err
 }
 
 func TestExposureBanRelayURLMovesRelay(t *testing.T) {
@@ -82,7 +79,7 @@ func TestExposureBanRelayURLMovesRelay(t *testing.T) {
 		t.Fatalf("ActiveRelayURLs() = %v, want [%q]", got, relayB)
 	}
 
-	knownRelayURLs := exposure.relaySet.ActiveRelayURLs()
+	knownRelayURLs := exposure.ActiveRelayURLs()
 	exposure.listenerMu.RLock()
 	_, listenerExists := exposure.relayListeners[relayA]
 	exposure.listenerMu.RUnlock()
@@ -118,7 +115,7 @@ func TestExposureSetRelayURLsSkipsBannedRelay(t *testing.T) {
 	if got := exposure.ActiveRelayURLs(); len(got) != 1 || got[0] != relayA {
 		t.Fatalf("ActiveRelayURLs() = %v, want [%q]", got, relayA)
 	}
-	knownRelayURLs := exposure.relaySet.ActiveRelayURLs()
+	knownRelayURLs := exposure.ActiveRelayURLs()
 	if len(knownRelayURLs) != 1 || knownRelayURLs[0] != relayA {
 		t.Fatalf("knownRelayURLs = %v, want [%q]", knownRelayURLs, relayA)
 	}
@@ -168,7 +165,7 @@ func TestExposureSetRelayURLsRemovesStaleListener(t *testing.T) {
 		t.Fatal("stale relay listener was not closed")
 	}
 
-	knownRelayURLs := exposure.relaySet.ActiveRelayURLs()
+	knownRelayURLs := exposure.ActiveRelayURLs()
 	exposure.listenerMu.RLock()
 	_, relayAExists := exposure.relayListeners[relayA]
 	_, relayBExists := exposure.relayListeners[relayB]

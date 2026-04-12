@@ -3,13 +3,10 @@ package keyless
 import (
 	"context"
 	"crypto/tls"
-	"encoding/pem"
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"strings"
-	"time"
 
 	keylesstls "github.com/gosuda/keyless_tls/keyless"
 
@@ -74,7 +71,7 @@ type ioCloser interface {
 }
 
 func ResolveMaterials(ctx context.Context, endpoint, serverName string) ([]byte, []byte, error) {
-	chainPEM, err := FetchEndpointCertificateChain(ctx, endpoint, serverName)
+	chainPEM, err := utils.FetchEndpointCertificateChain(ctx, endpoint, serverName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("fetch signer certificate chain: %w", err)
 	}
@@ -90,65 +87,4 @@ func VerifyCertificateHostname(certPEM []byte, hostname string) error {
 		return err
 	}
 	return leaf.VerifyHostname(hostname)
-}
-
-func FetchEndpointCertificateChain(ctx context.Context, endpoint, serverName string) ([]byte, error) {
-	raw := strings.TrimSpace(endpoint)
-	if raw == "" {
-		return nil, errors.New("endpoint is required")
-	}
-	if !strings.Contains(raw, "://") {
-		raw = "https://" + raw
-	}
-
-	u, err := url.Parse(raw)
-	if err != nil {
-		return nil, fmt.Errorf("parse endpoint url: %w", err)
-	}
-	if !strings.EqualFold(u.Scheme, "https") {
-		return nil, errors.New("keyless endpoint must use https")
-	}
-
-	host := u.Hostname()
-	if host == "" {
-		return nil, errors.New("endpoint hostname is empty")
-	}
-	port := u.Port()
-	if port == "" {
-		port = "443"
-	}
-	if serverName == "" {
-		serverName = host
-	}
-
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
-	rawConn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, port))
-	if err != nil {
-		return nil, fmt.Errorf("dial signer endpoint: %w", err)
-	}
-
-	tlsConn := tls.Client(rawConn, &tls.Config{
-		MinVersion:         tls.VersionTLS12,
-		ServerName:         serverName,
-		InsecureSkipVerify: utils.IsLocalRelayHost(host),
-		NextProtos:         []string{"http/1.1"},
-	})
-	defer tlsConn.Close()
-	if err := tlsConn.HandshakeContext(ctx); err != nil {
-		return nil, fmt.Errorf("tls handshake with signer endpoint: %w", err)
-	}
-
-	peerCerts := tlsConn.ConnectionState().PeerCertificates
-	if len(peerCerts) == 0 {
-		return nil, errors.New("no peer certificates from signer endpoint")
-	}
-
-	var chainPEM []byte
-	for _, cert := range peerCerts {
-		chainPEM = append(chainPEM, pem.EncodeToMemory(&pem.Block{
-			Type:  "CERTIFICATE",
-			Bytes: cert.Raw,
-		})...)
-	}
-	return chainPEM, nil
 }
