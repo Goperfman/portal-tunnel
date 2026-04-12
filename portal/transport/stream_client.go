@@ -42,39 +42,15 @@ func (s *ClientStream) Accept(done <-chan struct{}) (net.Conn, error) {
 	}
 }
 
-func (s *ClientStream) RunLoop(
+func (s *ClientStream) RunSession(
 	ctx context.Context,
 	open func(context.Context) (net.Conn, error),
 	currentTLSConfig func() *tls.Config,
-	retry func(context.Context, string, error, int) bool,
-	resetRetries <-chan struct{},
-) {
-	var retries int
-
-	for {
-		// Drain any pending reset signals (e.g. from system wake) before
-		// evaluating retry budget. This is non-blocking so it never stalls.
-		select {
-		case <-resetRetries:
-			retries = 0
-		default:
-		}
-
-		claimed, err := s.runSession(ctx, open, currentTLSConfig)
-		switch {
-		case err == nil:
-			retries = 0
-		case errors.Is(err, context.Canceled), errors.Is(err, net.ErrClosed):
-			return
-		case claimed:
-			retries = 0
-		default:
-			retries++
-			if retry == nil || !retry(ctx, "reverse session connect", err, retries) {
-				return
-			}
-		}
+) (bool, error) {
+	if s == nil {
+		return false, net.ErrClosed
 	}
+	return s.runSession(ctx, open, currentTLSConfig)
 }
 
 func (s *ClientStream) ActiveSessions() int {

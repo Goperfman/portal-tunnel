@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/quic-go/quic-go"
 	"github.com/rs/zerolog/log"
 
 	"github.com/gosuda/portal-tunnel/v2/portal/discovery"
@@ -44,6 +43,7 @@ type Listener struct {
 	cancel context.CancelFunc
 	doneCh <-chan struct{}
 
+	readyTarget int
 	retryCount  int
 	retryWait   time.Duration
 	leaseTTL    time.Duration
@@ -56,13 +56,7 @@ type Listener struct {
 	registered   chan struct{}
 	closeOnce    sync.Once
 	registerOnce sync.Once
-
-	// wakeBroadcast is closed and replaced each time the renew loop detects
-	// a system sleep/wake cycle.  Stream RunLoops select on this channel to
-	// reset their retry counters so they don't exhaust budget on stale-conn
-	// errors that are really caused by the OS suspending the process.
-	wakeBroadcast chan struct{}
-	wakeMu        sync.Mutex
+	streamCancel context.CancelFunc
 
 	banMITM    bool
 	tcpEnabled bool
@@ -93,20 +87,20 @@ func NewListener(ctx context.Context, relayURL string, cfg ListenerConfig) (*Lis
 	}
 
 	l := &Listener{
-		doneCh:        listenerCtx.Done(),
-		cancel:        cancel,
-		api:           api,
-		registered:    make(chan struct{}),
-		wakeBroadcast: make(chan struct{}),
-		retryCount:    cfg.RetryCount,
-		retryWait:     retryWait,
-		leaseTTL:      leaseTTL,
-		renewBefore:   renewBefore,
-		identity:      api.identity.Copy(),
-		metadata:      cfg.Metadata.Copy(),
-		banMITM:       cfg.BanMITM,
-		tcpEnabled:    cfg.TCPEnabled,
-		relaySet:      cfg.relaySet,
+		doneCh:      listenerCtx.Done(),
+		cancel:      cancel,
+		api:         api,
+		registered:  make(chan struct{}),
+		readyTarget: readyTarget,
+		retryCount:  cfg.RetryCount,
+		retryWait:   retryWait,
+		leaseTTL:    leaseTTL,
+		renewBefore: renewBefore,
+		identity:    api.identity.Copy(),
+		metadata:    cfg.Metadata.Copy(),
+		banMITM:     cfg.BanMITM,
+		tcpEnabled:  cfg.TCPEnabled,
+		relaySet:    cfg.relaySet,
 	}
 	l.mitmManager = newMITMManager(listenerCtx, l)
 	l.stream = transport.NewClientStream(readyTarget, handshakeTimeout)
@@ -118,36 +112,22 @@ func NewListener(ctx context.Context, relayURL string, cfg ListenerConfig) (*Lis
 				Str("address", l.Address()).
 				Msg("quic datagram plane disconnected; waiting to reconnect")
 		})
-		go l.datagram.RunLoop(listenerCtx, l.currentDatagramState, func(ctx context.Context, state transport.ClientDatagramState) (*quic.Conn, error) {
-			return l.api.openQUICSession(ctx, state.AccessToken)
-		})
 	}
 
-	go l.runStartup(listenerCtx, readyTarget)
+	go l.runStartup(listenerCtx)
 	return l, nil
 }
 
-func (l *Listener) runStartup(ctx context.Context, readyTarget int) {
+func (l *Listener) runStartup(ctx context.Context) {
 	var retries int
 
 	for {
 		err := l.registerAndConfigure(ctx)
 		switch {
 		case err == nil:
-			for range readyTarget {
-				go l.stream.RunLoop(
-					ctx,
-					func(ctx context.Context) (net.Conn, error) {
-						return l.api.openReverseSession(ctx)
-					},
-					func() *tls.Config {
-						l.mu.Lock()
-						defer l.mu.Unlock()
-						return l.tlsConfig
-					},
-					l.retryOrClose,
-					l.wakeChannel(),
-				)
+			l.startStreamLoops(ctx)
+			if l.datagram != nil {
+				go l.runDatagramLoop(ctx)
 			}
 			go l.runRenewLoop(ctx)
 			publicURL := l.PublicURL()
@@ -194,6 +174,7 @@ func (l *Listener) Close() error {
 		identity := l.identity.Copy()
 		registered := l.hostname != ""
 		tlsCloser := l.tlsCloser
+		streamCancel := l.streamCancel
 		stream := l.stream
 		datagram := l.datagram
 		api := l.api
@@ -201,10 +182,14 @@ func (l *Listener) Close() error {
 		l.udpAddr = ""
 		l.tlsConfig = nil
 		l.tlsCloser = nil
+		l.streamCancel = nil
 		l.mu.Unlock()
 
 		if l.mitmManager != nil {
 			l.mitmManager.reset()
+		}
+		if streamCancel != nil {
+			streamCancel()
 		}
 
 		if stream != nil {
@@ -375,43 +360,154 @@ func (l *Listener) PublicURL() string {
 	}).String()
 }
 
-func (l *Listener) currentDatagramState() (transport.ClientDatagramState, bool) {
-	if l.datagram == nil {
-		return transport.ClientDatagramState{}, false
+func (l *Listener) startStreamLoops(parentCtx context.Context) {
+	if l.stream == nil || l.readyTarget <= 0 {
+		return
 	}
+
+	streamCtx, cancel := context.WithCancel(parentCtx)
 
 	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	if l.api == nil || l.identity.Key() == "" || l.udpAddr == "" {
-		return transport.ClientDatagramState{}, false
+	if l.streamCancel != nil {
+		l.streamCancel()
 	}
-	l.api.mu.RLock()
-	accessToken := l.api.accessToken
-	l.api.mu.RUnlock()
+	l.streamCancel = cancel
+	readyTarget := l.readyTarget
+	l.mu.Unlock()
 
-	return transport.ClientDatagramState{
-		Identity:    l.identity.Copy(),
-		AccessToken: accessToken,
-	}, true
+	for range readyTarget {
+		go l.runReverseSessionLoop(streamCtx)
+	}
 }
 
-// notifyWake closes the current wakeBroadcast channel (waking all stream
-// RunLoops that select on it) and replaces it with a fresh channel.
-func (l *Listener) notifyWake() {
-	l.wakeMu.Lock()
-	ch := l.wakeBroadcast
-	l.wakeBroadcast = make(chan struct{})
-	l.wakeMu.Unlock()
-	close(ch)
+func (l *Listener) stopStreamLoops() {
+	l.mu.Lock()
+	cancel := l.streamCancel
+	l.streamCancel = nil
+	l.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
 }
 
-// wakeChannel returns the current wake broadcast channel. Stream RunLoops
-// select on this; when it is closed they reset their retry counters.
-func (l *Listener) wakeChannel() <-chan struct{} {
-	l.wakeMu.Lock()
-	defer l.wakeMu.Unlock()
-	return l.wakeBroadcast
+func (l *Listener) runReverseSessionLoop(ctx context.Context) {
+	if l.stream == nil {
+		return
+	}
+
+	var retries int
+	for {
+		claimed, err := l.stream.RunSession(
+			ctx,
+			func(ctx context.Context) (net.Conn, error) {
+				return l.api.openReverseSession(ctx)
+			},
+			func() *tls.Config {
+				l.mu.Lock()
+				defer l.mu.Unlock()
+				return l.tlsConfig
+			},
+		)
+		switch {
+		case err == nil:
+			retries = 0
+		case errors.Is(err, context.Canceled), errors.Is(err, net.ErrClosed):
+			return
+		case claimed:
+			retries = 0
+		default:
+			retries++
+			if !l.retryOrClose(ctx, "reverse session connect", err, retries) {
+				return
+			}
+		}
+	}
+}
+
+func (l *Listener) runDatagramLoop(ctx context.Context) {
+	if l.datagram == nil {
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			l.datagram.Close()
+			return
+		default:
+		}
+
+		l.mu.Lock()
+		api := l.api
+		identity := l.identity.Copy()
+		udpAddr := l.udpAddr
+		l.mu.Unlock()
+		if api == nil || identity.Key() == "" || udpAddr == "" {
+			if !utils.SleepOrDone(ctx, time.Second) {
+				l.datagram.Close()
+				return
+			}
+			continue
+		}
+		api.mu.RLock()
+		accessToken := api.accessToken
+		api.mu.RUnlock()
+		if strings.TrimSpace(accessToken) == "" {
+			if !utils.SleepOrDone(ctx, time.Second) {
+				l.datagram.Close()
+				return
+			}
+			continue
+		}
+
+		conn, err := api.openQUICSession(ctx, accessToken)
+		if err != nil {
+			log.Info().
+				Err(err).
+				Str("component", "sdk-datagram-plane").
+				Str("address", identity.Address).
+				Msg("quic datagram plane unavailable; retrying")
+			if !utils.SleepOrDone(ctx, 2*time.Second) {
+				l.datagram.Close()
+				return
+			}
+			continue
+		}
+
+		log.Info().
+			Str("component", "sdk-datagram-plane").
+			Str("address", identity.Address).
+			Str("remote_addr", conn.RemoteAddr().String()).
+			Msg("quic tunnel connected")
+
+		recvDone, err := l.datagram.Bind(conn)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			log.Info().
+				Err(err).
+				Str("component", "sdk-datagram-plane").
+				Str("address", identity.Address).
+				Msg("quic datagram plane did not bind cleanly; retrying")
+			if !utils.SleepOrDone(ctx, time.Second) {
+				return
+			}
+			continue
+		}
+
+		select {
+		case <-ctx.Done():
+			l.datagram.Close()
+			return
+		case <-recvDone:
+		}
+
+		if !utils.SleepOrDone(ctx, time.Second) {
+			return
+		}
+	}
 }
 
 func (l *Listener) runRenewLoop(ctx context.Context) {
@@ -450,12 +546,13 @@ func (l *Listener) runRenewLoop(ctx context.Context) {
 				Str("address", l.Address()).
 				Msg("system sleep/wake detected; resetting transport and re-registering")
 
+			l.stopStreamLoops()
 			l.api.resetTransport()
-			l.notifyWake()
 
 			var retries int
 			for {
 				if err := l.registerAndConfigure(ctx); err == nil {
+					l.startStreamLoops(ctx)
 					break
 				} else if errors.Is(err, context.Canceled) || errors.Is(err, net.ErrClosed) {
 					return
