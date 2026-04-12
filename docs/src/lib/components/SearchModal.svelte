@@ -5,14 +5,31 @@
 
 	let { open = $bindable(false) }: { open: boolean } = $props();
 
+	interface SubResult {
+		url: string;
+		title: string;
+		excerpt: string;
+	}
+
+	interface GroupedResult {
+		pageTitle: string;
+		pageUrl: string;
+		subResults: SubResult[];
+	}
+
 	let query = $state('');
-	let results = $state<Array<{ url: string; title: string; excerpt: string }>>([]);
+	let groups = $state<GroupedResult[]>([]);
+	let totalCount = $state(0);
 	let activeIndex = $state(0);
 	let loading = $state(false);
 	let searchUnavailable = $state(false);
 	let pagefind: any = null;
 	let inputEl: HTMLInputElement | undefined = $state();
 	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+	const flatResults = $derived(
+		groups.flatMap((g) => g.subResults.map((sr) => sr.url))
+	);
 
 	async function initPagefind() {
 		if (pagefind) return;
@@ -26,26 +43,39 @@
 
 	async function search(q: string) {
 		if (!pagefind || !q.trim()) {
-			results = [];
+			groups = [];
+			totalCount = 0;
 			return;
 		}
 		loading = true;
 		try {
 			const response = await pagefind.search(q);
+			totalCount = response.results.length;
 			const items = await Promise.all(
-				response.results.slice(0, 8).map(async (r: any) => {
+				response.results.slice(0, 6).map(async (r: any) => {
 					const data = await r.data();
-					return {
-						url: data.url,
-						title: data.meta?.title || data.url,
-						excerpt: data.excerpt
-					};
+					const pageTitle = data.meta?.title || data.url;
+					const pageUrl = data.url;
+					const subs: SubResult[] = (data.sub_results || []).slice(0, 3).map((sr: any) => ({
+						url: sr.url,
+						title: sr.title || pageTitle,
+						excerpt: sr.excerpt || ''
+					}));
+					if (subs.length === 0) {
+						subs.push({
+							url: pageUrl,
+							title: pageTitle,
+							excerpt: data.excerpt || ''
+						});
+					}
+					return { pageTitle, pageUrl, subResults: subs } as GroupedResult;
 				})
 			);
-			results = items;
+			groups = items;
 			activeIndex = 0;
 		} catch {
-			results = [];
+			groups = [];
+			totalCount = 0;
 		} finally {
 			loading = false;
 		}
@@ -58,6 +88,13 @@
 		debounceTimer = setTimeout(() => search(value), 200);
 	}
 
+	function clearQuery() {
+		query = '';
+		groups = [];
+		totalCount = 0;
+		inputEl?.focus();
+	}
+
 	function navigate(url: string) {
 		const path = url.replace(/\.html$/, '').replace(/index$/, '');
 		goto(`${base}${path}`);
@@ -67,20 +104,21 @@
 	function close() {
 		open = false;
 		query = '';
-		results = [];
+		groups = [];
+		totalCount = 0;
 		activeIndex = 0;
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'ArrowDown') {
 			e.preventDefault();
-			activeIndex = Math.min(activeIndex + 1, results.length - 1);
+			activeIndex = Math.min(activeIndex + 1, flatResults.length - 1);
 		} else if (e.key === 'ArrowUp') {
 			e.preventDefault();
 			activeIndex = Math.max(activeIndex - 1, 0);
-		} else if (e.key === 'Enter' && results[activeIndex]) {
+		} else if (e.key === 'Enter' && flatResults[activeIndex]) {
 			e.preventDefault();
-			navigate(results[activeIndex].url);
+			navigate(flatResults[activeIndex]);
 		} else if (e.key === 'Escape') {
 			e.preventDefault();
 			close();
@@ -98,7 +136,7 @@
 {#if open}
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-	class="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]"
+	class="fixed inset-0 z-50 flex items-start justify-center pt-[12vh]"
 	onkeydown={handleKeydown}
 >
 	<!-- Backdrop -->
@@ -114,10 +152,10 @@
 		role="dialog"
 		aria-modal="true"
 		aria-label="Search documentation"
-		class="relative z-10 mx-4 w-full max-w-xl overflow-hidden rounded-2xl border border-border/80 bg-background/95 shadow-2xl backdrop-blur-xl"
+		class="relative z-10 mx-4 flex w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border/80 bg-background/95 shadow-2xl backdrop-blur-xl"
 	>
 		<!-- Search input -->
-		<div class="flex items-center gap-3 border-b border-border/60 px-4 py-3">
+		<div class="flex items-center gap-3 px-5 py-4">
 			<svg class="h-5 w-5 shrink-0 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 				<path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
 			</svg>
@@ -127,15 +165,26 @@
 				placeholder="Search documentation..."
 				value={query}
 				oninput={handleInput}
-				class="flex-1 bg-transparent text-base text-foreground outline-none placeholder:text-text-muted/60"
+				class="flex-1 bg-transparent text-lg text-foreground outline-none placeholder:text-text-muted/60"
 			/>
-			<kbd class="rounded-md border border-border/60 px-1.5 py-0.5 text-[11px] font-medium text-text-muted">
-				Esc
-			</kbd>
+			{#if query}
+				<button onclick={clearQuery} class="rounded-md p-1 text-text-muted transition-colors hover:text-foreground" aria-label="Clear search">
+					<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+					</svg>
+				</button>
+			{/if}
 		</div>
 
+		<!-- Results count -->
+		{#if query && !loading && !searchUnavailable}
+			<div class="border-t border-border/40 px-5 py-2 text-xs text-text-muted">
+				{totalCount} result{totalCount !== 1 ? 's' : ''} for <span class="font-medium text-foreground">{query}</span>
+			</div>
+		{/if}
+
 		<!-- Results -->
-		<div class="max-h-[50vh] overflow-y-auto">
+		<div class="max-h-[55vh] overflow-y-auto border-t border-border/40 px-3 py-3">
 			{#if searchUnavailable}
 				<div class="px-4 py-8 text-center text-sm text-text-muted">
 					Search is available after building.<br />
@@ -143,31 +192,43 @@
 				</div>
 			{:else if loading}
 				<div class="px-4 py-8 text-center text-sm text-text-muted">Searching...</div>
-			{:else if query && results.length === 0}
+			{:else if query && groups.length === 0}
 				<div class="px-4 py-8 text-center text-sm text-text-muted">
 					No results for "<span class="font-medium text-foreground">{query}</span>"
 				</div>
-			{:else if results.length > 0}
-				<ul class="py-2">
-					{#each results as result, i}
-						<li>
-							<button
-								class="w-full px-4 py-3 text-left transition-colors {i === activeIndex
-									? 'bg-primary/10 text-foreground'
-									: 'text-foreground/80 hover:bg-secondary/50'}"
-								onclick={() => navigate(result.url)}
-								onmouseenter={() => (activeIndex = i)}
-							>
-								<div class="text-sm font-semibold">{result.title}</div>
-								{#if result.excerpt}
-									<div class="mt-1 line-clamp-2 text-xs text-text-muted">
-										{@html result.excerpt}
-									</div>
-								{/if}
-							</button>
-						</li>
+			{:else if groups.length > 0}
+				<div class="space-y-3">
+					{#each groups as group}
+						<div class="overflow-hidden rounded-xl border border-border/50 bg-secondary/30">
+							<!-- Page title -->
+							<div class="px-4 py-2.5">
+								<span class="font-display text-sm font-bold text-foreground">{group.pageTitle}</span>
+							</div>
+							<!-- Sub-results -->
+							<div class="divide-y divide-border/30">
+								{#each group.subResults as sub}
+									{@const flatIdx = flatResults.indexOf(sub.url)}
+									{@const subPath = sub.url.replace(/\.html$/, '').replace(/index$/, '')}
+									<a
+										href="{base}{subPath}"
+										class="block px-4 py-2.5 no-underline transition-colors {flatIdx === activeIndex
+											? 'bg-primary/10'
+											: 'hover:bg-secondary/60'}"
+										onclick={(e) => { e.preventDefault(); navigate(sub.url); }}
+										onmouseenter={() => (activeIndex = flatIdx)}
+									>
+										<div class="text-sm font-semibold text-foreground/90">{sub.title}</div>
+										{#if sub.excerpt}
+											<div class="mt-0.5 line-clamp-1 text-xs text-text-muted">
+												{@html sub.excerpt}
+											</div>
+										{/if}
+									</a>
+								{/each}
+							</div>
+						</div>
 					{/each}
-				</ul>
+				</div>
 			{:else}
 				<div class="px-4 py-8 text-center text-sm text-text-muted">
 					Type to search documentation
@@ -176,7 +237,7 @@
 		</div>
 
 		<!-- Footer -->
-		<div class="flex items-center justify-between border-t border-border/60 px-4 py-2 text-[11px] text-text-muted">
+		<div class="flex items-center justify-between border-t border-border/40 px-5 py-2.5 text-[11px] text-text-muted">
 			<div class="flex items-center gap-3">
 				<span><kbd class="rounded border border-border/60 px-1 py-0.5">↑↓</kbd> navigate</span>
 				<span><kbd class="rounded border border-border/60 px-1 py-0.5">↵</kbd> open</span>

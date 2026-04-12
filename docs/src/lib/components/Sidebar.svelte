@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { base } from '$app/paths';
-	import { navigation } from '$lib/nav';
+	import type { NavSection } from '$lib/nav';
+
+	let { sections }: { sections: NavSection[] } = $props();
 
 	const currentPath = $derived($page.url.pathname);
 
@@ -17,7 +19,7 @@
 	}
 
 	function sectionHasActiveChild(sectionIndex: number): boolean {
-		return navigation[sectionIndex].items.some((item) => isItemActive(item.href));
+		return sections[sectionIndex].items.some((item) => isItemActive(item.href));
 	}
 
 	function isSectionOpen(index: number): boolean {
@@ -26,7 +28,7 @@
 			return userToggle;
 		}
 		// Auto-open if section has active child or defaultOpen
-		return sectionHasActiveChild(index) || (navigation[index].defaultOpen ?? false);
+		return sectionHasActiveChild(index) || (sections[index].defaultOpen ?? false);
 	}
 
 	function toggleSection(index: number) {
@@ -38,7 +40,7 @@
 	$effect(() => {
 		// Access currentPath to create the dependency
 		void currentPath;
-		for (let i = 0; i < navigation.length; i++) {
+		for (let i = 0; i < sections.length; i++) {
 			if (sectionHasActiveChild(i)) {
 				userToggles[i] = true;
 			}
@@ -47,7 +49,7 @@
 </script>
 
 <nav class="space-y-1" aria-label="Documentation">
-	{#each navigation as section, index (section.title)}
+	{#each sections as section, index (section.title)}
 		{@const isOpen = isSectionOpen(index)}
 		<div>
 			<button

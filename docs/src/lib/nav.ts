@@ -34,7 +34,7 @@ export function getPrevNext(
 	};
 }
 
-export const navigation: NavSection[] = [
+export const guidesNavigation: NavSection[] = [
 	{
 		title: 'Quick Start',
 		defaultOpen: true,
@@ -61,12 +61,26 @@ export const navigation: NavSection[] = [
 			{ title: 'Deployment', href: '/deployment' },
 			{ title: 'Configuration', href: '/configuration' }
 		]
-	},
+	}
+];
+
+export const referencesNavigation: NavSection[] = [
 	{
 		title: 'Reference',
+		defaultOpen: true,
 		items: [
 			{ title: 'CLI Reference', href: '/cli-reference' },
 			{ title: 'API Reference', href: '/api-reference' }
 		]
 	}
 ];
+
+export const navigation: NavSection[] = [...guidesNavigation, ...referencesNavigation];
+
+const referenceHrefs = new Set(
+	referencesNavigation.flatMap((s) => s.items.map((i) => i.href))
+);
+
+export function isReferencePage(pathname: string, basePath: string): boolean {
+	return referenceHrefs.has(pathname.replace(basePath, '').replace(/\/$/, ''));
+}

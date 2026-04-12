@@ -11,11 +11,11 @@
 </script>
 
 {#if prev || next}
-	<nav class="not-prose mt-12 grid grid-cols-1 gap-4 sm:grid-cols-2" aria-label="Page navigation">
+	<nav class="not-prose mt-12 grid grid-cols-1 gap-4 {prev && next ? 'sm:grid-cols-2' : ''}" aria-label="Page navigation">
 		{#if prev}
 			<a
 				href="{base}{prev.href}"
-				class="group flex items-center gap-4 rounded-lg border border-border/70 px-5 py-4 transition-colors hover:border-primary/40"
+				class="group flex items-center gap-4 rounded-lg border border-border/70 px-5 py-5 transition-colors hover:border-primary/40"
 			>
 				<svg
 					class="size-5 shrink-0 text-text-muted transition-transform group-hover:-translate-x-0.5"
@@ -29,26 +29,24 @@
 					<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
 				</svg>
 				<div class="min-w-0">
-					<span class="block text-xs font-medium text-text-muted">Previous</span>
-					<span class="block text-xs text-text-muted">{prev.section}</span>
-					<span class="block truncate font-display text-sm font-semibold text-foreground">
+					<span class="block text-sm font-medium text-text-muted">Previous</span>
+					<span class="block text-sm text-text-muted">{prev.section}</span>
+					<span class="block truncate font-display text-base font-semibold text-foreground">
 						{prev.title}
 					</span>
 				</div>
 			</a>
-		{:else}
-			<div class="hidden sm:block"></div>
 		{/if}
 
 		{#if next}
 			<a
 				href="{base}{next.href}"
-				class="group flex items-center justify-end gap-4 rounded-lg border border-border/70 px-5 py-4 text-right transition-colors hover:border-primary/40"
+				class="group flex items-center justify-end gap-4 rounded-lg border border-border/70 px-5 py-5 text-right transition-colors hover:border-primary/40"
 			>
 				<div class="min-w-0">
-					<span class="block text-xs font-medium text-text-muted">Next</span>
-					<span class="block text-xs text-text-muted">{next.section}</span>
-					<span class="block truncate font-display text-sm font-semibold text-foreground">
+					<span class="block text-sm font-medium text-text-muted">Next</span>
+					<span class="block text-sm text-text-muted">{next.section}</span>
+					<span class="block truncate font-display text-base font-semibold text-foreground">
 						{next.title}
 					</span>
 				</div>
@@ -64,8 +62,6 @@
 					<path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
 				</svg>
 			</a>
-		{:else}
-			<div></div>
 		{/if}
 	</nav>
 {/if}

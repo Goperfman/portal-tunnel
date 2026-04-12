@@ -7,7 +7,7 @@
 	import MobileNav from '$lib/components/MobileNav.svelte';
 	import TableOfContents from '$lib/components/TableOfContents.svelte';
 	import PrevNextNav from '$lib/components/PrevNextNav.svelte';
-	import { getPrevNext } from '$lib/nav';
+	import { getPrevNext, guidesNavigation, referencesNavigation, isReferencePage } from '$lib/nav';
 	import SearchButton from '$lib/components/SearchButton.svelte';
 	import SearchModal from '$lib/components/SearchModal.svelte';
 	import { copyCode } from '$lib/actions/copy-code';
@@ -35,6 +35,8 @@
 	);
 
 	const prevNext = $derived(getPrevNext($page.url.pathname, base));
+	const isReference = $derived(isReferencePage($page.url.pathname, base));
+	const sidebarSections = $derived(isReference ? referencesNavigation : guidesNavigation);
 </script>
 
 <ModeWatcher defaultMode="system" />
@@ -86,19 +88,19 @@
 				<span class="inline-flex h-6 items-center rounded-full bg-secondary px-2.5 text-xs font-semibold text-text-muted">v2</span>
 			</a>
 
-			<!-- Nav links (hidden on mobile, visible xl) -->
-			<nav class="hidden items-center gap-6 pl-2 text-base font-semibold text-gray-500 xl:flex xl:pl-3 dark:text-gray-400">
-				<a href="{base}/#quick-start" class="transition-colors hover:text-gray-900 dark:hover:text-white">
-					Quick Start
-				</a>
-				<a href="{base}/getting-started" class="transition-colors hover:text-gray-900 dark:hover:text-white">
-					Docs
-				</a>
-			</nav>
+			<SearchButton onclick={() => (searchOpen = true)} />
 
 			<div class="flex-1"></div>
 
-			<SearchButton onclick={() => (searchOpen = true)} />
+			<!-- Nav links (hidden on mobile, visible xl) -->
+			<nav class="hidden items-center gap-6 text-base font-semibold text-gray-500 xl:flex dark:text-gray-400">
+				<a href="{base}/what-is-portal" class="transition-colors {!isLandingPage && !isReference ? 'text-foreground' : 'hover:text-gray-900 dark:hover:text-white'}">
+					Guides
+				</a>
+				<a href="{base}/cli-reference" class="transition-colors {isReference ? 'text-foreground' : 'hover:text-gray-900 dark:hover:text-white'}">
+					References
+				</a>
+			</nav>
 
 			<!-- GitHub icon button -->
 			<a
@@ -120,7 +122,7 @@
 	</header>
 
 	{#if !isLandingPage}
-	<MobileNav bind:open={mobileNavOpen} />
+	<MobileNav bind:open={mobileNavOpen} sections={sidebarSections} />
 	{/if}
 
 	{#if isLandingPage}
@@ -151,7 +153,7 @@
 	<div class="mx-auto max-w-[90rem] lg:flex">
 		<aside class="hidden w-64 shrink-0 border-r border-border lg:block">
 			<div class="sticky top-[var(--header-h)] h-[calc(100vh-var(--header-h))] overflow-y-auto p-6">
-				<Sidebar />
+				<Sidebar sections={sidebarSections} />
 			</div>
 		</aside>
 

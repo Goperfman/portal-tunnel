@@ -4,7 +4,7 @@
 
 <button
 	{onclick}
-	class="group inline-flex w-56 cursor-pointer items-center gap-2 rounded-full border border-gray-200/70 bg-white/90 py-2 pl-3.5 pr-2.5 text-sm text-gray-500 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:text-primary lg:w-64 dark:border-white/10 dark:bg-white/5 dark:text-gray-400 dark:hover:border-primary-light/40 dark:hover:text-primary-light"
+	class="group hidden w-80 cursor-pointer items-center gap-2 rounded-full border border-gray-200/70 bg-white/90 py-2 pl-3.5 pr-2.5 text-sm text-gray-500 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:text-primary sm:inline-flex dark:border-white/10 dark:bg-white/5 dark:text-gray-400 dark:hover:border-primary-light/40 dark:hover:text-primary-light"
 	aria-label="Search documentation"
 >
 	<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">

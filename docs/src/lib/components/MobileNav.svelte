@@ -1,7 +1,8 @@
 <script lang="ts">
 	import Sidebar from './Sidebar.svelte';
+	import type { NavSection } from '$lib/nav';
 
-	let { open = $bindable(false) }: { open: boolean } = $props();
+	let { open = $bindable(false), sections }: { open: boolean; sections: NavSection[] } = $props();
 
 	function close() {
 		open = false;
@@ -31,7 +32,7 @@
 		</div>
 		<!-- svelte-ignore event_directive_deprecated -->
 		<div onclick={close} onkeydown={close} role="presentation">
-			<Sidebar />
+			<Sidebar {sections} />
 		</div>
 	</div>
 {/if}
