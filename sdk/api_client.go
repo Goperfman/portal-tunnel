@@ -18,7 +18,6 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"github.com/gosuda/portal-tunnel/v2/portal/keyless"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
@@ -153,7 +152,7 @@ func (a *apiClient) ensureHTTPClient(ctx context.Context) error {
 	bootstrapCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout+defaultHandshakeTimeout)
 	defer cancel()
 
-	rawTLSConfig, httpClient, err := keyless.NewRelayHTTPClient(bootstrapCtx, a.baseURL, a.rootCAPEM, a.requestTimeout)
+	rawTLSConfig, httpClient, err := utils.NewHTTPTLSClient(bootstrapCtx, a.baseURL, a.rootCAPEM, a.requestTimeout)
 	if err != nil {
 		return err
 	}

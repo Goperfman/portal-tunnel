@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 )
 
 const (
+	defaultRequestTimeout   = 15 * time.Second
 	DiscoveryPollInterval   = 1 * time.Minute
 	defaultRecoveryFailures = 3
 )
@@ -37,24 +39,26 @@ func NewRefresher(relaySet *RelaySet, rootCAPEM []byte, overlay OverlayRuntime) 
 	if relaySet == nil {
 		return nil, errors.New("relay set is required")
 	}
-	httpClient := http.DefaultClient
+	var rootCAs *x509.CertPool
 	if len(rootCAPEM) > 0 {
-		rootCAs, err := utils.CertPoolFromPEM(rootCAPEM)
-		if err != nil {
-			return nil, err
+		rootCAs = x509.NewCertPool()
+		if !rootCAs.AppendCertsFromPEM(rootCAPEM) {
+			return nil, errors.New("failed to parse relay root ca")
 		}
-		httpClient = &http.Client{
+	}
+	return &Refresher{
+		relaySet: relaySet,
+		httpClient: &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
 					MinVersion: tls.VersionTLS12,
 					RootCAs:    rootCAs,
+					NextProtos: []string{"http/1.1"},
 				},
+				ForceAttemptHTTP2: false,
 			},
-		}
-	}
-	return &Refresher{
-		relaySet:                relaySet,
-		httpClient:              httpClient,
+			Timeout: defaultRequestTimeout,
+		},
 		overlay:                 overlay,
 		directRecoveryFailures:  defaultRecoveryFailures,
 		overlayRecoveryFailures: defaultRecoveryFailures,
@@ -88,8 +92,21 @@ func (r *Refresher) refreshHTTPS(ctx context.Context) error {
 			continue
 		}
 		relay := state.Descriptor
-		resp, err := r.discoverHTTPS(ctx, relay)
+		baseURL, err := url.Parse(relay.APIHTTPSAddr)
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			continue
+		}
+		if utils.IsLocalRelayHost(baseURL.Hostname()) {
+			log.Info().
+				Str("relay", relay.APIHTTPSAddr).
+				Msg("skip loopback relay as discovery source")
+			continue
+		}
+		var resp types.DiscoveryResponse
+		if err := utils.HTTPDoAPIPath(ctx, r.httpClient, baseURL, http.MethodGet, types.PathDiscovery, nil, nil, &resp); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -119,8 +136,22 @@ func (r *Refresher) refreshHTTPS(ctx context.Context) error {
 			continue
 		}
 		relay := state.Descriptor
-		resp, err := r.discoverHTTPS(ctx, relay)
+		baseURL, err := url.Parse(relay.APIHTTPSAddr)
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			r.logDirectDiscoveryFailure(relay, fmt.Errorf("parse discovery base url: %w", err), r.directRecoveryFailures)
+			continue
+		}
+		if utils.IsLocalRelayHost(baseURL.Hostname()) {
+			log.Info().
+				Str("relay", relay.APIHTTPSAddr).
+				Msg("skip loopback relay as discovery source")
+			continue
+		}
+		var resp types.DiscoveryResponse
+		if err := utils.HTTPDoAPIPath(ctx, r.httpClient, baseURL, http.MethodGet, types.PathDiscovery, nil, nil, &resp); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -136,19 +167,6 @@ func (r *Refresher) refreshHTTPS(ctx context.Context) error {
 		}
 	}
 	return ctx.Err()
-}
-
-func (r *Refresher) discoverHTTPS(ctx context.Context, relay types.RelayDescriptor) (types.DiscoveryResponse, error) {
-	baseURL, err := url.Parse(relay.APIHTTPSAddr)
-	if err != nil {
-		return types.DiscoveryResponse{}, fmt.Errorf("parse discovery base url: %w", err)
-	}
-
-	var resp types.DiscoveryResponse
-	if err := utils.HTTPDoAPIPath(ctx, r.httpClient, baseURL, http.MethodGet, types.PathDiscovery, nil, nil, &resp); err != nil {
-		return types.DiscoveryResponse{}, err
-	}
-	return resp, nil
 }
 
 func (r *Refresher) refreshOverlay(ctx context.Context) error {

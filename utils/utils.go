@@ -2,14 +2,9 @@ package utils
 
 import (
 	"context"
-	"crypto"
-	"crypto/ecdsa"
 	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -480,47 +475,6 @@ func RandomHex(size int) (string, error) {
 		return "", fmt.Errorf("read random bytes: %w", err)
 	}
 	return hex.EncodeToString(buf), nil
-}
-
-func CertPoolFromPEM(rootCAPEM []byte) (*x509.CertPool, error) {
-	if len(rootCAPEM) == 0 {
-		return nil, nil
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(rootCAPEM) {
-		return nil, errors.New("failed to parse relay root ca")
-	}
-	return pool, nil
-}
-
-func ParseCertificatePEM(pemData []byte) (*x509.Certificate, error) {
-	block, _ := pem.Decode(pemData)
-	if block == nil {
-		return nil, errors.New("no pem block found")
-	}
-	return x509.ParseCertificate(block.Bytes)
-}
-
-func ParsePrivateKeyPEM(keyPEM []byte) (crypto.PrivateKey, error) {
-	block, _ := pem.Decode(keyPEM)
-	if block == nil {
-		return nil, errors.New("invalid private key pem")
-	}
-	if key, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
-		switch typed := key.(type) {
-		case *ecdsa.PrivateKey:
-			return typed, nil
-		case *rsa.PrivateKey:
-			return typed, nil
-		}
-	}
-	if key, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
-		return key, nil
-	}
-	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
-		return key, nil
-	}
-	return nil, errors.New("unsupported private key type")
 }
 
 func SleepOrDone(ctx context.Context, d time.Duration) bool {
