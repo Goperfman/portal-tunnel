@@ -184,10 +184,10 @@
 			</div>
 			<!-- Edge fades -->
 			<div
-				class="pointer-events-none absolute inset-y-0 left-0 z-40 w-12 bg-linear-to-r from-background via-background/[0.74] to-transparent dark:via-background/60 sm:w-24"
+				class="pointer-events-none absolute inset-y-0 left-0 z-20 w-12 bg-linear-to-r from-background via-background/[0.74] to-transparent dark:via-background/60 sm:w-24"
 			></div>
 			<div
-				class="pointer-events-none absolute inset-y-0 right-0 z-40 w-12 bg-linear-to-l from-background via-background/[0.74] to-transparent dark:via-background/60 sm:w-24"
+				class="pointer-events-none absolute inset-y-0 right-0 z-20 w-12 bg-linear-to-l from-background via-background/[0.74] to-transparent dark:via-background/60 sm:w-24"
 			></div>
 
 			<div class="relative h-[328px] sm:h-[360px]">
