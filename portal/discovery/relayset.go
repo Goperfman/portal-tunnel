@@ -20,20 +20,12 @@ type RelaySet struct {
 	mu     sync.RWMutex
 	relays map[string]RelayState
 	policy RelayPolicy
-	self   RelayState
 }
 
-func NewRelaySet(identity types.Identity, relayURL string, bootstrapRelayURLs []string) (*RelaySet, error) {
+func NewRelaySet(bootstrapRelayURLs []string) (*RelaySet, error) {
 	set := &RelaySet{
 		relays: make(map[string]RelayState),
 		policy: DefaultRelayPolicy{},
-		self: RelayState{
-			Descriptor: types.RelayDescriptor{
-				Identity:     identity,
-				RelayID:      relayURL,
-				APIHTTPSAddr: relayURL,
-			},
-		},
 	}
 	if err := set.SetBootstrapRelayURLs(bootstrapRelayURLs); err != nil {
 		return nil, err
@@ -54,19 +46,12 @@ func (s *RelaySet) SetBootstrapRelayURLs(inputs []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	filtered := utils.RemoveRelayURL(inputs, s.self.Descriptor.APIHTTPSAddr)
-	keep := make(map[string]struct{}, len(filtered))
-	for _, relayURL := range filtered {
+	keep := make(map[string]struct{}, len(inputs))
+	for _, relayURL := range inputs {
 		keep[relayURL] = struct{}{}
 	}
 
-	seen := make(map[string]struct{}, len(filtered))
 	for key, state := range s.relays {
-		if state.Equal(s.self) {
-			delete(s.relays, key)
-			continue
-		}
-
 		_, bootstrap := keep[key]
 		state.Bootstrap = bootstrap
 		if !state.Bootstrap &&
@@ -78,13 +63,10 @@ func (s *RelaySet) SetBootstrapRelayURLs(inputs []string) error {
 		}
 
 		s.relays[key] = state
-		if bootstrap {
-			seen[key] = struct{}{}
-		}
 	}
 
-	for _, relayURL := range filtered {
-		if _, ok := seen[relayURL]; ok {
+	for _, relayURL := range inputs {
+		if _, ok := s.relays[relayURL]; ok {
 			continue
 		}
 
@@ -170,10 +152,6 @@ func (s *RelaySet) BanRelayURL(relayURL string) {
 	if !ok {
 		state = newRelayStateFromURL(relayURL)
 	}
-	if state.Equal(s.self) {
-		delete(s.relays, relayURL)
-		return
-	}
 	state = s.policy.OnBanned(state)
 	s.relays[relayURL] = state
 }
@@ -252,9 +230,6 @@ func (s *RelaySet) ApplyRelayDiscoveryResponse(targetIdentity types.Identity, ta
 	if err != nil {
 		return false, err
 	}
-	if selfState.Equal(s.self) {
-		return false, nil
-	}
 	if strings.TrimSpace(targetIdentity.Name) == "" && strings.TrimSpace(targetIdentity.Address) == "" {
 		return false, errors.New("target relay identity is required")
 	}
@@ -285,9 +260,6 @@ func (s *RelaySet) ApplyRelayDiscoveryResponse(targetIdentity types.Identity, ta
 	for _, descriptor := range resp.Relays {
 		relayState, err := newRelayState(descriptor, now)
 		if err != nil {
-			continue
-		}
-		if relayState.Equal(s.self) {
 			continue
 		}
 		relayKey := relayState.Descriptor.Key()

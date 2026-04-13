@@ -8,7 +8,7 @@ import (
 )
 
 func TestApplyRelayDiscoveryResponsePreservesBootstrapFlag(t *testing.T) {
-	set, err := NewRelaySet(types.Identity{}, "", []string{"https://relay-a.example"})
+	set, err := NewRelaySet([]string{"https://relay-a.example"})
 	if err != nil {
 		t.Fatalf("NewRelaySet() error = %v", err)
 	}
@@ -31,7 +31,7 @@ func TestApplyRelayDiscoveryResponsePreservesBootstrapFlag(t *testing.T) {
 }
 
 func TestApplyRelayDiscoveryResponseAllowsURLChangeForSameIdentity(t *testing.T) {
-	set, err := NewRelaySet(types.Identity{}, "", nil)
+	set, err := NewRelaySet(nil)
 	if err != nil {
 		t.Fatalf("NewRelaySet() error = %v", err)
 	}

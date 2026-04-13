@@ -105,7 +105,7 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 			return nil, fmt.Errorf("invalid --udp-addr value %q: %w", cfg.UDPAddr, err)
 		}
 	}
-	relaySet, err := discovery.NewRelaySet(types.Identity{}, "", relayURLs)
+	relaySet, err := discovery.NewRelaySet(relayURLs)
 	if err != nil {
 		return nil, err
 	}
