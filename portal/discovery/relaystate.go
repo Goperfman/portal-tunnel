@@ -13,6 +13,23 @@ const (
 	DiscoveryHintRetentionTTL    = 30 * 24 * time.Hour
 	defaultDirectRecoveryBackoff = 1 * time.Minute
 	maxDirectRecoveryBackoff     = 5 * time.Minute
+
+	// MaxAnnouncedRelays is the hard ceiling on the number of relay entries
+	// the local set will retain. When exceeded, eviction prefers the oldest
+	// non-bootstrap, non-confirmed entries by LastSeenAt. Bootstrap and
+	// listener-confirmed entries are pinned and never evicted by capacity.
+	MaxAnnouncedRelays = 1024
+
+	// AnnounceClockSkewTolerance bounds how far in the future a descriptor's
+	// IssuedAt may sit relative to local time. Anything beyond this is
+	// rejected as clock-skewed or maliciously post-dated.
+	AnnounceClockSkewTolerance = 5 * time.Minute
+
+	// AnnounceMaxValidity bounds the maximum (ExpiresAt - IssuedAt) window
+	// for an accepted announce. Honest relays sign with the discovery TTL,
+	// so a 24h cap leaves ample headroom while preventing attackers from
+	// minting year-long descriptors.
+	AnnounceMaxValidity = 24 * time.Hour
 )
 
 type RelayState struct {

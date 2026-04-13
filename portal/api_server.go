@@ -119,6 +119,12 @@ func (s *Server) apiHandler(base *http.ServeMux, keylessSignerHandler http.Handl
 				return
 			}
 			s.handleRelayDiscovery(w, r)
+		case types.PathDiscoveryAnnounce:
+			if !s.cfg.DiscoveryEnabled {
+				base.ServeHTTP(w, r)
+				return
+			}
+			s.handleRelayDiscoveryAnnounce(w, r)
 		case types.PathV1Sign:
 			if keylessSignerHandler == nil {
 				http.NotFound(w, r)
@@ -195,7 +201,73 @@ func (s *Server) handleRelayDiscovery(w http.ResponseWriter, r *http.Request) {
 		utils.WriteAPIError(w, http.StatusInternalServerError, types.APIErrorCodeInternal, err.Error())
 		return
 	}
-	s.relaySet.ServeDiscovery(w, r, self)
+	signedSelf, err := discovery.SignDescriptor(self, s.identity.PrivateKey)
+	if err != nil {
+		utils.WriteAPIError(w, http.StatusInternalServerError, types.APIErrorCodeInternal, err.Error())
+		return
+	}
+	s.relaySet.ServeDiscovery(w, r, signedSelf)
+}
+
+func (s *Server) handleRelayDiscoveryAnnounce(w http.ResponseWriter, r *http.Request) {
+	if !utils.RequireMethod(w, r, http.MethodPost) {
+		return
+	}
+	if s.relaySet == nil {
+		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, "relay discovery disabled")
+		return
+	}
+	clientIP, ok := s.extractAllowedClientIP(w, r)
+	if !ok {
+		return
+	}
+	if !s.announceLimiter.Allow(clientIP) {
+		utils.WriteAPIError(w, http.StatusTooManyRequests, types.APIErrorCodeRateLimited, "announce rate limit exceeded")
+		return
+	}
+
+	req, ok := utils.DecodeJSONRequest[types.DiscoveryAnnounceRequest](w, r, defaultControlBodyLimit)
+	if !ok {
+		return
+	}
+	if req.ProtocolVersion != "" && req.ProtocolVersion != types.DiscoveryVersion {
+		utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest,
+			fmt.Sprintf("announce protocol mismatch: relay=%q client=%q", types.DiscoveryVersion, req.ProtocolVersion))
+		return
+	}
+
+	desc := req.Descriptor
+	// Self-announce guard: the relay's own URL is established locally, not
+	// gossiped through the announce endpoint. Reject loopback / own-host
+	// announces to prevent self-amplification or misconfiguration loops.
+	announceURL, parseErr := url.Parse(desc.APIHTTPSAddr)
+	if parseErr == nil && announceURL != nil {
+		if utils.IsLocalRelayHost(announceURL.Hostname()) {
+			utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, "self-announce rejected")
+			return
+		}
+	}
+
+	now := time.Now().UTC()
+	accepted, _, err := s.relaySet.InsertAnnounced(desc, now)
+	if err != nil {
+		utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, err.Error())
+		return
+	}
+	if !accepted {
+		utils.WriteAPIError(w, http.StatusConflict, types.APIErrorCodeInvalidRequest, "announce not accepted")
+		return
+	}
+
+	log.Info().
+		Str("relay", desc.APIHTTPSAddr).
+		Str("source_ip", clientIP).
+		Msg("relay discovery announce accepted")
+
+	utils.WriteAPIData(w, http.StatusAccepted, types.DiscoveryAnnounceResponse{
+		ProtocolVersion: types.DiscoveryVersion,
+		Accepted:        true,
+	})
 }
 
 func (s *Server) handleDomain(w http.ResponseWriter, r *http.Request) {

@@ -116,11 +116,12 @@ type Server struct {
 	apiTLSClose io.Closer
 	quicTunnel  *quic.Listener
 
-	overlay  *overlay.Overlay
-	relaySet *discovery.RelaySet
-	registry *leaseRegistry
-	udpPorts *transport.PortAllocator
-	tcpPorts *transport.PortAllocator
+	overlay         *overlay.Overlay
+	relaySet        *discovery.RelaySet
+	announceLimiter *discovery.AnnounceLimiter
+	registry        *leaseRegistry
+	udpPorts        *transport.PortAllocator
+	tcpPorts        *transport.PortAllocator
 }
 
 func NewServer(cfg ServerConfig) (*Server, error) {
@@ -151,12 +152,13 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	}
 
 	return &Server{
-		cfg:      cfg,
-		identity: identity,
-		registry: registry,
-		relaySet: relaySet,
-		udpPorts: transport.NewPortAllocator(cfg.MinPort, cfg.MaxPort, 5*time.Minute),
-		tcpPorts: transport.NewPortAllocator(cfg.MinPort, cfg.MaxPort, 5*time.Minute),
+		cfg:             cfg,
+		identity:        identity,
+		registry:        registry,
+		relaySet:        relaySet,
+		announceLimiter: discovery.NewAnnounceLimiter(0, 0),
+		udpPorts:        transport.NewPortAllocator(cfg.MinPort, cfg.MaxPort, 5*time.Minute),
+		tcpPorts:        transport.NewPortAllocator(cfg.MinPort, cfg.MaxPort, 5*time.Minute),
 	}, nil
 }
 

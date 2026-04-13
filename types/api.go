@@ -94,6 +94,16 @@ type DiscoveryResponse struct {
 	Relays          []RelayDescriptor `json:"relays"`
 }
 
+type DiscoveryAnnounceRequest struct {
+	ProtocolVersion string          `json:"protocol_version"`
+	Descriptor      RelayDescriptor `json:"descriptor"`
+}
+
+type DiscoveryAnnounceResponse struct {
+	ProtocolVersion string `json:"protocol_version"`
+	Accepted        bool   `json:"accepted"`
+}
+
 type QUICControlMessage struct {
 	AccessToken string `json:"access_token"`
 }

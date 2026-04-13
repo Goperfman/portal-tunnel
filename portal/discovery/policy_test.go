@@ -12,10 +12,15 @@ import (
 func mustPolicyRelayDescriptor(t *testing.T, relayName, relayURL string) types.RelayDescriptor {
 	t.Helper()
 
+	signing, err := utils.ResolveSecp256k1Identity("")
+	if err != nil {
+		t.Fatalf("ResolveSecp256k1Identity() error = %v", err)
+	}
 	now := time.Now().UTC()
 	desc, err := utils.NormalizeDescriptor(types.RelayDescriptor{
 		Identity: types.Identity{
-			Name: relayName,
+			Name:    relayName,
+			Address: signing.Address,
 		},
 		RelayID:      relayURL,
 		Version:      1,
@@ -27,7 +32,11 @@ func mustPolicyRelayDescriptor(t *testing.T, relayName, relayURL string) types.R
 	if err != nil {
 		t.Fatalf("NormalizeDescriptor() error = %v", err)
 	}
-	return desc
+	signed, err := SignDescriptor(desc, signing.PrivateKey)
+	if err != nil {
+		t.Fatalf("SignDescriptor() error = %v", err)
+	}
+	return signed
 }
 
 func bootstrapPolicyRelayState(relayURL string) RelayState {

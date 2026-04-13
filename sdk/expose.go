@@ -20,13 +20,17 @@ import (
 )
 
 // Exposure owns the lifecycle of one or more relay listeners and accepts
-// traffic from all of them through one net.Listener.
+// traffic from all of them through one net.Listener. The SDK is a pure
+// relay client: it uses only the explicit relay URLs passed in by the
+// caller, never gossips its own descriptor into the discovery mesh, and
+// never serves the /discovery endpoint. Relay bootstrap expansion (e.g.
+// loading a public registry) is the caller's responsibility — resolve the
+// final URL list before invoking Expose.
 type Exposure struct {
 	cancel context.CancelFunc
 	done   <-chan struct{}
 
 	identity        types.Identity
-	discovery       bool
 	explicitRelays  []string
 	TargetAddr      string
 	UDPAddr         string
@@ -59,7 +63,6 @@ type ExposeConfig struct {
 	TCPEnabled      bool
 	BanMITM         bool
 	MaxActiveRelays int
-	Discovery       bool
 	Metadata        types.LeaseMetadata
 	RootCAPEM       []byte
 }
@@ -72,12 +75,6 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 		return nil, err
 	}
 	relayURLs := explicitRelayURLs
-	if cfg.Discovery {
-		relayURLs, err = utils.ResolvePortalRelayURLs(ctx, explicitRelayURLs, true)
-		if err != nil {
-			return nil, err
-		}
-	}
 
 	identity, createdIdentity, err := utils.ResolveListenerIdentity(
 		types.Identity{Name: cfg.Name},
@@ -115,7 +112,6 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 		cancel:          cancel,
 		done:            exposureCtx.Done(),
 		identity:        identity,
-		discovery:       cfg.Discovery,
 		explicitRelays:  append([]string(nil), explicitRelayURLs...),
 		TargetAddr:      targetAddr,
 		UDPAddr:         udpAddr,
@@ -138,39 +134,12 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 		}
 	}
 
-	if cfg.Discovery {
-		go exposure.runDiscoveryLoop(exposureCtx)
-	}
 	go func() {
 		<-exposure.done
 		_ = exposure.Close()
 	}()
 
 	return exposure, nil
-}
-
-func (e *Exposure) runDiscoveryLoop(ctx context.Context) {
-	refresher, err := discovery.NewRefresher(e.relaySet, e.rootCAPEM, nil, "")
-	if err != nil {
-		return
-	}
-	ticker := time.NewTicker(discovery.DiscoveryPollInterval)
-	defer ticker.Stop()
-
-	for {
-		if err := refresher.Refresh(ctx); err != nil {
-			return
-		}
-		if err := e.reconcileRelayListeners(false); err != nil {
-			return
-		}
-
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
 }
 
 func (e *Exposure) ActiveRelayURLs() []string {
@@ -272,16 +241,6 @@ func (e *Exposure) WaitDatagramReady(ctx context.Context) ([]string, error) {
 func (e *Exposure) RunHTTP(ctx context.Context, handler http.Handler, localAddr string) error {
 	if handler == nil {
 		handler = http.NotFoundHandler()
-	}
-	if e.discovery {
-		tmp := handler
-		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if strings.TrimSpace(r.URL.Path) == types.PathDiscovery {
-				e.relaySet.ServeDiscovery(w, r)
-				return
-			}
-			tmp.ServeHTTP(w, r)
-		})
 	}
 
 	e.listenerMu.RLock()

@@ -129,14 +129,17 @@ func runUDPCommand(args []string) error {
 }
 
 func runTCPDemo(ctx context.Context, cfg demoConfig) error {
+	relayURLs, err := utils.ResolvePortalRelayURLs(ctx, utils.SplitCSV(cfg.relayURLs), cfg.discovery)
+	if err != nil {
+		return fmt.Errorf("resolve relay urls: %w", err)
+	}
 	exposure, err := sdk.Expose(ctx, sdk.ExposeConfig{
-		RelayURLs:       utils.SplitCSV(cfg.relayURLs),
+		RelayURLs:       relayURLs,
 		IdentityPath:    cfg.identityPath,
 		IdentityJSON:    cfg.identityJSON,
 		Name:            cfg.name,
 		BanMITM:         cfg.banMITM,
 		MaxActiveRelays: cfg.maxActiveRelays,
-		Discovery:       cfg.discovery,
 		Metadata: types.LeaseMetadata{
 			Description: cfg.desc,
 			Tags:        utils.SplitCSV(cfg.tags),
@@ -172,15 +175,18 @@ func runTCPDemo(ctx context.Context, cfg demoConfig) error {
 }
 
 func runUDPDemo(ctx context.Context, cfg demoConfig) error {
+	relayURLs, err := utils.ResolvePortalRelayURLs(ctx, utils.SplitCSV(cfg.relayURLs), cfg.discovery)
+	if err != nil {
+		return fmt.Errorf("resolve relay urls: %w", err)
+	}
 	exposure, err := sdk.Expose(ctx, sdk.ExposeConfig{
-		RelayURLs:       utils.SplitCSV(cfg.relayURLs),
+		RelayURLs:       relayURLs,
 		IdentityPath:    cfg.identityPath,
 		IdentityJSON:    cfg.identityJSON,
 		Name:            cfg.name,
 		UDPEnabled:      true,
 		BanMITM:         cfg.banMITM,
 		MaxActiveRelays: cfg.maxActiveRelays,
-		Discovery:       cfg.discovery,
 		Metadata: types.LeaseMetadata{
 			Description: cfg.desc,
 			Tags:        utils.SplitCSV(cfg.tags),

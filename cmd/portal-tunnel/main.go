@@ -100,8 +100,13 @@ func runExposeCommand(args []string) error {
 	ctx, stop := utils.SignalContext()
 	defer stop()
 
+	relayURLs, err := utils.ResolvePortalRelayURLs(ctx, utils.SplitCSV(flags.relayCSV), flags.discovery)
+	if err != nil {
+		return fmt.Errorf("resolve relay urls: %w", err)
+	}
+
 	exposure, err := sdk.Expose(ctx, sdk.ExposeConfig{
-		RelayURLs:       utils.SplitCSV(flags.relayCSV),
+		RelayURLs:       relayURLs,
 		IdentityPath:    flags.identityPath,
 		IdentityJSON:    flags.identityJSON,
 		Name:            flags.name,
@@ -111,7 +116,6 @@ func runExposeCommand(args []string) error {
 		TCPEnabled:      flags.tcp,
 		BanMITM:         flags.banMITM,
 		MaxActiveRelays: flags.maxActiveRelays,
-		Discovery:       flags.discovery,
 		Metadata: types.LeaseMetadata{
 			Description: flags.desc,
 			Tags:        utils.SplitCSV(flags.tags),
