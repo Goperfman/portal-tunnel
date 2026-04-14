@@ -3,9 +3,6 @@ package discovery
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
-	"errors"
-	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -31,40 +28,16 @@ type Refresher struct {
 	relaySet               *RelaySet
 	httpClient             *http.Client
 	overlay                OverlayRuntime
-	sourceBaseURL          *url.URL
 	directRecoveryFailures int
 }
 
-func NewRefresher(relaySet *RelaySet, rootCAPEM []byte, overlay OverlayRuntime, sourceBaseURL string) (*Refresher, error) {
-	if relaySet == nil {
-		return nil, errors.New("relay set is required")
-	}
-	var rootCAs *x509.CertPool
-	if len(rootCAPEM) > 0 {
-		rootCAs = x509.NewCertPool()
-		if !rootCAs.AppendCertsFromPEM(rootCAPEM) {
-			return nil, errors.New("failed to parse relay root ca")
-		}
-	}
-	var parsedSourceBaseURL *url.URL
-	if sourceBaseURL != "" {
-		normalizedSourceBaseURL, err := utils.NormalizeRelayURL(sourceBaseURL)
-		if err != nil {
-			return nil, err
-		}
-		parsed, err := url.Parse(normalizedSourceBaseURL)
-		if err != nil {
-			return nil, err
-		}
-		parsedSourceBaseURL = parsed
-	}
+func NewRefresher(relaySet *RelaySet, overlay OverlayRuntime) *Refresher {
 	return &Refresher{
 		relaySet: relaySet,
 		httpClient: &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
 					MinVersion: tls.VersionTLS12,
-					RootCAs:    rootCAs,
 					NextProtos: []string{"http/1.1"},
 				},
 				ForceAttemptHTTP2: false,
@@ -72,12 +45,11 @@ func NewRefresher(relaySet *RelaySet, rootCAPEM []byte, overlay OverlayRuntime, 
 			Timeout: defaultRequestTimeout,
 		},
 		overlay:                overlay,
-		sourceBaseURL:          parsedSourceBaseURL,
 		directRecoveryFailures: defaultRecoveryFailures,
-	}, nil
+	}
 }
 
-func (r *Refresher) Refresh(ctx context.Context, extraSourceHosts ...string) error {
+func (r *Refresher) Refresh(ctx context.Context, self types.RelayDescriptor) error {
 	if r.overlay != nil {
 		if err := r.refreshOverlay(ctx); err != nil && ctx.Err() == nil {
 			log.Warn().
@@ -88,12 +60,52 @@ func (r *Refresher) Refresh(ctx context.Context, extraSourceHosts ...string) err
 			return ctx.Err()
 		}
 	}
-	return r.refreshHTTPS(ctx, extraSourceHosts)
+	if err := r.refreshHTTPS(ctx); err != nil {
+		return err
+	}
+	return r.announceSelf(ctx, self)
 }
 
-func (r *Refresher) refreshHTTPS(ctx context.Context, extraSourceHosts []string) error {
+func (r *Refresher) announceSelf(ctx context.Context, descriptor types.RelayDescriptor) error {
+	req := types.DiscoveryAnnounceRequest{
+		ProtocolVersion: types.DiscoveryVersion,
+		Descriptor:      descriptor,
+	}
+	for _, relayURL := range r.relaySet.BootstrapRelayURLs() {
+		if relayURL == descriptor.APIHTTPSAddr {
+			continue
+		}
+		baseURL, err := url.Parse(relayURL)
+		if err != nil {
+			log.Warn().
+				Err(err).
+				Str("relay", relayURL).
+				Msg("relay discovery announce target skipped")
+			continue
+		}
+		if utils.IsLocalRelayHost(baseURL.Hostname()) {
+			continue
+		}
+
+		if err := utils.HTTPDoAPIPath(ctx, r.httpClient, baseURL, http.MethodPost, types.PathDiscoveryAnnounce, req, nil, nil); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			log.Warn().
+				Err(err).
+				Str("relay", relayURL).
+				Msg("relay discovery announce failed")
+		}
+	}
+	return nil
+}
+
+func (r *Refresher) refreshHTTPS(ctx context.Context) error {
 	r.relaySet.mu.RLock()
-	states := r.relaySet.relayStatesLocked()
+	states := make([]RelayState, 0, len(r.relaySet.relays))
+	for _, state := range r.relaySet.relays {
+		states = append(states, state)
+	}
 	r.relaySet.mu.RUnlock()
 
 	now := time.Now().UTC()
@@ -101,7 +113,7 @@ func (r *Refresher) refreshHTTPS(ctx context.Context, extraSourceHosts []string)
 		if state.Banned {
 			continue
 		}
-		if !state.hasDescriptor() {
+		if !state.hasObservedDescriptor() {
 			if !state.Bootstrap {
 				continue
 			}
@@ -110,7 +122,7 @@ func (r *Refresher) refreshHTTPS(ctx context.Context, extraSourceHosts []string)
 				continue
 			}
 		}
-		if state.hasDescriptor() && !state.Descriptor.Discovery {
+		if state.hasObservedDescriptor() && !state.Descriptor.Discovery {
 			continue
 		}
 
@@ -158,32 +170,6 @@ func (r *Refresher) refreshHTTPS(ctx context.Context, extraSourceHosts []string)
 			continue
 		}
 		r.relaySet.RecordDiscoveryRTT(relayURL, time.Since(startedAt), measuredAt)
-	}
-
-	for _, sourceHost := range extraSourceHosts {
-		if r.sourceBaseURL == nil {
-			break
-		}
-		sourceHost = utils.NormalizeHostname(sourceHost)
-		if sourceHost == "" {
-			continue
-		}
-		baseURL := *r.sourceBaseURL
-		baseURL.Host = sourceHost
-		if port := r.sourceBaseURL.Port(); port != "" {
-			baseURL.Host = net.JoinHostPort(sourceHost, port)
-		}
-
-		var resp types.DiscoveryResponse
-		if err := utils.HTTPDoAPIPath(ctx, r.httpClient, &baseURL, http.MethodGet, types.PathDiscovery, nil, nil, &resp); err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			continue
-		}
-		if _, err := r.relaySet.ApplyRelayDiscoveryResponse("", resp, time.Now().UTC()); err != nil {
-			continue
-		}
 	}
 	return nil
 }

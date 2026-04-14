@@ -30,7 +30,7 @@ func (p DefaultRelayPolicy) SelectAggregate(states []RelayState) []RelayState {
 		if state.Banned {
 			continue
 		}
-		if !state.Bootstrap && !state.hasDescriptor() {
+		if !state.Bootstrap && !state.hasObservedDescriptor() {
 			continue
 		}
 		out = append(out, state)
@@ -65,10 +65,10 @@ func (p DefaultRelayPolicy) SelectPriority(states []RelayState, clientState Clie
 	explicit := make([]string, 0, len(clientState.ExplicitRelayURLs))
 	autoPool := make([]RelayState, 0, len(selected))
 	for _, state := range selected {
-		if clientState.RequireUDP && state.hasDescriptor() && !state.Descriptor.SupportsUDP {
+		if clientState.RequireUDP && state.hasObservedDescriptor() && !state.Descriptor.SupportsUDP {
 			continue
 		}
-		if clientState.RequireTCP && state.hasDescriptor() && !state.Descriptor.SupportsTCP {
+		if clientState.RequireTCP && state.hasObservedDescriptor() && !state.Descriptor.SupportsTCP {
 			continue
 		}
 		relayURL := state.Descriptor.APIHTTPSAddr

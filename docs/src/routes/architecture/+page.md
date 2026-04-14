@@ -292,8 +292,8 @@ Result: raw public UDP exposure with an internal QUIC datagram backhaul. UDP and
 
 ## WireGuard Overlay and Discovery
 
-- Discovery bootstraps from public HTTPS relay URLs, then optionally synchronizes over WireGuard overlay.
-- Discovery descriptors are transport-authenticated by the queried relay endpoint, not by embedded signatures. Independent `domain -> address` verification comes from optional ENS/DNSSEC evidence, not from the discovery payload itself.
+- Discovery bootstraps from public HTTPS relay URLs, then expands through relay-to-relay `/discovery` polling and periodic self-announces to bootstrap relays through `/discovery/announce`.
+- Discovery descriptors carry secp256k1 signatures that bind relay routing metadata to the relay identity. Lease access tokens remain separate and authorize tenant lease operations only.
 - The overlay peer API is plain HTTP on the WireGuard network, not public Internet HTTP. It serves the same discovery payload shape used by public `/discovery`.
 - Overlay failure affects inter-relay discovery and mesh synchronization only. Tenant stream routing, keyless TLS, register/renew/connect, and public UDP ingress do not depend on the WireGuard transport path.
 

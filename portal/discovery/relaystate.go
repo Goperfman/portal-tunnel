@@ -1,7 +1,6 @@
 package discovery
 
 import (
-	"errors"
 	"time"
 
 	"github.com/gosuda/portal-tunnel/v2/types"
@@ -10,7 +9,6 @@ import (
 
 const (
 	DiscoveryDescriptorTTL       = 5 * time.Minute
-	DiscoveryHintRetentionTTL    = 30 * 24 * time.Hour
 	defaultDirectRecoveryBackoff = 1 * time.Minute
 	maxDirectRecoveryBackoff     = 5 * time.Minute
 
@@ -46,37 +44,7 @@ type RelayState struct {
 	nextDirectRefreshAt time.Time
 }
 
-type ClientState struct {
-	ActiveRelayURLs   []string
-	ExplicitRelayURLs []string
-	MaxActiveRelays   int
-	RequireUDP        bool
-	RequireTCP        bool
-}
-
-func newRelayState(desc types.RelayDescriptor, seenAt time.Time) (RelayState, error) {
-	state := RelayState{
-		Descriptor: desc,
-	}
-	if seenAt.IsZero() {
-		return state, nil
-	}
-
-	seenAt = seenAt.UTC()
-	normalized, err := utils.NormalizeDescriptor(desc)
-	if err != nil {
-		return RelayState{}, err
-	}
-	if normalized.ExpiresAt.Before(seenAt) {
-		return RelayState{}, errors.New("descriptor expired")
-	}
-
-	state.Descriptor = normalized
-	state.LastSeenAt = seenAt
-	return state, nil
-}
-
-func newRelayStateFromURL(relayURL string) RelayState {
+func newRelayState(relayURL string) RelayState {
 	return RelayState{
 		Descriptor: types.RelayDescriptor{
 			Identity: types.Identity{
@@ -88,6 +56,14 @@ func newRelayStateFromURL(relayURL string) RelayState {
 	}
 }
 
-func (state RelayState) hasDescriptor() bool {
+func (state RelayState) hasObservedDescriptor() bool {
 	return !state.LastSeenAt.IsZero()
+}
+
+type ClientState struct {
+	ActiveRelayURLs   []string
+	ExplicitRelayURLs []string
+	MaxActiveRelays   int
+	RequireUDP        bool
+	RequireTCP        bool
 }
