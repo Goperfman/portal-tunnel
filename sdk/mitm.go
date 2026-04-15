@@ -41,12 +41,7 @@ type MITMProbeReport struct {
 
 type mitmProbePending struct {
 	expected []byte
-	resultCh chan mitmProbeResult
-}
-
-type mitmProbeResult struct {
-	matched bool
-	reason  string
+	resultCh chan string
 }
 
 type mitmManager struct {
@@ -83,13 +78,17 @@ func (m *mitmManager) probeTLSPassthrough(ctx context.Context) (MITMProbeReport,
 		return MITMProbeReport{}, errors.New("listener is not ready")
 	}
 
-	publicURL := l.publicURL()
-	if publicURL == "" {
+	lease, ok := l.leaseSnapshot()
+	if !ok {
 		return MITMProbeReport{}, errors.New("listener is not registered")
 	}
-
-	if l.hostname == "" {
+	if lease.hostname == "" {
 		return MITMProbeReport{}, errors.New("listener hostname is unavailable")
+	}
+
+	publicURL := l.publicURLForHostname(lease.hostname)
+	if publicURL == "" {
+		return MITMProbeReport{}, errors.New("listener is not registered")
 	}
 
 	report := MITMProbeReport{
@@ -113,14 +112,14 @@ func (m *mitmManager) probeTLSPassthrough(ctx context.Context) (MITMProbeReport,
 	}
 
 	probeTLSConf := &tls.Config{
-		ServerName:         l.hostname,
+		ServerName:         lease.hostname,
 		InsecureSkipVerify: true,
 	}
-	if l.tenantTLSConfig != nil {
-		probeTLSConf.MinVersion = l.tenantTLSConfig.MinVersion
-		probeTLSConf.MaxVersion = l.tenantTLSConfig.MaxVersion
-		if len(l.tenantTLSConfig.NextProtos) > 0 {
-			probeTLSConf.NextProtos = append([]string(nil), l.tenantTLSConfig.NextProtos...)
+	if lease.tlsConfig != nil {
+		probeTLSConf.MinVersion = lease.tlsConfig.MinVersion
+		probeTLSConf.MaxVersion = lease.tlsConfig.MaxVersion
+		if len(lease.tlsConfig.NextProtos) > 0 {
+			probeTLSConf.NextProtos = append([]string(nil), lease.tlsConfig.NextProtos...)
 		}
 	}
 
@@ -166,9 +165,9 @@ func (m *mitmManager) probeTLSPassthrough(ctx context.Context) (MITMProbeReport,
 	}
 
 	select {
-	case result := <-resultCh:
-		report.Detected = !result.matched
-		report.Reason = result.reason
+	case reason := <-resultCh:
+		report.Detected = reason != ""
+		report.Reason = reason
 	case <-probeCtx.Done():
 		report.Reason = types.MITMProbeReasonProbeTimeout
 		if !errors.Is(probeCtx.Err(), context.DeadlineExceeded) {
@@ -334,11 +333,11 @@ func (m *mitmManager) maybeHandleConn(conn net.Conn) (net.Conn, bool, error) {
 	return nil, true, nil
 }
 
-func (m *mitmManager) startProbe(nonce string, expected []byte) (<-chan mitmProbeResult, func()) {
+func (m *mitmManager) startProbe(nonce string, expected []byte) (<-chan string, func()) {
 	m.mu.Lock()
 	state := &mitmProbePending{
 		expected: append([]byte(nil), expected...),
-		resultCh: make(chan mitmProbeResult, 1),
+		resultCh: make(chan string, 1),
 	}
 	m.pending[nonce] = state
 	m.mu.Unlock()
@@ -358,24 +357,15 @@ func (m *mitmManager) completeProbe(nonce string, actual []byte) {
 		return
 	}
 
-	result := mitmProbeResult{
-		matched: bytes.Equal(state.expected, actual),
-	}
-	if !result.matched {
-		result.reason = types.MITMProbeReasonExporterMismatch
+	reason := ""
+	if !bytes.Equal(state.expected, actual) {
+		reason = types.MITMProbeReasonExporterMismatch
 	}
 
 	select {
-	case state.resultCh <- result:
+	case state.resultCh <- reason:
 	default:
 	}
-}
-
-func wrapMITMProbeConn(manager *mitmManager, conn net.Conn) net.Conn {
-	if conn == nil {
-		return conn
-	}
-	return &mitmProbeConn{Conn: conn, manager: manager}
 }
 
 type mitmProbeConn struct {

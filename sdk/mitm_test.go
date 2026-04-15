@@ -66,9 +66,9 @@ func TestMITMProbeConnMatchesExporter(t *testing.T) {
 	_ = clientConn.Close()
 
 	select {
-	case result := <-resultCh:
-		if !result.matched {
-			t.Fatalf("probe matched = false, reason = %q", result.reason)
+	case reason := <-resultCh:
+		if reason != "" {
+			t.Fatalf("probe reason = %q, want empty", reason)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for probe result")
@@ -121,12 +121,9 @@ func TestMITMProbeConnDetectsExporterMismatch(t *testing.T) {
 	_ = clientConn.Close()
 
 	select {
-	case result := <-resultCh:
-		if result.matched {
-			t.Fatal("probe matched = true, want false")
-		}
-		if result.reason != types.MITMProbeReasonExporterMismatch {
-			t.Fatalf("probe reason = %q, want %q", result.reason, types.MITMProbeReasonExporterMismatch)
+	case reason := <-resultCh:
+		if reason != types.MITMProbeReasonExporterMismatch {
+			t.Fatalf("probe reason = %q, want %q", reason, types.MITMProbeReasonExporterMismatch)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for probe result")

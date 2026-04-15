@@ -54,6 +54,7 @@ type listener struct {
 	identity       types.Identity
 	metadata       types.LeaseMetadata
 	relaySet       *discovery.RelaySet
+	udpEnabled     bool
 	tcpEnabled     bool
 	dialTimeout    time.Duration
 	requestTimeout time.Duration
@@ -70,13 +71,8 @@ type listener struct {
 	httpClient *http.Client
 	tlsConfig  *tls.Config
 
-	hostname        string
-	udpAddr         string
-	accessToken     string
-	expiresAt       time.Time
-	sniPort         int
-	tenantTLSConfig *tls.Config
-	tenantTLSCloser io.Closer
+	leaseMu sync.RWMutex
+	lease   *listenerLease
 }
 
 // newListener creates one relay listener and its dedicated relay transport for one relay URL.
@@ -109,6 +105,7 @@ func newListener(ctx context.Context, relayURL string, cfg listenerConfig) (*lis
 		identity:       cfg.Identity,
 		metadata:       cfg.Metadata,
 		relaySet:       cfg.relaySet,
+		udpEnabled:     cfg.UDPEnabled,
 		tcpEnabled:     cfg.TCPEnabled,
 		dialTimeout:    dialTimeout,
 		requestTimeout: requestTimeout,
@@ -120,7 +117,7 @@ func newListener(ctx context.Context, relayURL string, cfg listenerConfig) (*lis
 	}
 	l.mitmManager = newMITMManager(listenerCtx, l, cfg.BanMITM)
 	l.stream = transport.NewClientStream(readyTarget, handshakeTimeout)
-	if cfg.UDPEnabled {
+	if l.udpEnabled {
 		l.datagram = transport.NewClientDatagram(func(err error) {
 			log.Info().
 				Err(err).
@@ -185,9 +182,9 @@ func (l *listener) run(ctx context.Context) {
 		}
 
 		if errors.Is(err, errLeaseRefreshRequired) {
-			_, _, tenantTLSCloser := l.clearLease("lease refresh required")
-			if tenantTLSCloser != nil {
-				_ = tenantTLSCloser.Close()
+			lease := l.clearLease("lease refresh required")
+			if lease != nil && lease.tlsCloser != nil {
+				_ = lease.tlsCloser.Close()
 			}
 			l.resetTransport()
 			continue
@@ -211,7 +208,7 @@ func (l *listener) Close() error {
 			l.cancel()
 		}
 
-		registered, accessToken, tenantTLSCloser := l.clearLease("")
+		lease := l.clearLease("")
 
 		if l.stream != nil {
 			l.stream.Drain()
@@ -220,37 +217,52 @@ func (l *listener) Close() error {
 			l.datagram.Close()
 		}
 
-		if registered && l.identity.Key() != "" && accessToken != "" {
+		if lease != nil && lease.hostname != "" && l.identity.Key() != "" && lease.accessToken != "" {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			closeErr = errors.Join(closeErr, l.unregisterLease(ctx, accessToken))
+			closeErr = errors.Join(closeErr, l.unregisterLease(ctx, lease.accessToken))
 			cancel()
 		}
-		if tenantTLSCloser != nil {
-			closeErr = errors.Join(closeErr, tenantTLSCloser.Close())
+		if lease != nil && lease.tlsCloser != nil {
+			closeErr = errors.Join(closeErr, lease.tlsCloser.Close())
 		}
 		l.resetTransport()
 	})
 	return closeErr
 }
 
-func (l *listener) clearLease(reason string) (bool, string, io.Closer) {
-	registered := l.hostname != ""
-	accessToken := l.accessToken
-	tenantTLSCloser := l.tenantTLSCloser
-	l.hostname = ""
-	l.udpAddr = ""
-	l.accessToken = ""
-	l.expiresAt = time.Time{}
-	l.sniPort = 0
-	l.tenantTLSConfig = nil
-	l.tenantTLSCloser = nil
+type listenerLease struct {
+	hostname    string
+	udpAddr     string
+	accessToken string
+	expiresAt   time.Time
+	sniPort     int
+	tlsConfig   *tls.Config
+	tlsCloser   io.Closer
+}
+
+func (l *listener) clearLease(reason string) *listenerLease {
+	l.leaseMu.Lock()
+	lease := l.lease
+	l.lease = nil
+	l.leaseMu.Unlock()
+
 	if l.mitmManager != nil {
 		l.mitmManager.reset()
 	}
 	if l.datagram != nil && reason != "" {
 		l.datagram.Clear(reason)
 	}
-	return registered, accessToken, tenantTLSCloser
+	return lease
+}
+
+func (l *listener) leaseSnapshot() (listenerLease, bool) {
+	l.leaseMu.RLock()
+	defer l.leaseMu.RUnlock()
+
+	if l.lease == nil {
+		return listenerLease{}, false
+	}
+	return *l.lease, true
 }
 
 func (l *listener) Accept() (net.Conn, error) {
@@ -274,7 +286,7 @@ func (l *listener) Accept() (net.Conn, error) {
 		if handled {
 			continue
 		}
-		return wrapMITMProbeConn(l.mitmManager, nextConn), nil
+		return &mitmProbeConn{Conn: nextConn, manager: l.mitmManager}, nil
 	}
 }
 
@@ -289,7 +301,9 @@ func (l *listener) acceptDatagram() (types.DatagramFrame, error) {
 	}
 
 	frame.Payload = append([]byte(nil), frame.Payload...)
-	frame.UDPAddr = l.udpAddr
+	if lease, ok := l.leaseSnapshot(); ok {
+		frame.UDPAddr = lease.udpAddr
+	}
 	frame.Address = l.identity.Address
 	if l.relayURL != nil {
 		frame.RelayURL = l.relayURL.String()
@@ -316,8 +330,12 @@ func (l *listener) datagramReady() (string, bool, bool) {
 		return "", false, false
 	}
 
-	hostname := l.hostname
-	udpAddr := l.udpAddr
+	hostname := ""
+	udpAddr := ""
+	if lease, ok := l.leaseSnapshot(); ok {
+		hostname = lease.hostname
+		udpAddr = lease.udpAddr
+	}
 	ready := l.datagram.Connected() && udpAddr != ""
 	closed := false
 	select {
@@ -330,11 +348,17 @@ func (l *listener) datagramReady() (string, bool, bool) {
 }
 
 func (l *listener) publicURL() string {
+	lease, ok := l.leaseSnapshot()
+	if !ok {
+		return ""
+	}
+	return l.publicURLForHostname(lease.hostname)
+}
+
+func (l *listener) publicURLForHostname(hostname string) string {
 	if l.relayURL == nil {
 		return ""
 	}
-
-	hostname := l.hostname
 	if hostname == "" {
 		return ""
 	}
@@ -355,24 +379,21 @@ func (l *listener) publicURL() string {
 }
 
 func (l *listener) runLease(ctx context.Context) error {
-	registered := l.hostname != ""
-	tlsConfig := l.tenantTLSConfig
-	if !registered {
+	lease, ok := l.leaseSnapshot()
+	if !ok || lease.hostname == "" {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		return errLeaseRefreshRequired
 	}
-	readyTarget := l.readyTarget
-
 	leaseCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	errCh := make(chan error, max(readyTarget, 1)+1)
-	if l.stream != nil && readyTarget > 0 {
-		for range readyTarget {
+	errCh := make(chan error, max(l.readyTarget, 1)+1)
+	if l.stream != nil && l.readyTarget > 0 {
+		for range l.readyTarget {
 			go func() {
-				if err := l.runReverseSessionLoop(leaseCtx, tlsConfig); err != nil {
+				if err := l.runReverseSessionLoop(leaseCtx, lease.tlsConfig); err != nil {
 					select {
 					case errCh <- err:
 					case <-leaseCtx.Done():
@@ -381,7 +402,7 @@ func (l *listener) runLease(ctx context.Context) error {
 			}()
 		}
 	}
-	if l.datagram != nil {
+	if l.udpEnabled {
 		go l.runDatagramLoop(leaseCtx)
 	}
 	go func() {
@@ -442,7 +463,6 @@ func (l *listener) runDatagramLoop(ctx context.Context) {
 	if l.datagram == nil {
 		return
 	}
-	address := l.identity.Address
 
 	for {
 		select {
@@ -457,7 +477,7 @@ func (l *listener) runDatagramLoop(ctx context.Context) {
 			log.Info().
 				Err(err).
 				Str("component", "sdk-datagram-plane").
-				Str("address", address).
+				Str("address", l.identity.Address).
 				Msg("quic datagram plane unavailable; retrying")
 			if !utils.SleepOrDone(ctx, 2*time.Second) {
 				l.datagram.Clear("lease stopped")
@@ -468,7 +488,7 @@ func (l *listener) runDatagramLoop(ctx context.Context) {
 
 		log.Info().
 			Str("component", "sdk-datagram-plane").
-			Str("address", address).
+			Str("address", l.identity.Address).
 			Str("remote_addr", conn.RemoteAddr().String()).
 			Msg("quic tunnel connected")
 
@@ -480,7 +500,7 @@ func (l *listener) runDatagramLoop(ctx context.Context) {
 			log.Info().
 				Err(err).
 				Str("component", "sdk-datagram-plane").
-				Str("address", address).
+				Str("address", l.identity.Address).
 				Msg("quic datagram plane did not bind cleanly; retrying")
 			if !utils.SleepOrDone(ctx, time.Second) {
 				return
@@ -502,8 +522,12 @@ func (l *listener) runDatagramLoop(ctx context.Context) {
 }
 
 func (l *listener) openReverseSession(ctx context.Context) (net.Conn, error) {
-	if l.accessToken == "" {
+	lease, ok := l.leaseSnapshot()
+	if !ok || lease.accessToken == "" {
 		return nil, errors.New("access token is not available")
+	}
+	if l.tlsConfig == nil {
+		return nil, errors.New("relay tls config is unavailable")
 	}
 
 	dialer := &tls.Dialer{
@@ -522,7 +546,7 @@ func (l *listener) openReverseSession(ctx context.Context) (net.Conn, error) {
 		Host:   l.relayURL.Host,
 		Header: make(http.Header),
 	}
-	req.Header.Set(types.HeaderAccessToken, l.accessToken)
+	req.Header.Set(types.HeaderAccessToken, lease.accessToken)
 	req.Header.Set("Connection", "keep-alive")
 
 	if writeErr := req.Write(conn); writeErr != nil {
@@ -547,37 +571,17 @@ func (l *listener) openReverseSession(ctx context.Context) (net.Conn, error) {
 	return wrapBufferedConn(conn, reader), nil
 }
 
-type bufferedConn struct {
-	net.Conn
-	reader *bytes.Reader
-}
-
-func wrapBufferedConn(conn net.Conn, reader *bufio.Reader) net.Conn {
-	if reader == nil || reader.Buffered() == 0 {
-		return conn
-	}
-	buf := make([]byte, reader.Buffered())
-	if _, err := io.ReadFull(reader, buf); err != nil {
-		return conn
-	}
-	return &bufferedConn{Conn: conn, reader: bytes.NewReader(buf)}
-}
-
-func (c *bufferedConn) Read(p []byte) (int, error) {
-	if c.reader != nil && c.reader.Len() > 0 {
-		return c.reader.Read(p)
-	}
-	return c.Conn.Read(p)
-}
-
 func (l *listener) openQUICSession(ctx context.Context) (*quic.Conn, error) {
-	if l.accessToken == "" {
+	lease, ok := l.leaseSnapshot()
+	if !ok || lease.accessToken == "" {
 		return nil, errors.New("access token is not available")
 	}
-	if l.sniPort <= 0 {
+	if lease.sniPort <= 0 {
 		return nil, errors.New("sni port is not available")
 	}
-
+	if l.tlsConfig == nil {
+		return nil, errors.New("relay tls config is unavailable")
+	}
 	tlsConf := l.tlsConfig.Clone()
 	tlsConf.NextProtos = []string{"portal-tunnel"}
 
@@ -591,7 +595,7 @@ func (l *listener) openQUICSession(ctx context.Context) (*quic.Conn, error) {
 	if host == "" {
 		host = strings.TrimSpace(l.relayURL.Host)
 	}
-	dialAddr := net.JoinHostPort(host, fmt.Sprintf("%d", l.sniPort))
+	dialAddr := net.JoinHostPort(host, fmt.Sprintf("%d", lease.sniPort))
 	conn, err := quic.DialAddr(ctx, dialAddr, tlsConf, quicConf)
 	if err != nil {
 		return nil, fmt.Errorf("quic dial: %w", err)
@@ -604,7 +608,7 @@ func (l *listener) openQUICSession(ctx context.Context) (*quic.Conn, error) {
 	}
 
 	controlMsg := types.QUICControlMessage{
-		AccessToken: l.accessToken,
+		AccessToken: lease.accessToken,
 	}
 	if err := json.NewEncoder(stream).Encode(controlMsg); err != nil {
 		_ = conn.CloseWithError(1, "control write failed")
@@ -683,14 +687,13 @@ func (l *listener) runRenewLoop(ctx context.Context) error {
 }
 
 func (l *listener) renewLease(ctx context.Context) error {
-	expiresAt := l.expiresAt
-	accessToken := l.accessToken
-	if accessToken == "" || !time.Now().Before(expiresAt) {
+	lease, ok := l.leaseSnapshot()
+	if !ok || lease.accessToken == "" || !time.Now().Before(lease.expiresAt) {
 		return errLeaseRefreshRequired
 	}
 
 	requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	resp, err := l.renewRegisteredLease(requestCtx, l.leaseTTL, accessToken)
+	resp, err := l.renewRegisteredLease(requestCtx, l.leaseTTL, lease.accessToken)
 	cancel()
 	if err != nil {
 		if errors.Is(err, &types.APIRequestError{Code: types.APIErrorCodeLeaseNotFound}) {
@@ -703,10 +706,16 @@ func (l *listener) renewLease(ctx context.Context) error {
 	if resp.AccessToken == "" {
 		return errors.New("relay did not return renewed access token")
 	}
-	if l.accessToken == accessToken {
-		l.accessToken = resp.AccessToken
-		l.expiresAt = resp.ExpiresAt
+	l.leaseMu.Lock()
+	if l.lease == nil || l.lease.accessToken != lease.accessToken {
+		l.leaseMu.Unlock()
+		return errLeaseRefreshRequired
 	}
+	next := *l.lease
+	next.accessToken = resp.AccessToken
+	next.expiresAt = resp.ExpiresAt
+	l.lease = &next
+	l.leaseMu.Unlock()
 	return nil
 }
 
@@ -715,7 +724,7 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 		return err
 	}
 
-	resp, err := l.registerLease(ctx, l.leaseTTL, l.datagram != nil, l.tcpEnabled)
+	resp, err := l.registerLease(ctx, l.leaseTTL, l.udpEnabled, l.tcpEnabled)
 	if err != nil {
 		return err
 	}
@@ -732,14 +741,14 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 		_ = l.unregisterLease(context.Background(), resp.AccessToken)
 		return errors.New("relay returned mismatched lease identity")
 	}
-	if l.datagram != nil && !resp.UDPEnabled {
+	if l.udpEnabled && !resp.UDPEnabled {
 		_ = l.unregisterLease(context.Background(), resp.AccessToken)
 		return &types.APIRequestError{
 			Code:    types.APIErrorCodeFeatureUnavailable,
 			Message: "relay did not enable required udp support",
 		}
 	}
-	if l.datagram != nil && resp.SNIPort <= 0 {
+	if l.udpEnabled && resp.SNIPort <= 0 {
 		_ = l.unregisterLease(context.Background(), resp.AccessToken)
 		return errors.New("relay did not return sni port for udp transport")
 	}
@@ -756,24 +765,26 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 		}
 		return ctx.Err()
 	}
-	datagram := l.datagram
-	oldCloser := l.tenantTLSCloser
-	l.hostname = resp.Hostname
-	l.udpAddr = resp.UDPAddr
-	l.accessToken = resp.AccessToken
-	l.expiresAt = resp.ExpiresAt
-	if datagram != nil {
-		l.sniPort = resp.SNIPort
-	} else {
-		l.sniPort = 0
+	next := &listenerLease{
+		hostname:    resp.Hostname,
+		udpAddr:     resp.UDPAddr,
+		accessToken: resp.AccessToken,
+		expiresAt:   resp.ExpiresAt,
+		tlsConfig:   tlsConf,
+		tlsCloser:   tenantTLSCloser,
 	}
-	l.tenantTLSConfig = tlsConf
-	l.tenantTLSCloser = tenantTLSCloser
-	if oldCloser != nil {
-		_ = oldCloser.Close()
+	if l.udpEnabled {
+		next.sniPort = resp.SNIPort
 	}
-	if datagram != nil {
-		datagram.Clear("lease updated")
+	l.leaseMu.Lock()
+	oldLease := l.lease
+	l.lease = next
+	l.leaseMu.Unlock()
+	if oldLease != nil && oldLease.tlsCloser != nil {
+		_ = oldLease.tlsCloser.Close()
+	}
+	if l.udpEnabled && l.datagram != nil {
+		l.datagram.Clear("lease updated")
 	}
 	relayURL := l.relayURL.String()
 	if l.relaySet != nil && relayURL != "" {
@@ -823,7 +834,25 @@ func (l *listener) waitRetry(ctx context.Context, operation string, err error, r
 	return utils.SleepOrDone(ctx, l.retryWait)
 }
 
-type listenerAddr string
+type bufferedConn struct {
+	net.Conn
+	reader *bytes.Reader
+}
 
-func (a listenerAddr) Network() string { return "portal" }
-func (a listenerAddr) String() string  { return string(a) }
+func wrapBufferedConn(conn net.Conn, reader *bufio.Reader) net.Conn {
+	if reader == nil || reader.Buffered() == 0 {
+		return conn
+	}
+	buf := make([]byte, reader.Buffered())
+	if _, err := io.ReadFull(reader, buf); err != nil {
+		return conn
+	}
+	return &bufferedConn{Conn: conn, reader: bytes.NewReader(buf)}
+}
+
+func (c *bufferedConn) Read(p []byte) (int, error) {
+	if c.reader != nil && c.reader.Len() > 0 {
+		return c.reader.Read(p)
+	}
+	return c.Conn.Read(p)
+}

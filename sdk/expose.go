@@ -154,10 +154,15 @@ func (e *Exposure) ActiveRelayURLs() []string {
 
 func (e *Exposure) Addr() net.Addr {
 	if e.identity.Address == "" {
-		return listenerAddr("portal:exposure")
+		return exposureAddr("portal:exposure")
 	}
-	return listenerAddr("portal:" + e.identity.Address)
+	return exposureAddr("portal:" + e.identity.Address)
 }
+
+type exposureAddr string
+
+func (a exposureAddr) Network() string { return "portal" }
+func (a exposureAddr) String() string  { return string(a) }
 
 func (e *Exposure) Identity() types.Identity {
 	return e.identity
