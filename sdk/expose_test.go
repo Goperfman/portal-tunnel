@@ -9,12 +9,7 @@ import (
 
 func mustRelaySet(t *testing.T, relayURLs ...string) *discovery.RelaySet {
 	t.Helper()
-
-	set, err := discovery.NewRelaySet(relayURLs)
-	if err != nil {
-		t.Fatalf("NewRelaySet() error = %v", err)
-	}
-	return set
+	return discovery.NewRelaySet(relayURLs)
 }
 
 func TestExposureReconcileRemovesBannedRelayFromActiveSet(t *testing.T) {
@@ -102,9 +97,7 @@ func TestExposureReconcileRemovesStaleListener(t *testing.T) {
 		},
 	}
 
-	if err := exposure.relaySet.SetBootstrapRelayURLs([]string{relayB}); err != nil {
-		t.Fatalf("SetBootstrapRelayURLs() error = %v", err)
-	}
+	exposure.relaySet.SetBootstrapRelayURLs([]string{relayB})
 	if err := exposure.reconcileRelayListeners(false); err != nil {
 		t.Fatalf("reconcileRelayListeners() error = %v", err)
 	}

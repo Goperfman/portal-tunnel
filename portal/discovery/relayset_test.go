@@ -8,10 +8,7 @@ import (
 )
 
 func TestApplyRelayDiscoveryResponsePreservesBootstrapFlag(t *testing.T) {
-	set, err := NewRelaySet([]string{"https://relay-a.example"})
-	if err != nil {
-		t.Fatalf("NewRelaySet() error = %v", err)
-	}
+	set := NewRelaySet([]string{"https://relay-a.example"})
 
 	desc := mustPolicyRelayDescriptor(t, "relay-a", "https://relay-a.example")
 	if _, err := set.ApplyRelayDiscoveryResponse(desc.APIHTTPSAddr, types.DiscoveryResponse{
@@ -30,11 +27,8 @@ func TestApplyRelayDiscoveryResponsePreservesBootstrapFlag(t *testing.T) {
 	}
 }
 
-func TestDescriptorsKeepsStaleRelayHintWithinRetentionWindow(t *testing.T) {
-	set, err := NewRelaySet(nil)
-	if err != nil {
-		t.Fatalf("NewRelaySet() error = %v", err)
-	}
+func TestDescriptorsDropsExpiredSignedRelayDescriptor(t *testing.T) {
+	set := NewRelaySet(nil)
 
 	now := time.Now().UTC()
 	relayURL := "https://relay-stale.example"
@@ -56,55 +50,14 @@ func TestDescriptorsKeepsStaleRelayHintWithinRetentionWindow(t *testing.T) {
 	set.relays[relayURL] = state
 	set.mu.Unlock()
 
-	descriptors := set.Descriptors()
-	if len(descriptors) != 1 {
-		t.Fatalf("len(Descriptors()) = %d, want 1", len(descriptors))
-	}
-	got := descriptors[0]
-	if got.APIHTTPSAddr != relayURL {
-		t.Fatalf("descriptor api_https_addr = %q, want %q", got.APIHTTPSAddr, relayURL)
-	}
-	if !got.ExpiresAt.After(now) {
-		t.Fatalf("descriptor expires_at = %v, want future expiry", got.ExpiresAt)
-	}
-	if !got.SupportsUDP || !got.SupportsTCP || !got.SupportsOverlayPeer {
-		t.Fatal("stale advertised descriptor should preserve last known capability claims")
-	}
-	if got.IngressTLSAddr == "" || got.WireGuardPublicKey == "" || got.WireGuardEndpoint == "" || got.OverlayIPv4 == "" || len(got.OverlayCIDRs) == 0 {
-		t.Fatal("stale advertised descriptor should preserve last known routing fields")
-	}
-	if got.Load != 1 || got.LoadScore != 2 {
-		t.Fatal("stale advertised descriptor should preserve last known load signals")
-	}
-}
-
-func TestDescriptorsDropsRelayAfterHintRetentionWindow(t *testing.T) {
-	set, err := NewRelaySet(nil)
-	if err != nil {
-		t.Fatalf("NewRelaySet() error = %v", err)
-	}
-
-	now := time.Now().UTC()
-	relayURL := "https://relay-old.example"
-	state := confirmedPolicyRelayState(t, "relay-old", relayURL)
-	state.Descriptor.ExpiresAt = now.Add(-time.Minute)
-	state.LastSeenAt = now.Add(-DiscoveryHintRetentionTTL).Add(-time.Minute)
-
-	set.mu.Lock()
-	set.relays[relayURL] = state
-	set.mu.Unlock()
-
-	descriptors := set.Descriptors()
+	descriptors := set.Descriptors(types.RelayDescriptor{})
 	if len(descriptors) != 0 {
-		t.Fatalf("len(Descriptors()) = %d, want 0", len(descriptors))
+		t.Fatalf("len(Descriptors(empty)) = %d, want 0", len(descriptors))
 	}
 }
 
 func TestApplyRelayDiscoveryResponseCollectsRelaysDespiteProtocolMismatch(t *testing.T) {
-	set, err := NewRelaySet(nil)
-	if err != nil {
-		t.Fatalf("NewRelaySet() error = %v", err)
-	}
+	set := NewRelaySet(nil)
 
 	desc := mustPolicyRelayDescriptor(t, "relay-mismatch", "https://relay-mismatch.example")
 	changed, err := set.ApplyRelayDiscoveryResponse("", types.DiscoveryResponse{
@@ -131,10 +84,7 @@ func TestApplyRelayDiscoveryResponseCollectsRelaysDespiteProtocolMismatch(t *tes
 }
 
 func TestApplyRelayDiscoveryResponseCollectsHintsWhenTargetDescriptorIsMissing(t *testing.T) {
-	set, err := NewRelaySet(nil)
-	if err != nil {
-		t.Fatalf("NewRelaySet() error = %v", err)
-	}
+	set := NewRelaySet(nil)
 
 	hinted := mustPolicyRelayDescriptor(t, "relay-hinted", "https://relay-hinted.example")
 	changed, err := set.ApplyRelayDiscoveryResponse("https://relay-source.example", types.DiscoveryResponse{
@@ -161,10 +111,7 @@ func TestApplyRelayDiscoveryResponseCollectsHintsWhenTargetDescriptorIsMissing(t
 }
 
 func TestApplyRelayDiscoveryResponseClearsDirectRetryOnAuthoritativeSuccess(t *testing.T) {
-	set, err := NewRelaySet(nil)
-	if err != nil {
-		t.Fatalf("NewRelaySet() error = %v", err)
-	}
+	set := NewRelaySet(nil)
 
 	relayURL := "https://relay-source.example"
 	desc := mustPolicyRelayDescriptor(t, "relay-source", relayURL)
@@ -197,10 +144,7 @@ func TestApplyRelayDiscoveryResponseClearsDirectRetryOnAuthoritativeSuccess(t *t
 }
 
 func TestApplyRelayDiscoveryResponsePreservesDirectRetryOnHint(t *testing.T) {
-	set, err := NewRelaySet(nil)
-	if err != nil {
-		t.Fatalf("NewRelaySet() error = %v", err)
-	}
+	set := NewRelaySet(nil)
 
 	relayURL := "https://relay-hinted.example"
 	desc := mustPolicyRelayDescriptor(t, "relay-hinted", relayURL)
@@ -230,10 +174,7 @@ func TestApplyRelayDiscoveryResponsePreservesDirectRetryOnHint(t *testing.T) {
 }
 
 func TestConfirmRelayURLMarksRelayConfirmedWithoutChangingAggregateDescriptor(t *testing.T) {
-	set, err := NewRelaySet(nil)
-	if err != nil {
-		t.Fatalf("NewRelaySet() error = %v", err)
-	}
+	set := NewRelaySet(nil)
 
 	relayURL := "https://relay-confirmed.example"
 	state := RelayState{
@@ -259,10 +200,7 @@ func TestConfirmRelayURLMarksRelayConfirmedWithoutChangingAggregateDescriptor(t 
 }
 
 func TestUnconfirmRelayURLClearsLocalConfirmationOnly(t *testing.T) {
-	set, err := NewRelaySet(nil)
-	if err != nil {
-		t.Fatalf("NewRelaySet() error = %v", err)
-	}
+	set := NewRelaySet(nil)
 
 	relayURL := "https://relay-confirmed.example"
 	state := confirmedPolicyRelayState(t, "relay-confirmed", relayURL)

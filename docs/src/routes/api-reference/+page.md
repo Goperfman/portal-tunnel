@@ -105,6 +105,7 @@ Admin clients authenticate using a shared secret key:
 |--------|------|-------------|------|
 | `GET` | `/healthz` | Health check | None |
 | `GET` | `/discovery` | Relay discovery | None |
+| `POST` | `/discovery/announce` | Relay discovery self-announce | Signed Descriptor |
 | `GET` | `/v1/sign` | Keyless TLS signing | None |
 | `GET` | `/thumbnail/{hostname}` | Cached thumbnail screenshot | None |
 | `GET` | `/tunnel/status` | Tunnel connection status | Access Token |
@@ -130,7 +131,7 @@ Returns relay health status.
 
 ### `GET /discovery`
 
-Returns relay discovery information including the relay's own descriptor and any known peer relays. Only available when discovery is enabled in the server configuration.
+Returns signed relay discovery descriptors for this relay and any known peer relays. Only available when discovery is enabled in the server configuration.
 
 **Response fields:**
 
@@ -138,14 +139,33 @@ Returns relay discovery information including the relay's own descriptor and any
 |-------|------|-------------|
 | `protocol_version` | `string` | Protocol version identifier |
 | `generated_at` | `string` | ISO 8601 timestamp |
-| `self` | `RelayDescriptor` | This relay's descriptor |
-| `relays` | `RelayDescriptor[]` | Known peer relay descriptors |
+| `relays` | `RelayDescriptor[]` | Signed descriptors for this relay and known peer relays |
 
 **Example:**
 
 ```bash
 curl https://relay.example.com/discovery
 ```
+
+### `POST /discovery/announce`
+
+Submits this relay's signed descriptor to a bootstrap relay so registry-external relays can enter the discovery mesh. Relays self-announce periodically when discovery is enabled.
+
+**Auth:** Signed relay descriptor
+
+**Request fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `protocol_version` | `string` | No | Discovery protocol version |
+| `descriptor` | `RelayDescriptor` | Yes | Signed relay descriptor |
+
+**Response fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `protocol_version` | `string` | Discovery protocol version |
+| `accepted` | `boolean` | Whether the descriptor was accepted |
 
 ### `GET /v1/sign`
 

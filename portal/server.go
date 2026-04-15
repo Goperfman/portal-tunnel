@@ -116,11 +116,12 @@ type Server struct {
 	apiTLSClose io.Closer
 	quicTunnel  *quic.Listener
 
-	overlay  *overlay.Overlay
-	relaySet *discovery.RelaySet
-	registry *leaseRegistry
-	udpPorts *transport.PortAllocator
-	tcpPorts *transport.PortAllocator
+	overlay         *overlay.Overlay
+	relaySet        *discovery.RelaySet
+	announceLimiter *discovery.AnnounceLimiter
+	registry        *leaseRegistry
+	udpPorts        *transport.PortAllocator
+	tcpPorts        *transport.PortAllocator
 }
 
 func NewServer(cfg ServerConfig) (*Server, error) {
@@ -144,19 +145,17 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 			return nil, fmt.Errorf("resolve discovery bootstraps: %w", err)
 		}
 		cfg.Bootstraps = utils.RemoveRelayURL(cfg.Bootstraps, cfg.PortalURL)
-		relaySet, err = discovery.NewRelaySet(cfg.Bootstraps)
-		if err != nil {
-			return nil, err
-		}
+		relaySet = discovery.NewRelaySet(cfg.Bootstraps)
 	}
 
 	return &Server{
-		cfg:      cfg,
-		identity: identity,
-		registry: registry,
-		relaySet: relaySet,
-		udpPorts: transport.NewPortAllocator(cfg.MinPort, cfg.MaxPort, 5*time.Minute),
-		tcpPorts: transport.NewPortAllocator(cfg.MinPort, cfg.MaxPort, 5*time.Minute),
+		cfg:             cfg,
+		identity:        identity,
+		registry:        registry,
+		relaySet:        relaySet,
+		announceLimiter: discovery.NewAnnounceLimiter(0, 0),
+		udpPorts:        transport.NewPortAllocator(cfg.MinPort, cfg.MaxPort, 5*time.Minute),
+		tcpPorts:        transport.NewPortAllocator(cfg.MinPort, cfg.MaxPort, 5*time.Minute),
 	}, nil
 }
 
@@ -596,20 +595,17 @@ func (s *Server) runRelayDiscoveryLoop(ctx context.Context) error {
 		<-ctx.Done()
 		return nil
 	}
-	refresher, err := discovery.NewRefresher(s.relaySet, nil, s.overlay, s.PortalURL())
-	if err != nil {
-		return err
-	}
+	refresher := discovery.NewRefresher(s.relaySet, s.overlay)
 	ticker := time.NewTicker(discovery.DiscoveryPollInterval)
 	defer ticker.Stop()
 
 	for {
-		snapshots := s.registry.LeaseSnapshots(time.Now())
-		sourceHosts := make([]string, 0, len(snapshots))
-		for _, snapshot := range snapshots {
-			sourceHosts = append(sourceHosts, snapshot.Hostname)
+		now := time.Now().UTC()
+		self, err := s.signedRelayDescriptor(now)
+		if err != nil {
+			return fmt.Errorf("build relay discovery descriptor: %w", err)
 		}
-		if err := refresher.Refresh(ctx, sourceHosts...); err != nil {
+		if err := refresher.Refresh(ctx, &self); err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}

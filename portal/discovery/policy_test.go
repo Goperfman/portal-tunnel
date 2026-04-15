@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gosuda/portal-tunnel/v2/portal/auth"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
@@ -12,10 +13,15 @@ import (
 func mustPolicyRelayDescriptor(t *testing.T, relayName, relayURL string) types.RelayDescriptor {
 	t.Helper()
 
+	signing, err := utils.ResolveSecp256k1Identity("")
+	if err != nil {
+		t.Fatalf("ResolveSecp256k1Identity() error = %v", err)
+	}
 	now := time.Now().UTC()
-	desc, err := utils.NormalizeDescriptor(types.RelayDescriptor{
+	signed, err := auth.SignRelayDescriptor(types.RelayDescriptor{
 		Identity: types.Identity{
-			Name: relayName,
+			Name:    relayName,
+			Address: signing.Address,
 		},
 		RelayID:      relayURL,
 		Version:      1,
@@ -23,11 +29,11 @@ func mustPolicyRelayDescriptor(t *testing.T, relayName, relayURL string) types.R
 		ExpiresAt:    now.Add(time.Hour),
 		APIHTTPSAddr: relayURL,
 		Discovery:    true,
-	})
+	}, signing.PrivateKey)
 	if err != nil {
-		t.Fatalf("NormalizeDescriptor() error = %v", err)
+		t.Fatalf("SignRelayDescriptor() error = %v", err)
 	}
-	return desc
+	return signed
 }
 
 func bootstrapPolicyRelayState(relayURL string) RelayState {
@@ -107,7 +113,7 @@ func TestSelectAggregateKeepsCollectedRelayEvenWhenNotAdvertisable(t *testing.T)
 	policy := DefaultRelayPolicy{}
 	state := RelayState{
 		Descriptor: mustPolicyRelayDescriptor(t, "relay-a", "https://relay-a.example"),
-		LastSeenAt: time.Now().UTC().Add(-DiscoveryHintRetentionTTL).Add(-time.Hour),
+		LastSeenAt: time.Now().UTC().Add(-31 * 24 * time.Hour),
 	}
 	state.Descriptor.Discovery = false
 	state.Descriptor.ExpiresAt = time.Now().UTC().Add(-time.Second)
@@ -145,30 +151,6 @@ func TestSelectAggregateSkipsBannedBootstrapRelay(t *testing.T) {
 
 	if len(selected) != 0 {
 		t.Fatalf("len(selected) = %d, want 0", len(selected))
-	}
-}
-
-func TestSelectConfirmedKeepsOnlyConfirmedAggregateRelays(t *testing.T) {
-	policy := DefaultRelayPolicy{}
-	confirmed := confirmedPolicyRelayState(t, "relay-confirmed", "https://relay-confirmed.example")
-	hinted := RelayState{
-		Descriptor: mustPolicyRelayDescriptor(t, "relay-hinted", "https://relay-hinted.example"),
-		LastSeenAt: time.Now().UTC(),
-	}
-	bannedConfirmed := confirmedPolicyRelayState(t, "relay-banned", "https://relay-banned.example")
-	bannedConfirmed.Banned = true
-
-	selected := policy.SelectConfirmed([]RelayState{
-		hinted,
-		confirmed,
-		bannedConfirmed,
-	})
-
-	if len(selected) != 1 {
-		t.Fatalf("len(selected) = %d, want 1", len(selected))
-	}
-	if got := selected[0].Descriptor.APIHTTPSAddr; got != confirmed.Descriptor.APIHTTPSAddr {
-		t.Fatalf("selected[0] = %q, want confirmed relay %q", got, confirmed.Descriptor.APIHTTPSAddr)
 	}
 }
 
