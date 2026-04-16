@@ -82,6 +82,11 @@ func (l *listener) initHTTPTransport(ctx context.Context) error {
 }
 
 func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnabled, tcpEnabled bool) (types.RegisterResponse, error) {
+	multiHop, err := l.multiHopDescriptors()
+	if err != nil {
+		return types.RegisterResponse{}, err
+	}
+
 	var challenge types.RegisterChallengeResponse
 	if err := utils.HTTPDoAPIPath(ctx, l.httpClient, l.relayURL, http.MethodPost, types.PathSDKRegisterChallenge, types.RegisterChallengeRequest{
 		Identity:   l.identity,
@@ -89,6 +94,7 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 		TTL:        int(ttl / time.Second),
 		UDPEnabled: udpEnabled,
 		TCPEnabled: tcpEnabled,
+		MultiHop:   multiHop,
 	}, nil, &challenge); err != nil {
 		return types.RegisterResponse{}, err
 	}
@@ -108,6 +114,47 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 		return types.RegisterResponse{}, err
 	}
 	return resp, nil
+}
+
+func (l *listener) multiHopDescriptors() ([]types.RelayDescriptor, error) {
+	if l == nil || len(l.multiHop) == 0 {
+		return nil, nil
+	}
+	if l.relaySet == nil {
+		return nil, errors.New("multi-hop relay set is unavailable")
+	}
+
+	states := l.relaySet.AggregateRelays()
+	byURL := make(map[string]types.RelayDescriptor, len(states))
+	for _, state := range states {
+		desc := state.Descriptor
+		if desc.APIHTTPSAddr != "" {
+			byURL[desc.APIHTTPSAddr] = desc
+		}
+	}
+
+	now := time.Now().UTC()
+	path := make([]types.RelayDescriptor, 0, len(l.multiHop))
+	seen := make(map[string]struct{}, len(l.multiHop))
+	for i, relayURL := range l.multiHop {
+		if _, ok := seen[relayURL]; ok {
+			return nil, errors.New("multi-hop relay urls must be unique")
+		}
+		seen[relayURL] = struct{}{}
+
+		desc, ok := byURL[relayURL]
+		if !ok {
+			return nil, fmt.Errorf("multi-hop relay %d descriptor was not discovered", i)
+		}
+		if !desc.SupportsOverlayPeer || desc.WireGuardPublicKey == "" || desc.WireGuardEndpoint == "" || desc.OverlayIPv4 == "" {
+			return nil, fmt.Errorf("multi-hop relay %d does not expose WireGuard overlay metadata", i)
+		}
+		if !desc.ExpiresAt.After(now) {
+			return nil, fmt.Errorf("multi-hop relay %d descriptor is expired", i)
+		}
+		path = append(path, desc)
+	}
+	return path, nil
 }
 
 func (l *listener) renewRegisteredLease(ctx context.Context, ttl time.Duration, accessToken string) (types.RenewResponse, error) {

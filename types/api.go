@@ -68,6 +68,9 @@ type RegisterChallengeRequest struct {
 	TTL        int           `json:"ttl,omitempty"`
 	UDPEnabled bool          `json:"udp_enabled,omitempty"`
 	TCPEnabled bool          `json:"tcp_enabled,omitempty"`
+	// MultiHop is the ordered relay path for a multi-hop lease.
+	// The first hop is public ingress and the last hop is the exit relay receiving registration.
+	MultiHop []RelayDescriptor `json:"multi_hop,omitempty"`
 }
 
 type RegisterChallengeResponse struct {
@@ -81,6 +84,7 @@ type RegisterResponse struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 	Hostname    string    `json:"hostname"`
 	AccessToken string    `json:"access_token"`
+	KeylessURL  string    `json:"keyless_url,omitempty"`
 	SNIPort     int       `json:"sni_port,omitempty"`
 	UDPAddr     string    `json:"udp_addr,omitempty"`
 	UDPEnabled  bool      `json:"udp_enabled,omitempty"`

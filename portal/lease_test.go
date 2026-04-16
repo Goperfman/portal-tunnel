@@ -36,7 +36,7 @@ func TestLeaseRegistryLifecycle(t *testing.T) {
 		stream:    transport.NewRelayStream("addr-1", time.Minute, 1),
 	}
 
-	if err := registry.Register(record); err != nil {
+	if _, err := registry.Register(record); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
 
@@ -85,7 +85,7 @@ func TestLeaseRegistryWildcardAndConflict(t *testing.T) {
 		ExpiresAt: time.Now().Add(30 * time.Second),
 		stream:    transport.NewRelayStream("addr-wildcard", time.Minute, 1),
 	}
-	if err := registry.Register(wildcardLease); err != nil {
+	if _, err := registry.Register(wildcardLease); err != nil {
 		t.Fatalf("Register(wildcard) error = %v", err)
 	}
 
@@ -105,7 +105,7 @@ func TestLeaseRegistryWildcardAndConflict(t *testing.T) {
 		ExpiresAt: time.Now().Add(30 * time.Second),
 		stream:    transport.NewRelayStream("addr-conflict", time.Minute, 1),
 	}
-	err := registry.Register(conflict)
+	_, err := registry.Register(conflict)
 	if !errors.Is(err, errHostnameConflict) {
 		t.Fatalf("Register(conflict) error = %v, want hostname conflict", err)
 	}
@@ -129,7 +129,7 @@ func TestLeaseRegistrySnapshotAndRoutableUsePolicy(t *testing.T) {
 		ClientIP:  "203.0.113.20",
 		stream:    transport.NewRelayStream("addr-policy", time.Minute, 1),
 	}
-	if err := registry.Register(record); err != nil {
+	if _, err := registry.Register(record); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
 
@@ -169,7 +169,7 @@ func TestLeaseRegistryCleanupExpiredClosesBroker(t *testing.T) {
 		ExpiresAt: time.Now().Add(-time.Second),
 		stream:    transport.NewRelayStream("addr-expired", time.Minute, 1),
 	}
-	if err := registry.Register(record); err != nil {
+	if _, err := registry.Register(record); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
 

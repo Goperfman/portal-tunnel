@@ -31,6 +31,7 @@ type Exposure struct {
 	UDPAddr         string
 	udpEnabled      bool
 	tcpEnabled      bool
+	multiHop        []string
 	banMITM         bool
 	maxActiveRelays int
 	metadata        types.LeaseMetadata
@@ -47,15 +48,18 @@ type Exposure struct {
 }
 
 type ExposeConfig struct {
-	RelayURLs       []string
-	Discovery       bool
-	IdentityPath    string
-	IdentityJSON    string
-	Name            string
-	TargetAddr      string
-	UDPAddr         string
-	UDPEnabled      bool
-	TCPEnabled      bool
+	RelayURLs    []string
+	Discovery    bool
+	IdentityPath string
+	IdentityJSON string
+	Name         string
+	TargetAddr   string
+	UDPAddr      string
+	UDPEnabled   bool
+	TCPEnabled   bool
+	// MultiHop is the caller-selected ordered relay URL path. The first URL is
+	// the public entry relay and the last URL is the exit relay the SDK registers with.
+	MultiHop        []string
 	BanMITM         bool
 	MaxActiveRelays int
 	Metadata        types.LeaseMetadata
@@ -68,9 +72,27 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 	if err != nil {
 		return nil, err
 	}
-	relayURLs, err := utils.ResolvePortalRelayURLs(ctx, explicitRelayURLs, cfg.Discovery)
+	multiHop, err := utils.NormalizeRelayURLs(cfg.MultiHop...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("normalize multi-hop relay urls: %w", err)
+	}
+	if len(multiHop) > 0 && len(multiHop) < 2 {
+		return nil, errors.New("multi-hop path requires entry and exit relays")
+	}
+	if len(multiHop) > 0 && (cfg.UDPEnabled || cfg.TCPEnabled) {
+		return nil, errors.New("multi-hop currently supports only the default SNI TLS stream transport")
+	}
+	listenerRelayURLs := []string(nil)
+	relaySetURLs := []string(nil)
+	if len(multiHop) > 0 {
+		listenerRelayURLs = []string{multiHop[len(multiHop)-1]}
+		relaySetURLs = append([]string(nil), multiHop...)
+	} else {
+		listenerRelayURLs, err = utils.ResolvePortalRelayURLs(ctx, explicitRelayURLs, cfg.Discovery)
+		if err != nil {
+			return nil, err
+		}
+		relaySetURLs = listenerRelayURLs
 	}
 
 	identity, createdIdentity, err := utils.ResolveListenerIdentity(
@@ -104,21 +126,30 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 		cancel:          cancel,
 		done:            exposureCtx.Done(),
 		identity:        identity,
-		explicitRelays:  append([]string(nil), explicitRelayURLs...),
+		explicitRelays:  explicitRelayURLs,
 		TargetAddr:      targetAddr,
 		UDPAddr:         udpAddr,
 		udpEnabled:      cfg.UDPEnabled,
 		tcpEnabled:      cfg.TCPEnabled,
+		multiHop:        multiHop,
 		banMITM:         cfg.BanMITM,
 		maxActiveRelays: cfg.MaxActiveRelays,
 		metadata:        cfg.Metadata,
-		accepted:        make(chan net.Conn, max(len(relayURLs)*defaultReadyTarget*2, 1)),
-		datagrams:       make(chan types.DatagramFrame, max(len(relayURLs)*32, 1)),
-		relaySet:        discovery.NewRelaySet(relayURLs),
-		relayListeners:  make(map[string]*listener, len(relayURLs)),
+		accepted:        make(chan net.Conn, max(len(listenerRelayURLs)*defaultReadyTarget*2, 1)),
+		datagrams:       make(chan types.DatagramFrame, max(len(listenerRelayURLs)*32, 1)),
+		relaySet:        discovery.NewRelaySet(relaySetURLs),
+		relayListeners:  make(map[string]*listener, len(listenerRelayURLs)),
 	}
 
-	if len(relayURLs) > 0 {
+	if len(multiHop) > 0 {
+		refresher := discovery.NewRefresher(exposure.relaySet, nil)
+		if err := refresher.Refresh(ctx, nil); err != nil {
+			_ = exposure.Close()
+			return nil, fmt.Errorf("discover multi-hop relays: %w", err)
+		}
+	}
+
+	if len(listenerRelayURLs) > 0 {
 		if err := exposure.reconcileRelayListeners(true); err != nil {
 			_ = exposure.Close()
 			return nil, err
@@ -366,21 +397,26 @@ func (e *Exposure) runDiscoveryLoop(ctx context.Context) {
 }
 
 func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
-	clientState := discovery.ClientState{
-		ActiveRelayURLs:   e.ActiveRelayURLs(),
-		ExplicitRelayURLs: append([]string(nil), e.explicitRelays...),
-		MaxActiveRelays:   e.maxActiveRelays,
-		RequireUDP:        e.udpEnabled,
-		RequireTCP:        e.tcpEnabled,
+	listenerRelayURLs := []string(nil)
+	var multiHop []string
+	if len(e.multiHop) > 0 {
+		listenerRelayURLs = []string{e.multiHop[len(e.multiHop)-1]}
+		multiHop = append([]string(nil), e.multiHop...)
+	} else {
+		listenerRelayURLs = e.relaySet.PriorityRelays(discovery.ClientState{
+			ActiveRelayURLs:   e.ActiveRelayURLs(),
+			ExplicitRelayURLs: append([]string(nil), e.explicitRelays...),
+			MaxActiveRelays:   e.maxActiveRelays,
+			RequireUDP:        e.udpEnabled,
+			RequireTCP:        e.tcpEnabled,
+		})
 	}
-
-	desiredRelayURLs := e.relaySet.PriorityRelays(clientState)
 
 	e.listenerMu.Lock()
 	staleRelayListeners := make(map[string]*listener)
 	removedRelayURLs := make([]string, 0)
 	for relayURL, listener := range e.relayListeners {
-		if slices.Contains(desiredRelayURLs, relayURL) {
+		if slices.Contains(listenerRelayURLs, relayURL) {
 			continue
 		}
 		staleRelayListeners[relayURL] = listener
@@ -388,8 +424,8 @@ func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
 		delete(e.relayListeners, relayURL)
 	}
 
-	missingRelayURLs := make([]string, 0, len(desiredRelayURLs))
-	for _, relayURL := range desiredRelayURLs {
+	missingRelayURLs := make([]string, 0, len(listenerRelayURLs))
+	for _, relayURL := range listenerRelayURLs {
 		if _, ok := e.relayListeners[relayURL]; ok {
 			continue
 		}
@@ -411,13 +447,14 @@ func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
 	}
 	for _, relayURL := range missingRelayURLs {
 		retryCount := 10
-		if slices.Contains(e.explicitRelays, relayURL) {
+		if len(e.multiHop) > 0 || slices.Contains(e.explicitRelays, relayURL) {
 			retryCount = 0
 		}
 		listener, err := newListener(context.Background(), relayURL, listenerConfig{
 			Identity:   e.identity,
 			UDPEnabled: e.udpEnabled,
 			TCPEnabled: e.tcpEnabled,
+			MultiHop:   multiHop,
 			BanMITM:    e.banMITM,
 			RetryCount: retryCount,
 			Metadata:   e.metadata,
@@ -455,7 +492,7 @@ func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
 		log.Info().
 			Strs("added_relays", addedRelayURLs).
 			Strs("removed_relays", removedRelayURLs).
-			Strs("desired_relays", desiredRelayURLs).
+			Strs("listener_relays", listenerRelayURLs).
 			Msg("reconciled relay listeners")
 	}
 	return nil

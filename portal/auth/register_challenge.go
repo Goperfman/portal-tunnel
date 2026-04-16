@@ -48,12 +48,18 @@ func NewRegisterChallenge(req types.RegisterChallengeRequest, domain, uri string
 		return nil, fmt.Errorf("build siwe message: %w", err)
 	}
 
+	var multiHop []types.RelayDescriptor
+	if len(req.MultiHop) > 0 {
+		multiHop = append([]types.RelayDescriptor{}, req.MultiHop...)
+	}
+
 	normalizedRequest := types.RegisterChallengeRequest{
 		Identity:   normalizedIdentity,
 		Metadata:   req.Metadata.Copy(),
 		TTL:        req.TTL,
 		UDPEnabled: req.UDPEnabled,
 		TCPEnabled: req.TCPEnabled,
+		MultiHop:   multiHop,
 	}
 
 	return &RegisterChallenge{

@@ -22,6 +22,7 @@ const (
 	DefaultMTU                 = 1420
 	DefaultListenPort          = 51820
 	DefaultPeerAPIHTTPPort     = 7777
+	DefaultPeerYamuxPort       = 7778
 	DefaultPersistentKeepalive = 25
 	defaultEndpointResolveTTL  = 3 * time.Second
 )
@@ -31,6 +32,7 @@ type stack struct {
 	net       *netstack.Net
 	overlayIP netip.Addr
 
+	applyMu       sync.Mutex
 	mu            sync.Mutex
 	closed        bool
 	peerEndpoints map[string]string
@@ -124,6 +126,14 @@ func (s *stack) ApplyPeers(peers []desiredPeer) error {
 	if s == nil || s.device == nil {
 		return errors.New("wireguard is not initialized")
 	}
+	s.applyMu.Lock()
+	defer s.applyMu.Unlock()
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return net.ErrClosed
+	}
+	s.mu.Unlock()
 
 	var builder strings.Builder
 	builder.WriteString("replace_peers=true\n")
@@ -231,6 +241,9 @@ func (s *stack) Close() error {
 	if s == nil || s.device == nil {
 		return nil
 	}
+
+	s.applyMu.Lock()
+	defer s.applyMu.Unlock()
 
 	s.mu.Lock()
 	if s.closed {

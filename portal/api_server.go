@@ -382,6 +382,35 @@ func (s *Server) handleRegisterChallenge(w http.ResponseWriter, r *http.Request)
 		Path:   types.PathSDKRegister,
 	}).String()
 
+	if len(req.MultiHop) > 0 && (s.hops == nil || s.overlay == nil || s.relaySet == nil) {
+		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
+		return
+	}
+	if len(req.MultiHop) > 0 {
+		if len(req.MultiHop) < 2 {
+			utils.InvalidRequestError(errors.New("multi-hop path requires entry and exit relays")).Write(w)
+			return
+		}
+
+		multiHop := make([]types.RelayDescriptor, 0, len(req.MultiHop))
+		for i, hop := range req.MultiHop {
+			verified, err := auth.VerifyRelayDescriptor(hop)
+			if err != nil {
+				utils.InvalidRequestError(fmt.Errorf("hop %d: %w", i, err)).Write(w)
+				return
+			}
+			multiHop = append(multiHop, verified)
+		}
+		if multiHop[0].APIHTTPSAddr == s.cfg.PortalURL {
+			utils.InvalidRequestError(errors.New("entry relay must differ from exit relay")).Write(w)
+			return
+		}
+		if multiHop[len(multiHop)-1].APIHTTPSAddr != s.cfg.PortalURL {
+			utils.InvalidRequestError(errors.New("exit relay must match registration relay")).Write(w)
+			return
+		}
+		req.MultiHop = multiHop
+	}
 	if req.UDPEnabled && (!s.cfg.UDPEnabled || s.group != nil && s.quicTunnel == nil) {
 		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
 		return
@@ -430,6 +459,10 @@ func (s *Server) handleRenew(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorResponse(w, err)
 		return
 	}
+	if err := s.hops.renew(record); err != nil {
+		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, err.Error())
+		return
+	}
 	nextAccessToken, _, err := auth.IssueLeaseAccessToken(s.identity.PrivateKey, s.identity.Address, s.cfg.PortalURL, record.Copy(), ttl)
 	if err != nil {
 		utils.WriteAPIError(w, http.StatusInternalServerError, types.APIErrorCodeInternal, err.Error())
@@ -462,18 +495,19 @@ func (s *Server) handleUnregister(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorResponse(w, err)
 		return
 	}
-	deleteCtx, cancel := context.WithTimeout(context.Background(), defaultClaimTimeout)
-	defer cancel()
-	if err := s.acmeManager.DeleteENSGaslessHostname(deleteCtx, record.Hostname); err != nil {
-		log.Warn().
-			Err(err).
-			Str("hostname", record.Hostname).
-			Str("address", record.Address).
-			Msg("delete lease ens gasless txt")
+	s.hops.delete(record)
+	if record.isDirect() && s.acmeManager != nil {
+		deleteCtx, cancel := context.WithTimeout(context.Background(), defaultClaimTimeout)
+		if err := s.acmeManager.DeleteENSGaslessHostname(deleteCtx, record.Hostname); err != nil {
+			log.Warn().
+				Err(err).
+				Str("hostname", record.Hostname).
+				Str("address", record.Address).
+				Msg("delete lease remote state")
+		}
+		cancel()
 	}
-	if record != nil {
-		record.Close()
-	}
+	record.Close()
 
 	utils.WriteAPIData(w, http.StatusOK, map[string]any{})
 }
@@ -602,9 +636,9 @@ func (s *Server) admitLeaseByToken(token string, requireDatagram bool) (*leaseRe
 	if err != nil {
 		return nil, errUnauthorized
 	}
-	lease, err := s.registry.Find(claims.Identity)
-	if err != nil {
-		return nil, err
+	lease, ok := s.registry.RecordByKey(claims.Identity.Key(), time.Now())
+	if !ok {
+		return nil, errLeaseNotFound
 	}
 	if !s.registry.policy.IsIdentityRoutable(lease.Key()) {
 		return nil, errLeaseRejected
@@ -661,6 +695,16 @@ func (s *Server) registerLease(req types.RegisterChallengeRequest, clientIP, rep
 	}
 	issuedAt := claims.IssuedAt.Time().UTC()
 	expiresAt := claims.Expiry.Time().UTC()
+	if len(req.MultiHop) > 0 && (s.hops == nil || s.overlay == nil || s.relaySet == nil) {
+		return types.RegisterResponse{}, errFeatureUnavailable
+	}
+	multiHop := append([]types.RelayDescriptor(nil), req.MultiHop...)
+	if len(multiHop) > 0 {
+		hostname, err = utils.LeaseHostname(identity.Name, utils.PortalRootHost(multiHop[0].APIHTTPSAddr))
+		if err != nil {
+			return types.RegisterResponse{}, err
+		}
+	}
 	identityKey := identity.Key()
 	stream := transport.NewRelayStream(identityKey, defaultIdleKeepalive, defaultReadyQueueLimit)
 	record := &leaseRecord{
@@ -674,7 +718,13 @@ func (s *Server) registerLease(req types.RegisterChallengeRequest, clientIP, rep
 		ReportedIP:  utils.SanitizeReportedIP(reportedIP),
 		UDPEnabled:  req.UDPEnabled,
 		TCPEnabled:  req.TCPEnabled,
+		multiHop:    multiHop,
 		stream:      stream,
+	}
+	if record.isDirect() && s.hops != nil {
+		if _, ok := s.hops.routeForHostname(record.Hostname, time.Now()); ok {
+			return types.RegisterResponse{}, errHostnameConflict
+		}
 	}
 	if req.UDPEnabled {
 		if s.udpPorts == nil {
@@ -709,16 +759,45 @@ func (s *Server) registerLease(req types.RegisterChallengeRequest, clientIP, rep
 		return types.RegisterResponse{}, err
 	}
 
-	if err := s.registry.Register(record); err != nil {
+	replaced, err := s.registry.Register(record)
+	if err != nil {
 		record.Close()
 		return types.RegisterResponse{}, err
 	}
-	syncCtx, cancel := context.WithTimeout(context.Background(), defaultClaimTimeout)
-	defer cancel()
-	if err := s.acmeManager.SyncENSGaslessHostname(syncCtx, record.Hostname, record.Address); err != nil {
+	s.hops.delete(replaced)
+	if record.isDirect() && s.hops != nil {
+		if _, ok := s.hops.routeForHostname(record.Hostname, time.Now()); ok {
+			_, _ = s.registry.Unregister(record.Copy())
+			record.Close()
+			return types.RegisterResponse{}, errHostnameConflict
+		}
+	}
+	if !record.isDirect() {
+		now := time.Now().UTC()
+		for i := 0; i < len(record.multiHop)-1; i++ {
+			if err := s.relaySet.InsertAnnounced(record.multiHop[i], now); err != nil {
+				_, _ = s.registry.Unregister(record.Copy())
+				record.Close()
+				return types.RegisterResponse{}, fmt.Errorf("sync hop %d peer: %w", i, err)
+			}
+		}
+		if err := s.overlay.Sync(s.relaySet.OverlayPeerStates()); err != nil {
+			log.Warn().Err(err).Msg("sync wireguard multi-hop peers")
+		}
+	}
+	if err := s.hops.install(record); err != nil {
 		_, _ = s.registry.Unregister(record.Copy())
 		record.Close()
 		return types.RegisterResponse{}, err
+	}
+	if record.isDirect() {
+		syncCtx, cancel := context.WithTimeout(context.Background(), defaultClaimTimeout)
+		defer cancel()
+		if err := s.acmeManager.SyncENSGaslessHostname(syncCtx, record.Hostname, record.Address); err != nil {
+			_, _ = s.registry.Unregister(record.Copy())
+			record.Close()
+			return types.RegisterResponse{}, err
+		}
 	}
 
 	resp := types.RegisterResponse{
@@ -728,6 +807,9 @@ func (s *Server) registerLease(req types.RegisterChallengeRequest, clientIP, rep
 		AccessToken: accessToken,
 		UDPEnabled:  record.UDPEnabled,
 		TCPEnabled:  record.TCPEnabled,
+	}
+	if !record.isDirect() {
+		resp.KeylessURL = record.multiHop[0].APIHTTPSAddr
 	}
 	if record.datagram != nil {
 		resp.SNIPort = s.cfg.SNIPort
