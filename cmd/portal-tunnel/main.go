@@ -187,6 +187,7 @@ func printRootUsage(w io.Writer) {
 			"portal expose [flags] <target>",
 			"portal expose [flags] --http-route PATH=UPSTREAM [--http-route PATH=UPSTREAM]",
 			"portal list [flags]",
+			"portal version",
 		},
 		[]string{
 			"portal expose 3000",
@@ -194,6 +195,7 @@ func printRootUsage(w io.Writer) {
 			"portal expose --http-route /api=http://127.0.0.1:3001 --http-route /=http://127.0.0.1:5173 --name my-app",
 			"portal expose 3000 --udp --udp-addr 127.0.0.1:5353",
 			"portal list",
+			"portal version",
 		},
 	)
 }
