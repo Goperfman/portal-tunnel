@@ -137,6 +137,18 @@ func (s *Server) apiHandler(base *http.ServeMux, keylessSignerHandler http.Handl
 	})
 }
 
+func (s *Server) hopRegistryHandler() http.Handler {
+	apiHandler := s.apiHandler(nil, nil)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch strings.TrimSpace(r.URL.Path) {
+		case types.PathSDKRegisterChallenge, types.PathSDKRegister, types.PathSDKRenew, types.PathSDKUnregister:
+			apiHandler.ServeHTTP(w, r)
+		default:
+			utils.WriteAPIError(w, http.StatusNotFound, types.APIErrorCodeInvalidRequest, "unsupported hop registry path")
+		}
+	})
+}
+
 func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
 	utils.WriteAPIData(w, http.StatusOK, map[string]any{
 		"service": "portal-relay",
@@ -329,6 +341,30 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if req.Hop != nil {
+		hop := req.Hop
+		req.Hop = hop.Next
+		status, body, err := s.forwardHopRegistry(r.Context(), hop, types.PathSDKRegister, req)
+		if err != nil {
+			writeAPIErrorResponse(w, err)
+			return
+		}
+		if status >= http.StatusOK && status < http.StatusMultipleChoices {
+			var resp struct {
+				ExpiresAt time.Time `json:"expires_at"`
+			}
+			if err := utils.DecodeAPIData(body, &resp); err != nil {
+				utils.WriteAPIError(w, http.StatusBadGateway, types.APIErrorCodeInvalidRequest, err.Error())
+				return
+			}
+			if err := s.registry.RegisterHopRoute(hop, resp.ExpiresAt, time.Now()); err != nil {
+				writeAPIErrorResponse(w, err)
+				return
+			}
+		}
+		utils.WriteRawAPIResponse(w, status, body)
+		return
+	}
 
 	challenge, err := s.registry.consumeVerifiedRegisterChallenge(req)
 	if err != nil {
@@ -367,6 +403,17 @@ func (s *Server) handleRegisterChallenge(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	if req.Hop != nil {
+		hop := req.Hop
+		req.Hop = hop.Next
+		status, body, err := s.forwardHopRegistry(r.Context(), hop, types.PathSDKRegisterChallenge, req)
+		if err != nil {
+			writeAPIErrorResponse(w, err)
+			return
+		}
+		utils.WriteRawAPIResponse(w, status, body)
+		return
+	}
 
 	scheme := "https"
 	if r.TLS == nil {
@@ -382,34 +429,10 @@ func (s *Server) handleRegisterChallenge(w http.ResponseWriter, r *http.Request)
 		Path:   types.PathSDKRegister,
 	}).String()
 
-	if len(req.MultiHop) > 0 && (s.hops == nil || s.overlay == nil || s.relaySet == nil) {
+	req.HopToken = strings.TrimSpace(req.HopToken)
+	if req.HopToken != "" && s.hopMux == nil {
 		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
 		return
-	}
-	if len(req.MultiHop) > 0 {
-		if len(req.MultiHop) < 2 {
-			utils.InvalidRequestError(errors.New("multi-hop path requires entry and exit relays")).Write(w)
-			return
-		}
-
-		multiHop := make([]types.RelayDescriptor, 0, len(req.MultiHop))
-		for i, hop := range req.MultiHop {
-			verified, err := auth.VerifyRelayDescriptor(hop)
-			if err != nil {
-				utils.InvalidRequestError(fmt.Errorf("hop %d: %w", i, err)).Write(w)
-				return
-			}
-			multiHop = append(multiHop, verified)
-		}
-		if multiHop[0].APIHTTPSAddr == s.cfg.PortalURL {
-			utils.InvalidRequestError(errors.New("entry relay must differ from exit relay")).Write(w)
-			return
-		}
-		if multiHop[len(multiHop)-1].APIHTTPSAddr != s.cfg.PortalURL {
-			utils.InvalidRequestError(errors.New("exit relay must match registration relay")).Write(w)
-			return
-		}
-		req.MultiHop = multiHop
 	}
 	if req.UDPEnabled && (!s.cfg.UDPEnabled || s.group != nil && s.quicTunnel == nil) {
 		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
@@ -443,6 +466,30 @@ func (s *Server) handleRenew(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if req.Hop != nil {
+		hop := req.Hop
+		req.Hop = hop.Next
+		status, body, err := s.forwardHopRegistry(r.Context(), hop, types.PathSDKRenew, req)
+		if err != nil {
+			writeAPIErrorResponse(w, err)
+			return
+		}
+		if status >= http.StatusOK && status < http.StatusMultipleChoices {
+			var resp struct {
+				ExpiresAt time.Time `json:"expires_at"`
+			}
+			if err := utils.DecodeAPIData(body, &resp); err != nil {
+				utils.WriteAPIError(w, http.StatusBadGateway, types.APIErrorCodeInvalidRequest, err.Error())
+				return
+			}
+			if err := s.registry.RegisterHopRoute(hop, resp.ExpiresAt, time.Now()); err != nil {
+				writeAPIErrorResponse(w, err)
+				return
+			}
+		}
+		utils.WriteRawAPIResponse(w, status, body)
+		return
+	}
 
 	claims, err := auth.VerifyLeaseAccessToken(req.AccessToken, s.identity.PublicKey, s.cfg.PortalURL, time.Now().UTC())
 	if err != nil {
@@ -457,10 +504,6 @@ func (s *Server) handleRenew(w http.ResponseWriter, r *http.Request) {
 	record, err := s.registry.Renew(claims.Identity, ttl, clientIP, utils.SanitizeReportedIP(req.ReportedIP))
 	if err != nil {
 		writeAPIErrorResponse(w, err)
-		return
-	}
-	if err := s.hops.renew(record); err != nil {
-		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, err.Error())
 		return
 	}
 	nextAccessToken, _, err := auth.IssueLeaseAccessToken(s.identity.PrivateKey, s.identity.Address, s.cfg.PortalURL, record.Copy(), ttl)
@@ -484,6 +527,20 @@ func (s *Server) handleUnregister(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if req.Hop != nil {
+		hop := req.Hop
+		req.Hop = hop.Next
+		status, body, err := s.forwardHopRegistry(r.Context(), hop, types.PathSDKUnregister, req)
+		if err != nil {
+			writeAPIErrorResponse(w, err)
+			return
+		}
+		if status >= http.StatusOK && status < http.StatusMultipleChoices {
+			s.registry.DeleteHopRoute(hop)
+		}
+		utils.WriteRawAPIResponse(w, status, body)
+		return
+	}
 	claims, err := auth.VerifyLeaseAccessToken(req.AccessToken, s.identity.PublicKey, s.cfg.PortalURL, time.Now().UTC())
 	if err != nil {
 		utils.WriteAPIError(w, http.StatusForbidden, types.APIErrorCodeUnauthorized, errUnauthorized.Error())
@@ -495,7 +552,6 @@ func (s *Server) handleUnregister(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorResponse(w, err)
 		return
 	}
-	s.hops.delete(record)
 	if record.isDirect() && s.acmeManager != nil {
 		deleteCtx, cancel := context.WithTimeout(context.Background(), defaultClaimTimeout)
 		if err := s.acmeManager.DeleteENSGaslessHostname(deleteCtx, record.Hostname); err != nil {
@@ -510,6 +566,37 @@ func (s *Server) handleUnregister(w http.ResponseWriter, r *http.Request) {
 	record.Close()
 
 	utils.WriteAPIData(w, http.StatusOK, map[string]any{})
+}
+
+func (s *Server) forwardHopRegistry(ctx context.Context, route *types.HopRoute, path string, payload any) (int, []byte, error) {
+	if s.hopMux == nil || s.overlay == nil || s.relaySet == nil {
+		return 0, nil, errFeatureUnavailable
+	}
+	if route == nil {
+		return 0, nil, errors.New("hop route is required")
+	}
+	forwardRelay, err := auth.VerifyRelayDescriptor(route.ForwardRelay)
+	if err != nil {
+		return 0, nil, fmt.Errorf("forward relay: %w", err)
+	}
+	if !forwardRelay.SupportsOverlayPeer ||
+		strings.TrimSpace(forwardRelay.WireGuardPublicKey) == "" ||
+		strings.TrimSpace(forwardRelay.WireGuardEndpoint) == "" ||
+		strings.TrimSpace(forwardRelay.OverlayIPv4) == "" {
+		return 0, nil, errors.New("forward relay wireguard overlay metadata is required")
+	}
+	if err := s.relaySet.InsertAnnounced(forwardRelay, time.Now().UTC()); err != nil {
+		return 0, nil, fmt.Errorf("forward relay: %w", err)
+	}
+	if err := s.overlay.Sync(s.relaySet.OverlayPeerStates()); err != nil {
+		return 0, nil, err
+	}
+
+	status, respBody, err := s.hopMux.OpenRegistry(ctx, forwardRelay.OverlayIPv4, path, payload)
+	if err != nil {
+		return 0, nil, &apiError{types.APIErrorCodeFeatureUnavailable, err.Error(), http.StatusBadGateway}
+	}
+	return status, respBody, nil
 }
 
 func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
@@ -695,15 +782,9 @@ func (s *Server) registerLease(req types.RegisterChallengeRequest, clientIP, rep
 	}
 	issuedAt := claims.IssuedAt.Time().UTC()
 	expiresAt := claims.Expiry.Time().UTC()
-	if len(req.MultiHop) > 0 && (s.hops == nil || s.overlay == nil || s.relaySet == nil) {
+	req.HopToken = strings.TrimSpace(req.HopToken)
+	if req.HopToken != "" && s.hopMux == nil {
 		return types.RegisterResponse{}, errFeatureUnavailable
-	}
-	multiHop := append([]types.RelayDescriptor(nil), req.MultiHop...)
-	if len(multiHop) > 0 {
-		hostname, err = utils.LeaseHostname(identity.Name, utils.PortalRootHost(multiHop[0].APIHTTPSAddr))
-		if err != nil {
-			return types.RegisterResponse{}, err
-		}
 	}
 	identityKey := identity.Key()
 	stream := transport.NewRelayStream(identityKey, defaultIdleKeepalive, defaultReadyQueueLimit)
@@ -718,13 +799,8 @@ func (s *Server) registerLease(req types.RegisterChallengeRequest, clientIP, rep
 		ReportedIP:  utils.SanitizeReportedIP(reportedIP),
 		UDPEnabled:  req.UDPEnabled,
 		TCPEnabled:  req.TCPEnabled,
-		multiHop:    multiHop,
+		hopToken:    req.HopToken,
 		stream:      stream,
-	}
-	if record.isDirect() && s.hops != nil {
-		if _, ok := s.hops.routeForHostname(record.Hostname, time.Now()); ok {
-			return types.RegisterResponse{}, errHostnameConflict
-		}
 	}
 	if req.UDPEnabled {
 		if s.udpPorts == nil {
@@ -759,34 +835,7 @@ func (s *Server) registerLease(req types.RegisterChallengeRequest, clientIP, rep
 		return types.RegisterResponse{}, err
 	}
 
-	replaced, err := s.registry.Register(record)
-	if err != nil {
-		record.Close()
-		return types.RegisterResponse{}, err
-	}
-	s.hops.delete(replaced)
-	if record.isDirect() && s.hops != nil {
-		if _, ok := s.hops.routeForHostname(record.Hostname, time.Now()); ok {
-			_, _ = s.registry.Unregister(record.Copy())
-			record.Close()
-			return types.RegisterResponse{}, errHostnameConflict
-		}
-	}
-	if !record.isDirect() {
-		now := time.Now().UTC()
-		for i := 0; i < len(record.multiHop)-1; i++ {
-			if err := s.relaySet.InsertAnnounced(record.multiHop[i], now); err != nil {
-				_, _ = s.registry.Unregister(record.Copy())
-				record.Close()
-				return types.RegisterResponse{}, fmt.Errorf("sync hop %d peer: %w", i, err)
-			}
-		}
-		if err := s.overlay.Sync(s.relaySet.OverlayPeerStates()); err != nil {
-			log.Warn().Err(err).Msg("sync wireguard multi-hop peers")
-		}
-	}
-	if err := s.hops.install(record); err != nil {
-		_, _ = s.registry.Unregister(record.Copy())
+	if err := s.registry.Register(record); err != nil {
 		record.Close()
 		return types.RegisterResponse{}, err
 	}
@@ -807,9 +856,6 @@ func (s *Server) registerLease(req types.RegisterChallengeRequest, clientIP, rep
 		AccessToken: accessToken,
 		UDPEnabled:  record.UDPEnabled,
 		TCPEnabled:  record.TCPEnabled,
-	}
-	if !record.isDirect() {
-		resp.KeylessURL = record.multiHop[0].APIHTTPSAddr
 	}
 	if record.datagram != nil {
 		resp.SNIPort = s.cfg.SNIPort

@@ -1,6 +1,7 @@
 package overlay
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -17,32 +19,27 @@ import (
 )
 
 const (
-	hopProtocolVersion     = 1
-	hopPrefaceLimit        = 4 << 10
-	hopControlPayloadLimit = 16 << 10
-	hopIncomingBuffer      = 128
-	defaultPrefaceTimeout  = 2 * time.Second
-	defaultControlTimeout  = 10 * time.Second
+	hopProtocolVersion    = 1
+	hopPrefaceLimit       = 4 << 10
+	hopRegistryFrameLimit = 8 << 20
+	hopIncomingBuffer     = 128
+	defaultPrefaceTimeout = 2 * time.Second
 )
 
 const (
 	hopModeTLSStream = "tls-stream"
-	hopModeControl   = "control"
-
-	HopControlInstall = "install"
-	HopControlRenew   = "renew"
-	HopControlDelete  = "delete"
+	hopModeRegistry  = "registry"
 )
 
 type HopMux struct {
 	listener net.Listener
 	overlay  *Overlay
 	incoming chan HopStream
+	registry chan HopRegistryStream
 
 	mu       sync.Mutex
-	sessions map[string]*yamux.Session
-	active   map[*yamux.Session]struct{}
-	closed   bool
+	outbound map[string]*yamux.Session
+	done     chan struct{}
 }
 
 type hopPreface struct {
@@ -51,29 +48,31 @@ type hopPreface struct {
 	Token   string `json:"token"`
 }
 
-type HopControl struct {
-	Action string       `json:"action"`
-	Route  HopRouteSpec `json:"route"`
-}
-
-type HopRouteSpec struct {
-	RouteID            string    `json:"route_id"`
-	MatchHostname      string    `json:"match_hostname,omitempty"`
-	MatchToken         string    `json:"match_token,omitempty"`
-	ForwardOverlayIPv4 string    `json:"forward_overlay_ipv4,omitempty"`
-	ForwardToken       string    `json:"forward_token,omitempty"`
-	ExpiresAt          time.Time `json:"expires_at"`
-}
-
-type hopControlResponse struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
-}
-
 type HopStream struct {
-	Conn    net.Conn
-	Token   string
-	Control *HopControl
+	Conn  net.Conn
+	Token string
+}
+
+type HopRegistryStream struct {
+	Path string
+	Body []byte
+	conn net.Conn
+}
+
+type hopRegistryHTTPResponse struct {
+	header http.Header
+	status int
+	body   bytes.Buffer
+}
+
+type hopRegistryRequest struct {
+	Path string `json:"path"`
+	Body []byte `json:"body"`
+}
+
+type hopRegistryResponse struct {
+	Status int    `json:"status"`
+	Body   []byte `json:"body"`
 }
 
 func NewHopMux(overlay *Overlay) (*HopMux, error) {
@@ -88,8 +87,9 @@ func NewHopMux(overlay *Overlay) (*HopMux, error) {
 		listener: listener,
 		overlay:  overlay,
 		incoming: make(chan HopStream, hopIncomingBuffer),
-		sessions: make(map[string]*yamux.Session),
-		active:   make(map[*yamux.Session]struct{}),
+		registry: make(chan HopRegistryStream, hopIncomingBuffer),
+		outbound: make(map[string]*yamux.Session),
+		done:     make(chan struct{}),
 	}, nil
 }
 
@@ -132,35 +132,43 @@ func (m *HopMux) Accept(ctx context.Context) (HopStream, error) {
 	}
 }
 
+func (m *HopMux) AcceptRegistry(ctx context.Context) (HopRegistryStream, error) {
+	if m == nil {
+		<-ctx.Done()
+		return HopRegistryStream{}, ctx.Err()
+	}
+	select {
+	case stream := <-m.registry:
+		return stream, nil
+	case <-ctx.Done():
+		return HopRegistryStream{}, ctx.Err()
+	}
+}
+
 func (m *HopMux) Close() error {
 	if m == nil {
 		return nil
 	}
 
 	m.mu.Lock()
-	if m.closed {
+	if m.done == nil {
+		m.done = make(chan struct{})
+	}
+	select {
+	case <-m.done:
 		m.mu.Unlock()
 		return nil
+	default:
 	}
-	m.closed = true
-	seen := make(map[*yamux.Session]struct{}, len(m.sessions)+len(m.active))
-	sessions := make([]*yamux.Session, 0, len(m.sessions)+len(m.active))
-	for _, session := range m.sessions {
-		if _, ok := seen[session]; ok {
+	close(m.done)
+	sessions := make([]*yamux.Session, 0, len(m.outbound))
+	for _, session := range m.outbound {
+		if session == nil {
 			continue
 		}
-		seen[session] = struct{}{}
 		sessions = append(sessions, session)
 	}
-	for session := range m.active {
-		if _, ok := seen[session]; ok {
-			continue
-		}
-		seen[session] = struct{}{}
-		sessions = append(sessions, session)
-	}
-	m.sessions = make(map[string]*yamux.Session)
-	m.active = make(map[*yamux.Session]struct{})
+	m.outbound = make(map[string]*yamux.Session)
 	listener := m.listener
 	m.mu.Unlock()
 
@@ -196,45 +204,38 @@ func (m *HopMux) OpenStream(ctx context.Context, overlayIPv4, token string) (net
 	return stream, nil
 }
 
-func (m *HopMux) Control(ctx context.Context, overlayIPv4 string, req HopControl) error {
-	req.Action = strings.TrimSpace(req.Action)
-	if req.Action == "" {
-		return errors.New("hop control action is required")
+func (m *HopMux) OpenRegistry(ctx context.Context, overlayIPv4, path string, payload any) (int, []byte, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return 0, nil, errors.New("registry path is required")
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return 0, nil, err
 	}
 
 	stream, err := m.openYamuxStream(ctx, overlayIPv4)
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	defer stream.Close()
 
-	deadline := time.Now().Add(defaultControlTimeout)
-	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
-		deadline = ctxDeadline
-	}
-	_ = stream.SetDeadline(deadline)
-
 	preface := hopPreface{
 		Version: hopProtocolVersion,
-		Mode:    hopModeControl,
+		Mode:    hopModeRegistry,
 	}
 	if err := writeFramedJSON(stream, preface, hopPrefaceLimit); err != nil {
-		return err
+		return 0, nil, err
 	}
-	if err := writeFramedJSON(stream, req, hopControlPayloadLimit); err != nil {
-		return err
+	if err := writeFramedJSON(stream, hopRegistryRequest{Path: path, Body: body}, hopRegistryFrameLimit); err != nil {
+		return 0, nil, err
 	}
-	var resp hopControlResponse
-	if err := readFramedJSON(stream, &resp, hopControlPayloadLimit); err != nil {
-		return err
+
+	var resp hopRegistryResponse
+	if err := readFramedJSON(stream, &resp, hopRegistryFrameLimit); err != nil {
+		return 0, nil, err
 	}
-	if !resp.OK {
-		if strings.TrimSpace(resp.Error) == "" {
-			return errors.New("hop control request failed")
-		}
-		return errors.New(resp.Error)
-	}
-	return nil
+	return resp.Status, resp.Body, nil
 }
 
 func (m *HopMux) openYamuxStream(ctx context.Context, overlayIPv4 string) (*yamux.Stream, error) {
@@ -258,18 +259,19 @@ func (m *HopMux) openYamuxStream(ctx context.Context, overlayIPv4 string) (*yamu
 
 func (m *HopMux) session(ctx context.Context, overlayIPv4 string) (*yamux.Session, error) {
 	m.mu.Lock()
-	if m.closed {
+	select {
+	case <-m.done:
 		m.mu.Unlock()
 		return nil, net.ErrClosed
+	default:
 	}
-	if session := m.sessions[overlayIPv4]; session != nil {
+	if session := m.outbound[overlayIPv4]; session != nil {
 		if !session.IsClosed() {
 			m.mu.Unlock()
 			return session, nil
 		}
-		delete(m.active, session)
 	}
-	delete(m.sessions, overlayIPv4)
+	delete(m.outbound, overlayIPv4)
 	m.mu.Unlock()
 
 	if m.overlay == nil || m.overlay.stack == nil {
@@ -288,18 +290,19 @@ func (m *HopMux) session(ctx context.Context, overlayIPv4 string) (*yamux.Sessio
 	}
 
 	m.mu.Lock()
-	if m.closed {
+	select {
+	case <-m.done:
 		m.mu.Unlock()
 		_ = session.Close()
 		return nil, net.ErrClosed
+	default:
 	}
-	if current := m.sessions[overlayIPv4]; current != nil && !current.IsClosed() {
+	if current := m.outbound[overlayIPv4]; current != nil && !current.IsClosed() {
 		m.mu.Unlock()
 		_ = session.Close()
 		return current, nil
 	}
-	m.sessions[overlayIPv4] = session
-	m.active[session] = struct{}{}
+	m.outbound[overlayIPv4] = session
 	m.mu.Unlock()
 	return session, nil
 }
@@ -307,10 +310,9 @@ func (m *HopMux) session(ctx context.Context, overlayIPv4 string) (*yamux.Sessio
 func (m *HopMux) forgetSession(overlayIPv4 string, session *yamux.Session) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.sessions[overlayIPv4] == session {
-		delete(m.sessions, overlayIPv4)
+	if m.outbound[overlayIPv4] == session {
+		delete(m.outbound, overlayIPv4)
 	}
-	delete(m.active, session)
 }
 
 func (m *HopMux) serveSession(ctx context.Context, conn net.Conn) {
@@ -321,17 +323,27 @@ func (m *HopMux) serveSession(ctx context.Context, conn net.Conn) {
 		return
 	}
 	m.mu.Lock()
-	if m.closed {
+	select {
+	case <-m.done:
 		m.mu.Unlock()
 		_ = session.Close()
 		return
+	default:
 	}
-	m.active[session] = struct{}{}
+	done := m.done
 	m.mu.Unlock()
+	sessionDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = session.Close()
+		case <-done:
+			_ = session.Close()
+		case <-sessionDone:
+		}
+	}()
 	defer func() {
-		m.mu.Lock()
-		delete(m.active, session)
-		m.mu.Unlock()
+		close(sessionDone)
 		_ = session.Close()
 	}()
 
@@ -367,29 +379,24 @@ func (m *HopMux) handleStream(ctx context.Context, stream *yamux.Stream) {
 			Conn:  stream,
 			Token: preface.Token,
 		})
-	case hopModeControl:
-		m.readControlStream(ctx, stream)
+	case hopModeRegistry:
+		var req hopRegistryRequest
+		if err := readFramedJSON(stream, &req, hopRegistryFrameLimit); err != nil {
+			_ = stream.Close()
+			return
+		}
+		if strings.TrimSpace(req.Path) == "" {
+			_ = stream.Close()
+			return
+		}
+		m.deliverRegistry(ctx, HopRegistryStream{
+			Path: req.Path,
+			Body: req.Body,
+			conn: stream,
+		})
 	default:
 		_ = stream.Close()
 	}
-}
-
-func (m *HopMux) readControlStream(ctx context.Context, stream net.Conn) {
-	_ = stream.SetDeadline(time.Now().Add(defaultControlTimeout))
-
-	var req HopControl
-	var err error
-	if err = readFramedJSON(stream, &req, hopControlPayloadLimit); err == nil {
-		req.Action = strings.TrimSpace(req.Action)
-	}
-	if err != nil {
-		_ = stream.Close()
-		return
-	}
-	m.deliver(ctx, HopStream{
-		Conn:    stream,
-		Control: &req,
-	})
 }
 
 func (m *HopMux) deliver(ctx context.Context, stream HopStream) {
@@ -400,16 +407,66 @@ func (m *HopMux) deliver(ctx context.Context, stream HopStream) {
 	}
 }
 
-func (s HopStream) Respond(err error) error {
-	if s.Conn == nil {
-		return nil
+func (m *HopMux) deliverRegistry(ctx context.Context, stream HopRegistryStream) {
+	select {
+	case m.registry <- stream:
+	case <-ctx.Done():
+		_ = stream.conn.Close()
 	}
-	defer s.Conn.Close()
-	resp := hopControlResponse{OK: err == nil}
+}
+
+func (s HopRegistryStream) Respond(status int, body []byte) error {
+	if s.conn == nil {
+		return net.ErrClosed
+	}
+	defer s.conn.Close()
+	return writeFramedJSON(s.conn, hopRegistryResponse{Status: status, Body: body}, hopRegistryFrameLimit)
+}
+
+func (s HopRegistryStream) ServeRegistryHTTP(ctx context.Context, host string, handler http.Handler) error {
+	if handler == nil {
+		if s.conn != nil {
+			_ = s.conn.Close()
+		}
+		return errors.New("hop registry handler is required")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+strings.TrimSpace(host)+s.Path, bytes.NewReader(s.Body))
 	if err != nil {
-		resp.Error = err.Error()
+		if s.conn != nil {
+			_ = s.conn.Close()
+		}
+		return err
 	}
-	return writeFramedJSON(s.Conn, resp, hopControlPayloadLimit)
+	req.RemoteAddr = "127.0.0.1:0"
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := &hopRegistryHTTPResponse{header: make(http.Header)}
+	handler.ServeHTTP(resp, req)
+	return s.Respond(resp.Status(), resp.body.Bytes())
+}
+
+func (r *hopRegistryHTTPResponse) Header() http.Header {
+	return r.header
+}
+
+func (r *hopRegistryHTTPResponse) Write(body []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return r.body.Write(body)
+}
+
+func (r *hopRegistryHTTPResponse) WriteHeader(status int) {
+	if r.status == 0 {
+		r.status = status
+	}
+}
+
+func (r *hopRegistryHTTPResponse) Status() int {
+	if r.status == 0 {
+		return http.StatusOK
+	}
+	return r.status
 }
 
 func hopYamuxConfig() *yamux.Config {

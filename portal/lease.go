@@ -18,8 +18,9 @@ import (
 const defaultRegisterChallengeTTL = 2 * time.Minute
 
 type leaseRegistry struct {
-	leasesByHostname   map[string]string
 	leasesByKey        map[string]*leaseRecord
+	recordsByHostname  map[string]*leaseRecord
+	recordsByHopToken  map[string]*leaseRecord
 	registerChallenges map[string]*auth.RegisterChallenge
 	policy             *policy.Runtime
 	mu                 sync.RWMutex
@@ -32,8 +33,9 @@ func newLeaseRegistry(udpEnabled, tcpPortEnabled bool, trustProxyHeaders bool, r
 	}
 
 	return &leaseRegistry{
-		leasesByHostname:   make(map[string]string),
 		leasesByKey:        make(map[string]*leaseRecord),
+		recordsByHostname:  make(map[string]*leaseRecord),
+		recordsByHopToken:  make(map[string]*leaseRecord),
 		registerChallenges: make(map[string]*auth.RegisterChallenge),
 		policy:             runtime,
 	}, nil
@@ -48,8 +50,9 @@ func (r *leaseRegistry) CloseAll() []*leaseRecord {
 		out = append(out, record)
 		r.policy.ForgetIdentity(record.Key())
 	}
-	r.leasesByHostname = make(map[string]string)
 	r.leasesByKey = make(map[string]*leaseRecord)
+	r.recordsByHostname = make(map[string]*leaseRecord)
+	r.recordsByHopToken = make(map[string]*leaseRecord)
 	r.registerChallenges = make(map[string]*auth.RegisterChallenge)
 	return out
 }
@@ -63,54 +66,66 @@ func (r *leaseRegistry) Lookup(host string) (*leaseRecord, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	key, ok := r.leasesByHostname[host]
-	if !ok {
-		parts := strings.Split(host, ".")
-		if len(parts) < 3 {
-			return nil, false
-		}
-		key, ok = r.leasesByHostname["*."+strings.Join(parts[1:], ".")]
-		if !ok {
-			return nil, false
-		}
-	}
-	record, ok := r.leasesByKey[key]
-	return record, ok && record != nil
+	record := r.lookupLocked(host)
+	return record, record != nil
 }
 
-func (r *leaseRegistry) Register(record *leaseRecord) (*leaseRecord, error) {
+func (r *leaseRegistry) lookupLocked(host string) *leaseRecord {
+	record := r.recordsByHostname[host]
 	if record == nil {
-		return nil, errors.New("lease record is required")
+		parts := strings.Split(host, ".")
+		if len(parts) < 3 {
+			return nil
+		}
+		record = r.recordsByHostname["*."+strings.Join(parts[1:], ".")]
+	}
+	return record
+}
+
+func (r *leaseRegistry) Register(record *leaseRecord) error {
+	if record == nil {
+		return errors.New("lease record is required")
 	}
 
 	key := record.Key()
 	if key == "" {
-		return nil, errors.New("lease identity is required")
+		return errors.New("lease identity is required")
 	}
 	hostname := utils.NormalizeHostname(record.Hostname)
 	if hostname == "" {
-		return nil, errors.New("lease hostname is required")
+		return errors.New("lease hostname is required")
 	}
+	record.hopToken = strings.TrimSpace(record.hopToken)
 
 	r.mu.Lock()
 
-	if existingKey, ok := r.leasesByHostname[hostname]; ok && existingKey != key {
-		r.mu.Unlock()
-		return nil, errHostnameConflict
+	now := time.Now()
+	if record.isDirect() {
+		if existing := r.recordsByHostname[hostname]; existing != nil && existing.Key() != key && now.Before(existing.ExpiresAt) {
+			r.mu.Unlock()
+			return errHostnameConflict
+		}
+	}
+	if record.hopToken != "" {
+		if existing := r.recordsByHopToken[record.hopToken]; existing != nil && existing.Key() != key && now.Before(existing.ExpiresAt) {
+			r.mu.Unlock()
+			return errors.New("hop token conflict")
+		}
 	}
 
 	var replaced *leaseRecord
 	if existing, ok := r.leasesByKey[key]; ok && existing != nil {
 		replaced = existing
-		if existing != record && existing.isDirect() {
-			delete(r.leasesByHostname, utils.NormalizeHostname(existing.Hostname))
-		}
+		r.deleteIndexesLocked(existing)
 		r.policy.ForgetIdentity(existing.Key())
 	}
 	record.Hostname = hostname
 	r.leasesByKey[key] = record
 	if record.isDirect() {
-		r.leasesByHostname[hostname] = key
+		r.recordsByHostname[hostname] = record
+	}
+	if record.hopToken != "" {
+		r.recordsByHopToken[record.hopToken] = record
 	}
 	r.policy.IPFilter().RegisterIdentityIP(key, record.ClientIP)
 	r.mu.Unlock()
@@ -118,7 +133,7 @@ func (r *leaseRegistry) Register(record *leaseRecord) (*leaseRecord, error) {
 	if replaced != nil && replaced != record {
 		replaced.Close()
 	}
-	return replaced, nil
+	return nil
 }
 
 func (r *leaseRegistry) Renew(identity types.Identity, ttl time.Duration, clientIP, reportedIP string) (*leaseRecord, error) {
@@ -155,9 +170,7 @@ func (r *leaseRegistry) Unregister(identity types.Identity) (*leaseRecord, error
 	}
 
 	delete(r.leasesByKey, key)
-	if record.isDirect() {
-		delete(r.leasesByHostname, utils.NormalizeHostname(record.Hostname))
-	}
+	r.deleteIndexesLocked(record)
 	r.policy.ForgetIdentity(key)
 	return record, nil
 }
@@ -178,8 +191,94 @@ func (r *leaseRegistry) RecordByKey(key string, now time.Time) (*leaseRecord, bo
 	return record, true
 }
 
+func (r *leaseRegistry) RecordByHopToken(token string, now time.Time) (*leaseRecord, bool) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, false
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	record := r.recordsByHopToken[token]
+	if record != nil && now.Before(record.ExpiresAt) {
+		return record, true
+	}
+	return nil, false
+}
+
+func (r *leaseRegistry) RegisterHopRoute(route *types.HopRoute, expiresAt, now time.Time) error {
+	if route == nil {
+		return errors.New("hop route is required")
+	}
+	matchHostname := utils.NormalizeHostname(route.MatchHostname)
+	matchToken := strings.TrimSpace(route.MatchToken)
+	overlayIPv4 := strings.TrimSpace(route.ForwardRelay.OverlayIPv4)
+	forwardToken := strings.TrimSpace(route.ForwardToken)
+	expiresAt = expiresAt.UTC()
+
+	switch {
+	case r == nil:
+		return errFeatureUnavailable
+	case !expiresAt.After(now):
+		return errors.New("route expiry must be in the future")
+	case matchHostname == "" && matchToken == "":
+		return errors.New("hostname or token matcher is required")
+	case matchHostname != "" && matchToken != "":
+		return errors.New("hostname and token matchers are mutually exclusive")
+	case overlayIPv4 == "":
+		return errors.New("forward overlay ipv4 is required")
+	case forwardToken == "":
+		return errors.New("forward token is required")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	record := &leaseRecord{
+		Hostname:           matchHostname,
+		ExpiresAt:          expiresAt,
+		hopToken:           matchToken,
+		hopNextOverlayIPv4: overlayIPv4,
+		hopNextToken:       forwardToken,
+	}
+	if matchHostname != "" {
+		if existing := r.lookupLocked(matchHostname); existing != nil && !existing.isHopForward() && now.Before(existing.ExpiresAt) {
+			return errHostnameConflict
+		}
+		r.recordsByHostname[matchHostname] = record
+		return nil
+	}
+	if existing := r.recordsByHopToken[matchToken]; existing != nil && !existing.isHopForward() && now.Before(existing.ExpiresAt) {
+		return errors.New("hop token conflict")
+	}
+	r.recordsByHopToken[matchToken] = record
+	return nil
+}
+
+func (r *leaseRegistry) DeleteHopRoute(route *types.HopRoute) {
+	if r == nil || route == nil {
+		return
+	}
+	hostname := utils.NormalizeHostname(route.MatchHostname)
+	token := strings.TrimSpace(route.MatchToken)
+
+	r.mu.Lock()
+	if hostname != "" {
+		if record := r.recordsByHostname[hostname]; record != nil && record.isHopForward() {
+			delete(r.recordsByHostname, hostname)
+		}
+	}
+	if token != "" {
+		if record := r.recordsByHopToken[token]; record != nil && record.isHopForward() {
+			delete(r.recordsByHopToken, token)
+		}
+	}
+	r.mu.Unlock()
+}
+
 func (r *leaseRegistry) issueRegisterChallenge(req types.RegisterChallengeRequest, domain, uri string) (types.RegisterChallengeResponse, error) {
-	if len(req.MultiHop) > 0 && (req.UDPEnabled || req.TCPEnabled) {
+	if strings.TrimSpace(req.HopToken) != "" && (req.UDPEnabled || req.TCPEnabled) {
 		return types.RegisterChallengeResponse{}, errTransportMismatch
 	}
 	if req.UDPEnabled {
@@ -266,15 +365,23 @@ func (r *leaseRegistry) cleanupExpired(now time.Time) []*leaseRecord {
 		if now.After(record.ExpiresAt) {
 			expired = append(expired, record)
 			delete(r.leasesByKey, key)
-			if record.isDirect() {
-				delete(r.leasesByHostname, utils.NormalizeHostname(record.Hostname))
-			}
+			r.deleteIndexesLocked(record)
 			r.policy.ForgetIdentity(key)
 		}
 	}
 	for challengeID, challenge := range r.registerChallenges {
 		if challenge.Expired(now) {
 			delete(r.registerChallenges, challengeID)
+		}
+	}
+	for hostname, record := range r.recordsByHostname {
+		if record != nil && !now.Before(record.ExpiresAt) {
+			delete(r.recordsByHostname, hostname)
+		}
+	}
+	for token, record := range r.recordsByHopToken {
+		if record != nil && !now.Before(record.ExpiresAt) {
+			delete(r.recordsByHopToken, token)
 		}
 	}
 	return expired
@@ -378,19 +485,44 @@ type leaseRecord struct {
 	UDPEnabled  bool
 	TCPEnabled  bool
 	Metadata    types.LeaseMetadata
-	multiHop    []types.RelayDescriptor
-	hopID       string
-	datagram    *transport.RelayDatagram
-	udpPorts    *transport.PortAllocator
-	tcpPort     *transport.RelayTCPPort
-	tcpPorts    *transport.PortAllocator
-	stream      *transport.RelayStream
-	startErr    error
-	startOnce   sync.Once
+
+	hopToken           string
+	hopNextOverlayIPv4 string
+	hopNextToken       string
+
+	datagram  *transport.RelayDatagram
+	udpPorts  *transport.PortAllocator
+	tcpPort   *transport.RelayTCPPort
+	tcpPorts  *transport.PortAllocator
+	stream    *transport.RelayStream
+	startErr  error
+	startOnce sync.Once
 }
 
 func (r *leaseRecord) isDirect() bool {
-	return len(r.multiHop) == 0
+	return r == nil || (strings.TrimSpace(r.hopToken) == "" && !r.isHopForward())
+}
+
+func (r *leaseRecord) isHopForward() bool {
+	return r != nil && (strings.TrimSpace(r.hopNextOverlayIPv4) != "" || strings.TrimSpace(r.hopNextToken) != "")
+}
+
+func (r *leaseRegistry) deleteIndexesLocked(record *leaseRecord) {
+	if record == nil {
+		return
+	}
+	hostname := utils.NormalizeHostname(record.Hostname)
+	if hostname != "" {
+		if r.recordsByHostname[hostname] == record {
+			delete(r.recordsByHostname, hostname)
+		}
+	}
+	token := strings.TrimSpace(record.hopToken)
+	if token != "" {
+		if r.recordsByHopToken[token] == record {
+			delete(r.recordsByHopToken, token)
+		}
+	}
 }
 
 func (r *leaseRegistry) AdminSnapshot(record *leaseRecord) types.AdminLease {

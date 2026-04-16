@@ -1,7 +1,11 @@
 package types
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 )
@@ -55,6 +59,24 @@ func (i Identity) Key() string {
 		return ""
 	}
 	return name + IdentityKeySeparator + address
+}
+
+func (i Identity) DeriveToken(nonce string) (string, error) {
+	privateKey := strings.TrimSpace(i.PrivateKey)
+	if privateKey == "" {
+		return "", errors.New("identity private key is required")
+	}
+	nonce = strings.TrimSpace(nonce)
+	if nonce == "" {
+		return "", errors.New("identity token nonce is required")
+	}
+
+	mac := hmac.New(sha256.New, []byte(privateKey))
+	_, _ = mac.Write([]byte("Portal identity token v1\n"))
+	_, _ = mac.Write([]byte(i.Key()))
+	_, _ = mac.Write([]byte("\n"))
+	_, _ = mac.Write([]byte(nonce))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
 }
 
 type LeaseMetadata struct {

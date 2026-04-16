@@ -56,10 +56,11 @@ func (e *APIRequestError) Is(target error) bool {
 }
 
 type RegisterRequest struct {
-	ChallengeID   string `json:"challenge_id"`
-	SIWEMessage   string `json:"siwe_message"`
-	SIWESignature string `json:"siwe_signature"`
-	ReportedIP    string `json:"reported_ip,omitempty"`
+	ChallengeID   string    `json:"challenge_id"`
+	SIWEMessage   string    `json:"siwe_message"`
+	SIWESignature string    `json:"siwe_signature"`
+	ReportedIP    string    `json:"reported_ip,omitempty"`
+	Hop           *HopRoute `json:"hop,omitempty"`
 }
 
 type RegisterChallengeRequest struct {
@@ -68,9 +69,8 @@ type RegisterChallengeRequest struct {
 	TTL        int           `json:"ttl,omitempty"`
 	UDPEnabled bool          `json:"udp_enabled,omitempty"`
 	TCPEnabled bool          `json:"tcp_enabled,omitempty"`
-	// MultiHop is the ordered relay path for a multi-hop lease.
-	// The first hop is public ingress and the last hop is the exit relay receiving registration.
-	MultiHop []RelayDescriptor `json:"multi_hop,omitempty"`
+	HopToken   string        `json:"hop_token,omitempty"`
+	Hop        *HopRoute     `json:"hop,omitempty"`
 }
 
 type RegisterChallengeResponse struct {
@@ -118,9 +118,10 @@ type QUICControlResponse struct {
 }
 
 type RenewRequest struct {
-	AccessToken string `json:"access_token"`
-	TTL         int    `json:"ttl,omitempty"`
-	ReportedIP  string `json:"reported_ip,omitempty"`
+	AccessToken string    `json:"access_token"`
+	TTL         int       `json:"ttl,omitempty"`
+	ReportedIP  string    `json:"reported_ip,omitempty"`
+	Hop         *HopRoute `json:"hop,omitempty"`
 }
 
 type RenewResponse struct {
@@ -129,7 +130,16 @@ type RenewResponse struct {
 }
 
 type UnregisterRequest struct {
-	AccessToken string `json:"access_token"`
+	AccessToken string    `json:"access_token"`
+	Hop         *HopRoute `json:"hop,omitempty"`
+}
+
+type HopRoute struct {
+	MatchHostname string          `json:"match_hostname,omitempty"`
+	MatchToken    string          `json:"match_token,omitempty"`
+	ForwardRelay  RelayDescriptor `json:"forward_relay"`
+	ForwardToken  string          `json:"forward_token"`
+	Next          *HopRoute       `json:"next,omitempty"`
 }
 
 type DomainResponse struct {

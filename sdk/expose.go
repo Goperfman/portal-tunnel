@@ -76,14 +76,14 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 	if err != nil {
 		return nil, fmt.Errorf("normalize multi-hop relay urls: %w", err)
 	}
-	if len(multiHop) > 0 && len(multiHop) < 2 {
-		return nil, errors.New("multi-hop path requires entry and exit relays")
+	if len(multiHop) == 1 {
+		return nil, errors.New("multi-hop requires at least entry and exit relay urls")
 	}
 	if len(multiHop) > 0 && (cfg.UDPEnabled || cfg.TCPEnabled) {
 		return nil, errors.New("multi-hop currently supports only the default SNI TLS stream transport")
 	}
-	listenerRelayURLs := []string(nil)
-	relaySetURLs := []string(nil)
+	var listenerRelayURLs []string
+	var relaySetURLs []string
 	if len(multiHop) > 0 {
 		listenerRelayURLs = []string{multiHop[len(multiHop)-1]}
 		relaySetURLs = append([]string(nil), multiHop...)
@@ -397,7 +397,7 @@ func (e *Exposure) runDiscoveryLoop(ctx context.Context) {
 }
 
 func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
-	listenerRelayURLs := []string(nil)
+	var listenerRelayURLs []string
 	var multiHop []string
 	if len(e.multiHop) > 0 {
 		listenerRelayURLs = []string{e.multiHop[len(e.multiHop)-1]}

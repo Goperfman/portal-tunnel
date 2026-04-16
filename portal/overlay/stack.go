@@ -36,6 +36,7 @@ type stack struct {
 	mu            sync.Mutex
 	closed        bool
 	peerEndpoints map[string]string
+	peerConfig    string
 }
 
 func newStack(cfg Config) (*stack, error) {
@@ -187,11 +188,20 @@ func (s *stack) ApplyPeers(peers []desiredPeer) error {
 		}
 	}
 
-	if err := s.device.IpcSet(builder.String()); err != nil {
+	config := builder.String()
+	s.mu.Lock()
+	if s.peerConfig == config {
+		s.mu.Unlock()
+		return warnErr
+	}
+	s.mu.Unlock()
+
+	if err := s.device.IpcSet(config); err != nil {
 		return err
 	}
 	s.mu.Lock()
 	s.peerEndpoints = nextPeerEndpoints
+	s.peerConfig = config
 	s.mu.Unlock()
 	return warnErr
 }
