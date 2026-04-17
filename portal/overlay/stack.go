@@ -161,8 +161,7 @@ func (s *stack) ApplyPeers(peers []types.RelayDescriptor) error {
 			return fmt.Errorf("normalize peer %q public key: %w", peerKey, err)
 		}
 
-		resolvedEndpoint := ""
-		resolvedEndpoint, err = resolvePeerEndpoint(wireGuardEndpoint)
+		resolvedEndpoint, err := resolvePeerEndpoint(wireGuardEndpoint)
 		if err != nil {
 			s.mu.Lock()
 			currentEndpoint := s.peerEndpoints[publicKeyHex]
