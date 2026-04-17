@@ -384,30 +384,18 @@ func (s *Server) PortalURL() string {
 	return s.cfg.PortalURL
 }
 
-func (s *Server) LeaseSnapshots() []types.Lease {
+func (s *Server) PublicLeases() []types.Lease {
 	if s == nil || s.registry == nil {
 		return nil
 	}
-	return s.registry.LeaseSnapshots(time.Now())
+	return s.registry.PublicLeases(time.Now())
 }
 
-func (s *Server) AdminLeaseSnapshots() []types.AdminLease {
+func (s *Server) AdminLeases() []types.AdminLease {
 	if s == nil || s.registry == nil {
 		return nil
 	}
-	return s.registry.AdminLeaseSnapshots(time.Now())
-}
-
-func (s *Server) LeaseSnapshotByHostname(hostname string) (types.Lease, bool) {
-	if s == nil || s.registry == nil {
-		return types.Lease{}, false
-	}
-
-	record, ok := s.registry.Lookup(hostname)
-	if !ok || record == nil || time.Now().After(record.ExpiresAt) {
-		return types.Lease{}, false
-	}
-	return s.registry.Snapshot(record), true
+	return s.registry.AdminLeases(time.Now())
 }
 
 func (s *Server) prepareAPITLS(ctx context.Context) (keyless.TLSMaterialConfig, *acme.Manager, error) {
@@ -530,8 +518,7 @@ func (s *Server) runHopMux(ctx context.Context) error {
 					_ = stream.Conn.Close()
 					return
 				}
-				_, _, hasNextHop := record.nextHop()
-				log.Info().Str("remote_addr", stream.RemoteAddr).Bool("forward", hasNextHop).Msg("hop stream received")
+				log.Info().Str("remote_addr", stream.RemoteAddr).Bool("forward", record.isHopMiddle()).Msg("hop stream received")
 				if err := s.bridgeLeaseConn(groupCtx, stream.Conn, record); err != nil {
 					log.Warn().Err(err).Str("remote_addr", stream.RemoteAddr).Msg("hop stream bridge failed")
 					_ = stream.Conn.Close()

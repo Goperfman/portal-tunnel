@@ -345,12 +345,12 @@ func TestRegisterLeaseDerivesFixedHostnameFromName(t *testing.T) {
 	if !ok {
 		t.Fatal("registry.RecordByKey() = false, want registered lease")
 	}
-	snapshot := server.registry.Snapshot(record)
-	if snapshot.Name != "demo-app" {
-		t.Fatalf("Snapshot().Name = %q, want %q", snapshot.Name, "demo-app")
+	lease := server.registry.publicLease(record)
+	if lease.Name != "demo-app" {
+		t.Fatalf("publicLease().Name = %q, want %q", lease.Name, "demo-app")
 	}
-	if snapshot.Hostname != wantHostname {
-		t.Fatalf("Snapshot().Hostname = %q, want %q", snapshot.Hostname, wantHostname)
+	if lease.Hostname != wantHostname {
+		t.Fatalf("publicLease().Hostname = %q, want %q", lease.Hostname, wantHostname)
 	}
 }
 

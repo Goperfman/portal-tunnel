@@ -417,12 +417,12 @@ func (s *Server) handleRenew(w http.ResponseWriter, r *http.Request) {
 	if req.TTL > 0 {
 		ttl = time.Duration(req.TTL) * time.Second
 	}
-	record, err := s.registry.Renew(claims.Identity, ttl, clientIP, utils.SanitizeReportedIP(req.ReportedIP))
+	record, err := s.registry.Renew(claims.Identity.Key(), ttl, clientIP, utils.SanitizeReportedIP(req.ReportedIP))
 	if err != nil {
 		writeAPIErrorResponse(w, err)
 		return
 	}
-	nextAccessToken, _, err := auth.IssueLeaseAccessToken(s.identity.PrivateKey, s.identity.Address, s.cfg.PortalURL, record.Copy(), ttl)
+	nextAccessToken, _, err := auth.IssueLeaseAccessToken(s.identity.PrivateKey, s.identity.Address, s.cfg.PortalURL, record.Identity, ttl)
 	if err != nil {
 		utils.WriteAPIError(w, http.StatusInternalServerError, types.APIErrorCodeInternal, err.Error())
 		return
@@ -449,7 +449,7 @@ func (s *Server) handleUnregister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	record, err := s.registry.Unregister(claims.Identity)
+	record, err := s.registry.Unregister(claims.Identity.Key())
 	if err != nil {
 		writeAPIErrorResponse(w, err)
 		return
@@ -616,7 +616,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.registry.Touch(lease.Copy(), clientIP, time.Now())
+	s.registry.Touch(lease.Key(), clientIP, time.Now())
 	log.Info().
 		Str("address", lease.Address).
 		Str("lease_name", lease.Name).
@@ -670,7 +670,7 @@ func (s *Server) handleQUICTunnelConn(conn *quic.Conn) {
 	}
 
 	_ = json.NewEncoder(stream).Encode(types.QUICControlResponse{OK: true})
-	s.registry.Touch(lease.Copy(), conn.RemoteAddr().String(), time.Now())
+	s.registry.Touch(lease.Key(), conn.RemoteAddr().String(), time.Now())
 	log.Info().
 		Str("component", "quic-tunnel-listener").
 		Str("address", lease.Address).
@@ -752,14 +752,12 @@ func (s *Server) registerLease(req types.RegisterChallengeRequest, clientIP, rep
 	record := &leaseRecord{
 		Identity:    identity,
 		Hostname:    hostname,
-		Metadata:    req.Metadata.Copy(),
+		Metadata:    req.Metadata,
 		ExpiresAt:   expiresAt,
 		FirstSeenAt: issuedAt,
 		LastSeenAt:  issuedAt,
 		ClientIP:    clientIP,
 		ReportedIP:  utils.SanitizeReportedIP(reportedIP),
-		UDPEnabled:  req.UDPEnabled,
-		TCPEnabled:  req.TCPEnabled,
 		hopToken:    req.HopToken,
 		stream:      stream,
 	}
@@ -804,19 +802,19 @@ func (s *Server) registerLease(req types.RegisterChallengeRequest, clientIP, rep
 		syncCtx, cancel := context.WithTimeout(context.Background(), defaultClaimTimeout)
 		defer cancel()
 		if err := s.acmeManager.SyncENSGaslessHostname(syncCtx, record.Hostname, record.Address); err != nil {
-			_, _ = s.registry.Unregister(record.Copy())
+			_, _ = s.registry.Unregister(record.Key())
 			record.Close()
 			return types.RegisterResponse{}, err
 		}
 	}
 
 	resp := types.RegisterResponse{
-		Identity:    record.Copy(),
+		Identity:    record.Identity,
 		Hostname:    hostname,
 		ExpiresAt:   expiresAt,
 		AccessToken: accessToken,
-		UDPEnabled:  record.UDPEnabled,
-		TCPEnabled:  record.TCPEnabled,
+		UDPEnabled:  record.datagram != nil,
+		TCPEnabled:  record.tcpPort != nil,
 	}
 	if record.datagram != nil {
 		resp.SNIPort = s.cfg.SNIPort
