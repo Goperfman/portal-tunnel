@@ -71,7 +71,7 @@ func NewRelaySet(bootstrapRelayURLs []string) *RelaySet {
 	set := &RelaySet{
 		relays:   make(map[string]RelayState),
 		keyIndex: make(map[string]keyIndexEntry),
-		policy:   DefaultRelayPolicy{},
+		policy:   MOLSRelayPolicy{},
 	}
 	set.SetBootstrapRelayURLs(bootstrapRelayURLs)
 	return set

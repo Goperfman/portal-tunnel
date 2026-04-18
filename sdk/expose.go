@@ -418,6 +418,7 @@ func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
 			MaxActiveRelays:   e.maxActiveRelays,
 			RequireUDP:        e.udpEnabled,
 			RequireTCP:        e.tcpEnabled,
+			LocalAddress:      e.identity.Address,
 		})
 	}
 

@@ -61,4 +61,8 @@ type ClientState struct {
 	MaxActiveRelays   int
 	RequireUDP        bool
 	RequireTCP        bool
+	// LocalAddress is the ingress identity address used by MOLSRelayPolicy to
+	// derive a deterministic row index into the GF(64) MOLS grid.  When empty
+	// the policy falls back to index 0, which remains stable across calls.
+	LocalAddress string
 }
