@@ -46,7 +46,7 @@ type RelaySet struct {
 	mu       sync.RWMutex
 	relays   map[string]RelayState
 	keyIndex map[string]keyIndexEntry
-	policy   RelayPolicy
+	policy   MOLSRelayPolicy
 }
 
 // keyIndexEntry records the rollback anchor for a signing identity.
@@ -154,9 +154,9 @@ func (s *RelaySet) upsertDescriptorLocked(record RelayState, now time.Time, allo
 	return upsertAccepted
 }
 
-func (s *RelaySet) SetRelayPolicy(policy RelayPolicy) {
-	if policy == nil {
-		policy = DefaultRelayPolicy{}
+func (s *RelaySet) SetRelayPolicy(policy MOLSRelayPolicy) {
+	if policy == (MOLSRelayPolicy{}) {
+		policy = MOLSRelayPolicy{}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
