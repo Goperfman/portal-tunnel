@@ -195,30 +195,12 @@ func (p MOLSRelayPolicy) OnBanned(state RelayState) RelayState {
 	return state
 }
 
-func (p MOLSRelayPolicy) SelectPriority(states []RelayState, clientState ClientState) []string {
-	selected := p.SelectAggregate(states)
-	if len(selected) == 0 {
+func (p MOLSRelayPolicy) rankRelayPool(autoPool []RelayState, localAddress string) []string {
+	if len(autoPool) == 0 {
 		return nil
 	}
 
-	explicit := make([]string, 0)
-	autoPool := make([]RelayState, 0, len(selected))
-	for _, state := range selected {
-		if clientState.RequireUDP && state.hasObservedDescriptor() && !state.Descriptor.SupportsUDP {
-			continue
-		}
-		if clientState.RequireTCP && state.hasObservedDescriptor() && !state.Descriptor.SupportsTCP {
-			continue
-		}
-		relayURL := state.Descriptor.APIHTTPSAddr
-		if slices.Contains(clientState.ExplicitRelayURLs, relayURL) {
-			explicit = append(explicit, relayURL)
-			continue
-		}
-		autoPool = append(autoPool, state)
-	}
-
-	ingressIdx := hashToGF64(clientState.LocalAddress)
+	ingressIdx := hashToGF64(localAddress)
 	avgRTT, cv := molsRTTStats(autoPool)
 	congested := avgRTT > molsCongestionRTTThreshold
 	nonLinear := cv > molsCVThreshold
@@ -294,10 +276,71 @@ func (p MOLSRelayPolicy) SelectPriority(states []RelayState, clientState ClientS
 	}
 
 	autoURLs := append(rank(active), rank(fallbacks)...)
+	if len(autoURLs) == 0 {
+		return nil
+	}
+	return autoURLs
+}
 
+func (p MOLSRelayPolicy) SelectPriority(states []RelayState, clientState ClientState) []string {
+	selected := p.SelectAggregate(states)
+	if len(selected) == 0 {
+		return nil
+	}
+
+	explicit := make([]string, 0)
+	autoPool := make([]RelayState, 0, len(selected))
+	for _, state := range selected {
+		if clientState.RequireUDP && state.hasObservedDescriptor() && !state.Descriptor.SupportsUDP {
+			continue
+		}
+		if clientState.RequireTCP && state.hasObservedDescriptor() && !state.Descriptor.SupportsTCP {
+			continue
+		}
+
+		relayURL := state.Descriptor.APIHTTPSAddr
+		if slices.Contains(clientState.ExplicitRelayURLs, relayURL) {
+			explicit = append(explicit, relayURL)
+			continue
+		}
+		autoPool = append(autoPool, state)
+	}
+
+	autoURLs := p.rankRelayPool(autoPool, clientState.LocalAddress)
 	if clientState.MaxActiveRelays > 0 && len(autoURLs) > clientState.MaxActiveRelays {
 		autoURLs = autoURLs[:clientState.MaxActiveRelays]
 	}
-
 	return append(explicit, autoURLs...)
+}
+
+func (p MOLSRelayPolicy) SelectMultiHop(states []RelayState, clientState ClientState) []string {
+	if clientState.MultiHopDepth <= 1 {
+		return nil
+	}
+
+	selected := p.SelectAggregate(states)
+	if len(selected) == 0 {
+		return nil
+	}
+
+	now := time.Now().UTC()
+	autoPool := make([]RelayState, 0, len(selected))
+	for _, state := range selected {
+		if clientState.RequireUDP && state.hasObservedDescriptor() && !state.Descriptor.SupportsUDP {
+			continue
+		}
+		if clientState.RequireTCP && state.hasObservedDescriptor() && !state.Descriptor.SupportsTCP {
+			continue
+		}
+		if !state.hasObservedDescriptor() || !state.Descriptor.ExpiresAt.After(now) || !state.Descriptor.HasOverlayPeer() {
+			continue
+		}
+		autoPool = append(autoPool, state)
+	}
+
+	multiHop := p.rankRelayPool(autoPool, clientState.LocalAddress)
+	if len(multiHop) > clientState.MultiHopDepth {
+		multiHop = multiHop[:clientState.MultiHopDepth]
+	}
+	return multiHop
 }
