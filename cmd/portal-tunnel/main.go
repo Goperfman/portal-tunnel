@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"runtime"
+	"strings"
 	"sync"
+	"text/tabwriter"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -34,6 +34,7 @@ func main() {
 		"help": utils.MakeHelpCommand(printRootUsage, []utils.HelpTopic{
 			{Name: "expose", Usage: printExposeUsage},
 			{Name: "list", Usage: printListUsage},
+			{Name: "update", Usage: printUpdateUsage},
 		}),
 	}); err != nil {
 		log.Error().Err(err).Msg("portal tunnel exited with error")
@@ -64,7 +65,7 @@ type exposeFlags struct {
 }
 
 func runExposeCommand(args []string) error {
-	updateCh := startUpdateCheck()
+	installer.StartUpdateCheck(types.ReleaseVersion)
 
 	flags := exposeFlags{}
 	fs := utils.NewFlagSet("expose", printExposeUsage)
@@ -112,6 +113,7 @@ func runExposeCommand(args []string) error {
 		printExposeUsage(os.Stderr)
 		return errors.New("--udp cannot be combined with --http-route")
 	}
+
 	ctx, stop := utils.SignalContext()
 	defer stop()
 
@@ -140,17 +142,47 @@ func runExposeCommand(args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to start relays: %w", err)
 	}
-	printUpdateHint(updateCh)
 	if len(flags.httpRoutes) > 0 {
-		handler, err := newHTTPRouteHandler(flags.httpRoutes)
-		if err != nil {
-			_ = exposure.Close()
-			return err
+		httpRoutes := make([]sdk.HTTPRoute, 0, len(flags.httpRoutes))
+		for _, raw := range flags.httpRoutes {
+			prefix, upstream, ok := strings.Cut(raw, "=")
+			if !ok {
+				return fmt.Errorf("--http-route %q: expected PATH=UPSTREAM", raw)
+			}
+			httpRoutes = append(httpRoutes, sdk.HTTPRoute{
+				Prefix:   strings.TrimSpace(prefix),
+				Upstream: strings.TrimSpace(upstream),
+			})
 		}
+
 		defer exposure.Close()
-		return exposure.RunHTTP(ctx, handler, "")
+		return exposure.RunHTTPRoutes(ctx, httpRoutes, "")
 	}
 	return proxyExposure(ctx, exposure)
+}
+
+func runUpdateCommand(args []string) error {
+	var version string
+	fs := utils.NewFlagSet("update", printUpdateUsage)
+	utils.StringFlag(fs, &version, "version", "", "Release version to install; defaults to latest")
+
+	if err := utils.ParseFlagSet(fs, args, printUpdateUsage); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if err := utils.RequireNoArgs(fs.Args(), "update"); err != nil {
+		printUpdateUsage(os.Stderr)
+		return err
+	}
+
+	if err := installer.UpdateCurrentBinary(version); err != nil {
+		return err
+	}
+
+	fmt.Fprintln(os.Stderr, "Updated portal.")
+	return nil
 }
 
 type listFlags struct {
@@ -158,72 +190,8 @@ type listFlags struct {
 	defaultRelays bool
 }
 
-func runUpdateCommand(args []string) error {
-	slug := runtime.GOOS + "-" + runtime.GOARCH
-	if _, ok := installer.AssetFilename(slug); !ok {
-		return fmt.Errorf("unsupported platform: %s/%s", runtime.GOOS, runtime.GOARCH)
-	}
-
-	execPath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("failed to determine executable path: %w", err)
-	}
-	execPath, err = filepath.EvalSymlinks(execPath)
-	if err != nil {
-		return fmt.Errorf("failed to resolve executable path: %w", err)
-	}
-
-	// Pre-check: verify that the binary's directory is writable before downloading.
-	if err := checkWritable(filepath.Dir(execPath)); err != nil {
-		return fmt.Errorf("cannot update %s: %w", execPath, err)
-	}
-
-	binURL, _ := installer.OfficialAssetURL(slug, false)
-
-	latestVersion, err := detectLatestVersion(binURL)
-	if err != nil {
-		return fmt.Errorf("failed to detect latest version: %w", err)
-	}
-
-	if latestVersion == types.ReleaseVersion {
-		fmt.Fprintf(os.Stderr, "Already up to date (%s).\n", types.ReleaseVersion)
-		return nil
-	}
-
-	fmt.Fprintf(os.Stderr, "Updating %s → %s ...\n", types.ReleaseVersion, latestVersion)
-
-	tmpFile, err := os.CreateTemp("", "portal-update-*")
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-	defer func() { _ = os.Remove(tmpFile.Name()) }()
-
-	if err := downloadBinary(binURL, tmpFile); err != nil {
-		_ = tmpFile.Close()
-		return fmt.Errorf("failed to download binary: %w", err)
-	}
-	if err := tmpFile.Sync(); err != nil {
-		_ = tmpFile.Close()
-		return fmt.Errorf("failed to sync downloaded binary: %w", err)
-	}
-	_ = tmpFile.Close()
-
-	checksumURL, _ := installer.OfficialAssetURL(slug, true)
-	if err := verifyChecksum(tmpFile.Name(), checksumURL); err != nil {
-		return fmt.Errorf("checksum verification failed: %w", err)
-	}
-
-	if err := replaceBinary(tmpFile.Name(), execPath); err != nil {
-		return fmt.Errorf("failed to replace binary: %w", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "Updated %s → %s\n", types.ReleaseVersion, latestVersion)
-	return nil
-}
-
 func runListCommand(args []string) error {
-	updateCh := startUpdateCheck()
-	defer printUpdateHint(updateCh)
+	installer.StartUpdateCheck(types.ReleaseVersion)
 
 	flags := listFlags{}
 	fs := utils.NewFlagSet("list", printListUsage)
@@ -266,14 +234,16 @@ func runListCommand(args []string) error {
 	}
 	wg.Wait()
 
+	table := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(table, "RELAY\tVERSION")
 	for i, relayURL := range relayURLs {
 		ver := versions[i]
 		if ver == "" {
 			ver = "unknown"
 		}
-		fmt.Printf("%s\t%s\n", relayURL, ver)
+		fmt.Fprintf(table, "%s\t%s\n", relayURL, ver)
 	}
-	return nil
+	return table.Flush()
 }
 
 func printRootUsage(w io.Writer) {
@@ -282,7 +252,7 @@ func printRootUsage(w io.Writer) {
 			"portal expose [flags] <target>",
 			"portal expose [flags] --http-route PATH=UPSTREAM [--http-route PATH=UPSTREAM]",
 			"portal list [flags]",
-			"portal update",
+			"portal update [flags]",
 			"portal version",
 		},
 		[]string{
@@ -292,6 +262,7 @@ func printRootUsage(w io.Writer) {
 			"portal expose 3000 --udp --udp-addr 127.0.0.1:5353",
 			"portal list",
 			"portal update",
+			"portal update --version v2.1.7",
 			"portal version",
 		},
 	)
@@ -324,6 +295,18 @@ func printListUsage(w io.Writer) {
 		[]string{
 			"portal list",
 			"portal list --relays https://portal.example.com --default-relays=false",
+		},
+	)
+}
+
+func printUpdateUsage(w io.Writer) {
+	utils.WriteCommandUsage(w,
+		[]string{
+			"portal update [flags]",
+		},
+		[]string{
+			"portal update",
+			"portal update --version v2.1.7",
 		},
 	)
 }

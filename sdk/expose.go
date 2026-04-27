@@ -301,6 +301,15 @@ func (e *Exposure) WaitDatagramReady(ctx context.Context) ([]string, error) {
 	}
 }
 
+// RunHTTPRoutes serves path-routed HTTP upstreams through the exposure.
+func (e *Exposure) RunHTTPRoutes(ctx context.Context, routes []HTTPRoute, localAddr string) error {
+	handler, err := newHTTPRouteHandler(routes)
+	if err != nil {
+		return err
+	}
+	return e.RunHTTP(ctx, handler, localAddr)
+}
+
 func (e *Exposure) RunHTTP(ctx context.Context, handler http.Handler, localAddr string) error {
 	if handler == nil {
 		handler = http.NotFoundHandler()
