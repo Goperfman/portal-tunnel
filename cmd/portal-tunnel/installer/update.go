@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -33,7 +34,7 @@ func StartUpdateCheck(currentVersion string) {
 				},
 			}
 
-			req, err := http.NewRequest(http.MethodHead, binURL, nil)
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodHead, binURL, nil)
 			if err == nil {
 				resp, err := client.Do(req)
 				if err == nil {
@@ -80,7 +81,12 @@ func UpdateCurrentBinary(version string) error {
 
 	client := &http.Client{Timeout: 120 * time.Second}
 
-	resp, err := client.Get(binURL)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, binURL, nil)
+	if err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("failed to build binary request: %w", err)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		_ = tmpFile.Close()
 		return fmt.Errorf("failed to download binary: %w", err)
@@ -105,7 +111,11 @@ func UpdateCurrentBinary(version string) error {
 		return fmt.Errorf("failed to close downloaded binary: %w", err)
 	}
 
-	resp, err = client.Get(checksumURL)
+	req, err = http.NewRequestWithContext(context.Background(), http.MethodGet, checksumURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to build checksum request: %w", err)
+	}
+	resp, err = client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to download checksum: %w", err)
 	}
