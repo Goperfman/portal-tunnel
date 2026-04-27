@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -112,6 +113,7 @@ func runExposeCommand(args []string) error {
 		printExposeUsage(os.Stderr)
 		return errors.New("--udp cannot be combined with --http-route")
 	}
+
 	ctx, stop := utils.SignalContext()
 	defer stop()
 
@@ -142,13 +144,20 @@ func runExposeCommand(args []string) error {
 	}
 	printUpdateHint(updateCh)
 	if len(flags.httpRoutes) > 0 {
-		handler, err := newHTTPRouteHandler(flags.httpRoutes)
-		if err != nil {
-			_ = exposure.Close()
-			return err
+		httpRoutes := make([]sdk.HTTPRoute, 0, len(flags.httpRoutes))
+		for _, raw := range flags.httpRoutes {
+			prefix, upstream, ok := strings.Cut(raw, "=")
+			if !ok {
+				return fmt.Errorf("--http-route %q: expected PATH=UPSTREAM", raw)
+			}
+			httpRoutes = append(httpRoutes, sdk.HTTPRoute{
+				Prefix:   strings.TrimSpace(prefix),
+				Upstream: strings.TrimSpace(upstream),
+			})
 		}
+
 		defer exposure.Close()
-		return exposure.RunHTTP(ctx, handler, "")
+		return exposure.RunHTTPRoutes(ctx, httpRoutes, "")
 	}
 	return proxyExposure(ctx, exposure)
 }
