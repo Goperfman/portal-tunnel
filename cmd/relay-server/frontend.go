@@ -395,7 +395,7 @@ func serveInstallBinary(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := embeddedDistFS.ReadFile("dist/tunnel/" + filename)
 	if err != nil {
-		redirectURL := types.OfficialReleaseBaseURL + "/" + filename
+		redirectURL := types.OfficialReleaseBaseURL + "/latest/download/" + filename
 		if checksumRequest {
 			redirectURL += ".sha256"
 		}
