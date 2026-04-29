@@ -3,7 +3,6 @@ package portal
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -46,17 +45,6 @@ var (
 	errTCPPortCapacityExceeded = &apiError{types.APIErrorCodeTCPPortCapacityExceeded, "tcp port capacity exceeded", http.StatusServiceUnavailable}
 	errTCPPortExhausted        = &apiError{types.APIErrorCodeTCPPortExhausted, "no tcp ports available", http.StatusServiceUnavailable}
 )
-
-var quicRejectTable = []struct {
-	sentinel error
-	code     string
-	reason   string
-}{
-	{errLeaseNotFound, types.APIErrorCodeLeaseNotFound, "lease not found"},
-	{errLeaseRejected, types.APIErrorCodeLeaseRejected, "lease rejected"},
-	{errUnauthorized, types.APIErrorCodeUnauthorized, "unauthorized"},
-	{errTransportMismatch, types.APIErrorCodeTransportMismatch, "transport mismatch"},
-}
 
 func writeAPIErrorResponse(w http.ResponseWriter, err error) {
 	var ae *apiError
@@ -183,7 +171,7 @@ func (s *Server) signedRelayDescriptor(now time.Time) (types.RelayDescriptor, er
 		WireGuardPublicKey: wireGuardPublicKey,
 		WireGuardPort:      wireGuardPort,
 		SupportsOverlay:    s.overlay != nil,
-		SupportsUDP:        s.cfg.UDPEnabled && s.quicTunnel != nil,
+		SupportsUDP:        s.cfg.UDPEnabled && s.quicBackhaul != nil,
 		SupportsTCP:        s.cfg.TCPEnabled,
 		ActiveConnections:  s.proxy.activeConnectionCount(),
 		TCPBPS:             s.proxy.currentTCPBPS(now),
@@ -379,7 +367,7 @@ func (s *Server) handleRegisterChallenge(w http.ResponseWriter, r *http.Request)
 		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
 		return
 	}
-	if req.UDPEnabled && (!s.cfg.UDPEnabled || s.group != nil && s.quicTunnel == nil) {
+	if req.UDPEnabled && (!s.cfg.UDPEnabled || s.group != nil && s.quicBackhaul == nil) {
 		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
 		return
 	}
@@ -632,58 +620,43 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		Msg("sdk reverse connected")
 }
 
-func (s *Server) handleQUICTunnelConn(conn *quic.Conn) {
-	stream, err := conn.AcceptStream(context.Background())
+func (s *Server) handleQUICBackhaulConn(conn *quic.Conn) {
+	control, err := transport.AcceptQUICBackhaulControl(context.Background(), conn)
 	if err != nil {
-		_ = conn.CloseWithError(1, "stream accept failed")
-		return
-	}
-
-	_ = stream.SetReadDeadline(time.Now().Add(10 * time.Second))
-	var msg types.QUICControlMessage
-	if err := json.NewDecoder(io.LimitReader(stream, defaultControlBodyLimit)).Decode(&msg); err != nil {
 		_ = conn.CloseWithError(1, "control read failed")
 		return
 	}
-	_ = stream.SetReadDeadline(time.Time{})
-	if strings.TrimSpace(msg.AccessToken) == "" {
-		_ = json.NewEncoder(stream).Encode(types.QUICControlResponse{OK: false, Error: "invalid_control_message"})
-		_ = conn.CloseWithError(1, "invalid control message")
-		return
-	}
 
-	rejectConn := func(code, reason string) {
-		_ = json.NewEncoder(stream).Encode(types.QUICControlResponse{OK: false, Error: code})
-		_ = conn.CloseWithError(1, reason)
-	}
-
-	lease, err := s.admitLeaseByToken(msg.AccessToken, true)
+	lease, err := s.admitLeaseByToken(control.AccessToken, true)
 	if err != nil {
 		code, reason := types.APIErrorCodeInvalidRequest, "invalid control message"
-		for _, entry := range quicRejectTable {
-			if errors.Is(err, entry.sentinel) {
-				code, reason = entry.code, entry.reason
-				break
-			}
+		switch {
+		case errors.Is(err, errLeaseNotFound):
+			code, reason = types.APIErrorCodeLeaseNotFound, "lease not found"
+		case errors.Is(err, errLeaseRejected):
+			code, reason = types.APIErrorCodeLeaseRejected, "lease rejected"
+		case errors.Is(err, errUnauthorized):
+			code, reason = types.APIErrorCodeUnauthorized, "unauthorized"
+		case errors.Is(err, errTransportMismatch):
+			code, reason = types.APIErrorCodeTransportMismatch, "transport mismatch"
 		}
-		rejectConn(code, reason)
+		_ = control.Reject(code, reason)
 		return
 	}
 
-	if err := lease.datagram.Register(conn); err != nil {
-		_ = json.NewEncoder(stream).Encode(types.QUICControlResponse{OK: false, Error: "broker_closed"})
-		_ = conn.CloseWithError(1, "broker closed")
+	if err := lease.datagram.BindBackhaul(conn); err != nil {
+		_ = control.Reject("broker_closed", "broker closed")
 		return
 	}
 
-	_ = json.NewEncoder(stream).Encode(types.QUICControlResponse{OK: true})
+	_ = control.Accept()
 	s.registry.Touch(lease.Key(), conn.RemoteAddr().String(), time.Now())
 	log.Info().
-		Str("component", "quic-tunnel-listener").
+		Str("component", "quic-backhaul-listener").
 		Str("address", lease.Address).
 		Str("lease_name", lease.Name).
 		Str("remote_addr", conn.RemoteAddr().String()).
-		Msg("quic tunnel connected")
+		Msg("quic backhaul connected")
 }
 
 func (s *Server) admitLeaseByToken(token string, requireDatagram bool) (*leaseRecord, error) {
@@ -723,7 +696,7 @@ func (s *Server) registerLease(req types.RegisterChallengeRequest, clientIP, rep
 	}
 
 	if req.UDPEnabled {
-		if !s.cfg.UDPEnabled || s.group != nil && s.quicTunnel == nil {
+		if !s.cfg.UDPEnabled || s.group != nil && s.quicBackhaul == nil {
 			return types.RegisterResponse{}, errFeatureUnavailable
 		}
 		if !s.registry.policy.IsUDPEnabled() {

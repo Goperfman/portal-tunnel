@@ -112,11 +112,11 @@ type Server struct {
 	acmeManager *acme.Manager
 	proxy       proxy
 
-	apiListener net.Listener
-	sniListener net.Listener
-	apiServer   *http.Server
-	apiTLSClose io.Closer
-	quicTunnel  *quic.Listener
+	apiListener  net.Listener
+	sniListener  net.Listener
+	apiServer    *http.Server
+	apiTLSClose  io.Closer
+	quicBackhaul *quic.Listener
 
 	overlay         *overlay.Overlay
 	hopMux          *overlay.HopMux
@@ -179,7 +179,7 @@ func (s *Server) Start(ctx context.Context, apiMux *http.ServeMux) error {
 	var apiCloser io.Closer
 	var hopMux *overlay.HopMux
 	var ov *overlay.Overlay
-	var quicTunnel *quic.Listener
+	var quicBackhaul *quic.Listener
 	defer func() {
 		if started {
 			return
@@ -233,10 +233,10 @@ func (s *Server) Start(ctx context.Context, apiMux *http.ServeMux) error {
 		}
 	}
 	if s.cfg.UDPEnabled {
-		quicTunnel, err = s.newQUICTunnelListener(apiTLS)
+		quicBackhaul, err = s.newQUICBackhaulListener(apiTLS)
 		if err != nil {
-			log.Warn().Err(err).Msg("quic tunnel listener disabled")
-			quicTunnel = nil
+			log.Warn().Err(err).Msg("quic backhaul listener disabled")
+			quicBackhaul = nil
 		}
 	}
 
@@ -249,7 +249,7 @@ func (s *Server) Start(ctx context.Context, apiMux *http.ServeMux) error {
 	s.group = group
 	s.overlay = ov
 	s.hopMux = hopMux
-	s.quicTunnel = quicTunnel
+	s.quicBackhaul = quicBackhaul
 	started = true
 
 	group.Go(s.runAPIServer)
@@ -260,8 +260,8 @@ func (s *Server) Start(ctx context.Context, apiMux *http.ServeMux) error {
 			group.Go(func() error { return s.runOverlayIngress(groupCtx) })
 		}
 	}
-	if s.quicTunnel != nil {
-		group.Go(s.runQUICTunnelListener)
+	if s.quicBackhaul != nil {
+		group.Go(s.runQUICBackhaulListener)
 	}
 	group.Go(func() error { return s.runRegistryJanitor(groupCtx, 5*time.Second) })
 	if s.cfg.DiscoveryEnabled {
@@ -285,10 +285,10 @@ func (s *Server) Start(ctx context.Context, apiMux *http.ServeMux) error {
 		Bool("discovery_enabled", s.cfg.DiscoveryEnabled).
 		Bool("wireguard_enabled", s.overlay != nil).
 		Bool("multihop_enabled", s.hopMux != nil).
-		Bool("udp_enabled", s.quicTunnel != nil).
+		Bool("udp_enabled", s.quicBackhaul != nil).
 		Bool("tcp_enabled", s.cfg.TCPEnabled)
-	if s.quicTunnel != nil {
-		logEvent = logEvent.Str("internal_quic_tunnel_addr", s.quicTunnel.Addr().String())
+	if s.quicBackhaul != nil {
+		logEvent = logEvent.Str("internal_quic_backhaul_addr", s.quicBackhaul.Addr().String())
 	}
 	logEvent.Msg("relay server started")
 
@@ -352,8 +352,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			s.cleanupRemovedRecord(ctx, lease, "delete lease remote state during shutdown")
 		}
 
-		if s.quicTunnel != nil {
-			_ = s.quicTunnel.Close()
+		if s.quicBackhaul != nil {
+			_ = s.quicBackhaul.Close()
 		}
 		if s.sniListener != nil {
 			if err := s.sniListener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
@@ -409,14 +409,6 @@ func (s *Server) prepareAPITLS(ctx context.Context) (keyless.TLSMaterialConfig, 
 	apiTLS := keyless.TLSMaterialConfig{
 		CertPEM: certPEM,
 		KeyPEM:  keyPEM,
-	}
-	if len(apiTLS.CertPEM) == 0 {
-		manager.Stop()
-		return keyless.TLSMaterialConfig{}, nil, errors.New("api tls certificate is required")
-	}
-	if len(apiTLS.KeyPEM) == 0 && apiTLS.Keyless == nil {
-		manager.Stop()
-		return keyless.TLSMaterialConfig{}, nil, errors.New("api tls key or keyless signer is required")
 	}
 
 	return apiTLS, manager, nil
@@ -585,47 +577,30 @@ func (s *Server) runRegistryJanitor(ctx context.Context, interval time.Duration)
 	}
 }
 
-func (s *Server) newQUICTunnelListener(apiTLS keyless.TLSMaterialConfig) (*quic.Listener, error) {
+func (s *Server) newQUICBackhaulListener(apiTLS keyless.TLSMaterialConfig) (*quic.Listener, error) {
 	if len(apiTLS.KeyPEM) == 0 {
-		return nil, fmt.Errorf("quic tunnel requires api tls key")
+		return nil, fmt.Errorf("quic backhaul requires api tls key")
 	}
 	tlsCert, err := tls.X509KeyPair(apiTLS.CertPEM, apiTLS.KeyPEM)
 	if err != nil {
-		return nil, fmt.Errorf("parse quic tls keypair: %w", err)
+		return nil, fmt.Errorf("parse quic backhaul tls keypair: %w", err)
 	}
-
-	tlsConf := &tls.Config{
-		Certificates: []tls.Certificate{tlsCert},
-		NextProtos:   []string{"portal-tunnel"},
-		MinVersion:   tls.VersionTLS13,
-	}
-	quicConf := &quic.Config{
-		EnableDatagrams:    true,
-		KeepAlivePeriod:    15 * time.Second,
-		MaxIdleTimeout:     60 * time.Second,
-		MaxIncomingStreams: 16,
-	}
-
-	listener, err := quic.ListenAddr(s.cfg.SNIListenAddr, tlsConf, quicConf)
-	if err != nil {
-		return nil, fmt.Errorf("listen quic: %w", err)
-	}
-	return listener, nil
+	return transport.ListenQUICBackhaul(s.cfg.SNIListenAddr, tlsCert)
 }
 
-func (s *Server) runQUICTunnelListener() error {
-	if s.quicTunnel == nil {
+func (s *Server) runQUICBackhaulListener() error {
+	if s.quicBackhaul == nil {
 		return nil
 	}
 	for {
-		conn, err := s.quicTunnel.Accept(context.Background())
+		conn, err := s.quicBackhaul.Accept(context.Background())
 		if err != nil {
 			if errors.Is(err, quic.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
 				return nil
 			}
 			return err
 		}
-		go s.handleQUICTunnelConn(conn)
+		go s.handleQUICBackhaulConn(conn)
 	}
 }
 

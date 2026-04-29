@@ -107,15 +107,6 @@ type DiscoveryAnnounceResponse struct {
 	Accepted        bool   `json:"accepted"`
 }
 
-type QUICControlMessage struct {
-	AccessToken string `json:"access_token"`
-}
-
-type QUICControlResponse struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
-}
-
 type RenewRequest struct {
 	AccessToken string `json:"access_token"`
 	TTL         int    `json:"ttl,omitempty"`
