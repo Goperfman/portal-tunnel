@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -26,35 +27,93 @@ func metricFamilyByName(t *testing.T, name string) *dto.MetricFamily {
 	return nil
 }
 
+// assertRegisteredWithName verifies that collector c is already registered on
+// prometheus.DefaultRegisterer by attempting to re-register it and expecting
+// AlreadyRegisteredError.  It then confirms that the previously-registered
+// collector's first described metric name equals wantName.
+//
+// This is the only approach that simultaneously proves (a) the collector is on
+// the default registry and (b) the registered metric has the expected name, for
+// both Vec and non-Vec collectors with no prior observations.
+func assertRegisteredWithName(t *testing.T, c prometheus.Collector, wantName string) {
+	t.Helper()
+	err := prometheus.DefaultRegisterer.Register(c)
+	if err == nil {
+		// Re-registration succeeded — the collector was NOT on the default registry.
+		// Undo the registration so the rest of the test suite is not affected.
+		prometheus.DefaultRegisterer.Unregister(c)
+		t.Fatalf("metric %q: collector was not registered on DefaultRegisterer before the test", wantName)
+	}
+	var are prometheus.AlreadyRegisteredError
+	if !errors.As(err, &are) {
+		t.Fatalf("metric %q: unexpected registration error: %v", wantName, err)
+	}
+	// are.ExistingCollector is the collector already on the registry.
+	// Drain its Describe channel to confirm the expected metric name is present.
+	ch := make(chan *prometheus.Desc, 32)
+	go func() {
+		are.ExistingCollector.Describe(ch)
+		close(ch)
+	}()
+	found := false
+	for d := range ch {
+		// Desc.String() format: Desc{fqName: "the_name", help: "...", ...}
+		s := d.String()
+		const marker = `fqName: "`
+		idx := 0
+		for idx+len(marker) <= len(s) {
+			if s[idx:idx+len(marker)] == marker {
+				start := idx + len(marker)
+				end := start
+				for end < len(s) && s[end] != '"' {
+					end++
+				}
+				if s[start:end] == wantName {
+					found = true
+				}
+				break
+			}
+			idx++
+		}
+	}
+	if !found {
+		t.Errorf("metric %q: name not found in described metrics of existing collector", wantName)
+	}
+}
+
 // TestMetricsRegistryPresence asserts that all 8 Phase-1 metrics are registered
-// on the default registry with non-empty HELP text and the expected type.
+// on prometheus.DefaultRegisterer.  It uses Register→AlreadyRegisteredError so
+// Vec metrics with no prior observations are still detected (they are invisible
+// to DefaultGatherer.Gather until the first label combination is used).
 func TestMetricsRegistryPresence(t *testing.T) {
 	want := []struct {
-		name string
-		typ  dto.MetricType
+		name      string
+		collector prometheus.Collector
+		typ       dto.MetricType
 	}{
-		{"portal_discovery_relay_selected_total", dto.MetricType_COUNTER},
-		{"portal_discovery_relay_pool_size", dto.MetricType_GAUGE},
-		{"portal_discovery_rtt_seconds", dto.MetricType_HISTOGRAM},
-		{"portal_discovery_active_tunnels_per_relay", dto.MetricType_GAUGE},
-		{"portal_discovery_selection_duration_seconds", dto.MetricType_HISTOGRAM},
-		{"portal_discovery_selection_skipped_total", dto.MetricType_COUNTER},
-		{"portal_discovery_failures_total", dto.MetricType_COUNTER},
-		{"portal_discovery_congestion_mode", dto.MetricType_GAUGE},
+		{"portal_discovery_relay_selected_total", RelaySelectedTotal, dto.MetricType_COUNTER},
+		{"portal_discovery_relay_pool_size", RelayPoolSize, dto.MetricType_GAUGE},
+		{"portal_discovery_rtt_seconds", RTTSeconds, dto.MetricType_HISTOGRAM},
+		{"portal_discovery_active_tunnels_per_relay", ActiveTunnelsPerRelay, dto.MetricType_GAUGE},
+		{"portal_discovery_selection_duration_seconds", SelectionDurationSeconds, dto.MetricType_HISTOGRAM},
+		{"portal_discovery_selection_skipped_total", SelectionSkippedTotal, dto.MetricType_COUNTER},
+		{"portal_discovery_failures_total", FailuresTotal, dto.MetricType_COUNTER},
+		{"portal_discovery_congestion_mode", CongestionMode, dto.MetricType_GAUGE},
 	}
 
 	for _, tc := range want {
-
 		t.Run(tc.name, func(t *testing.T) {
+			// Primary check: collector is on DefaultRegisterer.
+			assertRegisteredWithName(t, tc.collector, tc.name)
+			// Secondary check: if the metric has observations, verify HELP and type.
 			mf := metricFamilyByName(t, tc.name)
-			if mf == nil {
-				t.Fatalf("metric %q not found in registry", tc.name)
-			}
-			if mf.GetHelp() == "" {
-				t.Errorf("metric %q has empty HELP string", tc.name)
-			}
-			if mf.GetType() != tc.typ {
-				t.Errorf("metric %q: got type %v, want %v", tc.name, mf.GetType(), tc.typ)
+			if mf != nil {
+				if mf.GetHelp() == "" {
+					t.Errorf("metric %q has empty HELP string", tc.name)
+				}
+				if mf.GetType() != tc.typ {
+					t.Errorf("metric %q: got type %v, want %v", tc.name, mf.GetType(), tc.typ)
+				}
 			}
 		})
 	}
