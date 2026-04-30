@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/gosuda/portal-tunnel/v2/portal/auth"
 	"github.com/gosuda/portal-tunnel/v2/types"
 )
@@ -220,7 +222,12 @@ func (s *RelaySet) ConfirmedRelays() []RelayState {
 	return policy.SelectConfirmed(states)
 }
 
-func (s *RelaySet) PriorityRelays(clientState ClientState) []string {
+// PriorityRelaysWithTrace returns the same ordered relay-URL list as
+// PriorityRelays, plus a SelectionTrace populated with pool statistics,
+// eligibility classification, and the scoring parameters used. Prometheus
+// metrics are emitted from the trace before returning, and a sampled zerolog
+// debug entry is written.
+func (s *RelaySet) PriorityRelaysWithTrace(clientState ClientState) ([]string, SelectionTrace) {
 	s.mu.RLock()
 	states := make([]RelayState, 0, len(s.relays))
 	for _, state := range s.relays {
@@ -229,10 +236,33 @@ func (s *RelaySet) PriorityRelays(clientState ClientState) []string {
 	policy := s.policy
 	s.mu.RUnlock()
 
-	return policy.SelectPriority(states, clientState)
+	result, trace := policy.SelectPriorityWithTrace(states, clientState)
+	EmitFromTrace(trace)
+	log.Debug().
+		Uint8("client_hash", trace.ClientHash).
+		Int("pool_size", trace.PoolTotal).
+		Int("output_count", len(trace.OutputURLs)).
+		Str("mode", trace.Mode).
+		Bool("congested", trace.Congested).
+		Strs("top3", first3(trace.OutputURLs)).
+		Msg("relay selection")
+	return result, trace
 }
 
-func (s *RelaySet) PriorityMultiHop(clientState ClientState) []string {
+// PriorityRelays returns the ordered list of relay URLs for a client. It
+// delegates to PriorityRelaysWithTrace and discards the trace. The public
+// signature is unchanged through all phases.
+func (s *RelaySet) PriorityRelays(clientState ClientState) []string {
+	out, _ := s.PriorityRelaysWithTrace(clientState)
+	return out
+}
+
+// PriorityMultiHopWithTrace returns the same ordered relay-URL list as
+// PriorityMultiHop, plus a SelectionTrace populated with pool statistics,
+// eligibility classification, and the scoring parameters used. Prometheus
+// metrics are emitted from the trace before returning, and a sampled zerolog
+// debug entry is written.
+func (s *RelaySet) PriorityMultiHopWithTrace(clientState ClientState) ([]string, SelectionTrace) {
 	s.mu.RLock()
 	states := make([]RelayState, 0, len(s.relays))
 	for _, state := range s.relays {
@@ -241,7 +271,34 @@ func (s *RelaySet) PriorityMultiHop(clientState ClientState) []string {
 	policy := s.policy
 	s.mu.RUnlock()
 
-	return policy.SelectMultiHop(states, clientState)
+	result, trace := policy.SelectMultiHopWithTrace(states, clientState)
+	EmitFromTrace(trace)
+	log.Debug().
+		Uint8("client_hash", trace.ClientHash).
+		Int("pool_size", trace.PoolTotal).
+		Int("output_count", len(trace.OutputURLs)).
+		Str("mode", trace.Mode).
+		Bool("congested", trace.Congested).
+		Strs("top3", first3(trace.OutputURLs)).
+		Msg("relay selection")
+	return result, trace
+}
+
+// PriorityMultiHop returns the ordered list of relay URLs for multi-hop
+// routing. It delegates to PriorityMultiHopWithTrace and discards the trace.
+// The public signature is unchanged through all phases.
+func (s *RelaySet) PriorityMultiHop(clientState ClientState) []string {
+	out, _ := s.PriorityMultiHopWithTrace(clientState)
+	return out
+}
+
+// first3 returns a slice containing the first three elements of s, or all
+// elements if s has fewer than three. It never modifies the input slice.
+func first3(s []string) []string {
+	if len(s) <= 3 {
+		return s
+	}
+	return s[:3]
 }
 
 func (s *RelaySet) OverlayPeerStates() []RelayState {
