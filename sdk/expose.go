@@ -193,6 +193,66 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 	return exposure, nil
 }
 
+// AddRelay attaches an explicit relay to the running exposure without
+// restarting the local tunnel.
+func (e *Exposure) AddRelay(relayURL string) error {
+	relayURL, err := utils.NormalizeRelayURL(relayURL)
+	if err != nil {
+		return err
+	}
+	if len(e.multiHop) > 0 || e.multiHopDepth > 1 {
+		return errors.New("runtime relay add/remove is not supported for multi-hop exposures")
+	}
+	if e.closed() {
+		return net.ErrClosed
+	}
+	if e.relaySet == nil {
+		return errors.New("exposure relay set is not initialized")
+	}
+
+	e.listenerMu.Lock()
+	if !slices.Contains(e.explicitRelays, relayURL) {
+		e.explicitRelays = append(append([]string(nil), e.explicitRelays...), relayURL)
+	}
+	e.listenerMu.Unlock()
+
+	e.relaySet.AllowRelayURL(relayURL)
+	e.relaySet.AddBootstrapRelayURL(relayURL)
+	return e.reconcileRelayListeners(true)
+}
+
+// RemoveRelay detaches a relay from the running exposure and suppresses
+// auto-selection for that relay until it is added again.
+func (e *Exposure) RemoveRelay(relayURL string) error {
+	relayURL, err := utils.NormalizeRelayURL(relayURL)
+	if err != nil {
+		return err
+	}
+	if len(e.multiHop) > 0 || e.multiHopDepth > 1 {
+		return errors.New("runtime relay add/remove is not supported for multi-hop exposures")
+	}
+	if e.closed() {
+		return net.ErrClosed
+	}
+	if e.relaySet == nil {
+		return errors.New("exposure relay set is not initialized")
+	}
+
+	e.listenerMu.Lock()
+	nextRelays := make([]string, 0, len(e.explicitRelays))
+	for _, existing := range e.explicitRelays {
+		if existing != relayURL {
+			nextRelays = append(nextRelays, existing)
+		}
+	}
+	e.explicitRelays = nextRelays
+	e.listenerMu.Unlock()
+
+	e.relaySet.BanRelayURL(relayURL)
+	e.relaySet.RemoveBootstrapRelayURL(relayURL)
+	return e.reconcileRelayListeners(false)
+}
+
 func initialRouteCapacity(listenerRelayURLs []string, multiHopDepth int) int {
 	if multiHopDepth > 1 {
 		return 1
@@ -211,6 +271,15 @@ func (e *Exposure) ActiveRelayURLs() []string {
 	return relayURLs
 }
 
+func (e *Exposure) closed() bool {
+	select {
+	case <-e.done:
+		return true
+	default:
+		return false
+	}
+}
+
 func (e *Exposure) Addr() net.Addr {
 	if e.identity.Address == "" {
 		return exposureAddr("portal:exposure")
@@ -225,6 +294,66 @@ func (a exposureAddr) String() string  { return string(a) }
 
 func (e *Exposure) Identity() types.Identity {
 	return e.identity
+}
+
+type ExposureSnapshot struct {
+	Identity   types.Identity          `json:"identity"`
+	TargetAddr string                  `json:"target_addr,omitempty"`
+	UDPAddr    string                  `json:"udp_addr,omitempty"`
+	Relays     []ExposureRelaySnapshot `json:"relays,omitempty"`
+}
+
+type ExposureRelaySnapshot struct {
+	RelayURL  string    `json:"relay_url"`
+	Hostname  string    `json:"hostname,omitempty"`
+	PublicURL string    `json:"public_url,omitempty"`
+	UDPAddr   string    `json:"udp_addr,omitempty"`
+	TCPAddr   string    `json:"tcp_addr,omitempty"`
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	MultiHop  []string  `json:"multi_hop,omitempty"`
+	Connected bool      `json:"connected"`
+}
+
+func (e *Exposure) Snapshot() ExposureSnapshot {
+	e.listenerMu.RLock()
+	listeners := make([]*listener, 0, len(e.relayListeners))
+	for _, listener := range e.relayListeners {
+		if listener != nil {
+			listeners = append(listeners, listener)
+		}
+	}
+	e.listenerMu.RUnlock()
+
+	relays := make([]ExposureRelaySnapshot, 0, len(listeners))
+	for _, listener := range listeners {
+		relayURL := ""
+		if listener.relayURL != nil {
+			relayURL = listener.relayURL.String()
+		}
+		snap := ExposureRelaySnapshot{
+			RelayURL: relayURL,
+			MultiHop: append([]string(nil), listener.multiHop...),
+		}
+		if lease, ok := listener.leaseSnapshot(); ok {
+			snap.Hostname = lease.hostname
+			snap.PublicURL = listener.publicURLForLease(lease)
+			snap.UDPAddr = lease.udpAddr
+			snap.TCPAddr = lease.tcpAddr
+			snap.ExpiresAt = lease.expiresAt
+			snap.Connected = lease.hostname != ""
+		}
+		relays = append(relays, snap)
+	}
+	slices.SortFunc(relays, func(a, b ExposureRelaySnapshot) int {
+		return strings.Compare(a.RelayURL, b.RelayURL)
+	})
+
+	return ExposureSnapshot{
+		Identity:   e.identity,
+		TargetAddr: e.TargetAddr,
+		UDPAddr:    e.UDPAddr,
+		Relays:     relays,
+	}
 }
 
 func (e *Exposure) AcceptDatagram() (types.DatagramFrame, error) {
@@ -438,23 +567,26 @@ func (e *Exposure) runDiscoveryLoop(ctx context.Context) {
 }
 
 func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
+	multiHop := e.multiHop
 	var listenerRelayURLs []string
-	var multiHop []string
-	if len(e.multiHop) > 0 {
-		listenerRelayURLs = []string{e.multiHop[len(e.multiHop)-1]}
-		multiHop = append([]string(nil), e.multiHop...)
+
+	e.listenerMu.Lock()
+	explicitRelays := e.explicitRelays
+	if len(multiHop) > 0 {
+		listenerRelayURLs = []string{multiHop[len(multiHop)-1]}
 	} else if e.multiHopDepth > 1 {
 		multiHop = e.relaySet.PriorityMultiHop(discovery.ClientState{
 			MultiHopDepth: e.multiHopDepth,
 			LocalAddress:  e.identity.Address,
 		})
 		if len(multiHop) < e.multiHopDepth {
+			e.listenerMu.Unlock()
 			return fmt.Errorf("multi-hop-depth %d requires %d overlay relay candidates, got %d", e.multiHopDepth, e.multiHopDepth, len(multiHop))
 		}
 		listenerRelayURLs = []string{multiHop[len(multiHop)-1]}
 	} else {
 		listenerRelayURLs = e.relaySet.PriorityRelays(discovery.ClientState{
-			ExplicitRelayURLs: append([]string(nil), e.explicitRelays...),
+			ExplicitRelayURLs: explicitRelays,
 			MaxActiveRelays:   e.maxActiveRelays,
 			RequireUDP:        e.udpEnabled,
 			RequireTCP:        e.tcpEnabled,
@@ -462,7 +594,6 @@ func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
 		})
 	}
 
-	e.listenerMu.Lock()
 	staleRelayListeners := make(map[string]*listener)
 	removedRelayURLs := make([]string, 0)
 	for relayURL, listener := range e.relayListeners {
@@ -497,7 +628,7 @@ func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
 	}
 	for _, relayURL := range missingRelayURLs {
 		retryCount := 10
-		if len(multiHop) > 0 || slices.Contains(e.explicitRelays, relayURL) {
+		if len(multiHop) > 0 || slices.Contains(explicitRelays, relayURL) {
 			retryCount = 0
 		}
 		listener, err := newListener(context.Background(), relayURL, listenerConfig{

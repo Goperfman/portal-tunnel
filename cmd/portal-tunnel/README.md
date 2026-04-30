@@ -108,6 +108,53 @@ Flags:
 - `--relays` adds explicit relay URLs, and `--default-relays=false` disables the public registry list for the current listing run.
 - Unlike `portal expose`, `portal list` does not run the relay discovery expansion loop. It only resolves the registry seed list plus explicit `--relays` values.
 
+### `portal agent run [flags]`
+
+Runs Portal as a managed long-lived tunnel agent.
+
+- `portal agent run` reads the platform default config path and installs or updates the OS service.
+- `portal agent run --config config.toml --foreground` runs the agent in the current terminal without installing a service.
+- The service process owns multiple tunnel definitions from one `config.toml`.
+- The local control API is bound to loopback and authenticated with a token stored in the agent state directory.
+- `portal agent status` reads the same local control API and prints tunnel state, relays, public URLs, and recent errors.
+- `portal agent stop` asks the local agent to shut down, then disables/stops the OS service so intentional shutdown is not immediately restarted.
+
+Default paths:
+
+| OS | Config | Default identity |
+|----|--------|------------------|
+| Linux | `/etc/portal-tunnel/agent/config.toml` | `/var/lib/portal-tunnel/agent/identity.json` |
+| macOS | `/Library/Application Support/Portal Tunnel/Agent/config.toml` | `/Library/Application Support/Portal Tunnel/Agent/identity.json` |
+| Windows | `%ProgramData%\Portal Tunnel\Agent\config.toml` | `%ProgramData%\Portal Tunnel\Agent\identity.json` |
+
+Example `config.toml`:
+
+```toml
+[agent]
+control_addr = "127.0.0.1:4018"
+service_name = "portal-agent"
+
+[[tunnels]]
+id = "web"
+name = "myapp"
+target = "127.0.0.1:3000"
+relays = ["https://portal.example.com"]
+discovery = false
+description = "Managed web tunnel"
+tags = ["web"]
+```
+
+Runtime controls:
+
+```text
+portal agent status
+portal agent reload
+portal agent restart web
+portal agent relay-add web https://relay2.example.com
+portal agent relay-remove web https://relay2.example.com
+portal agent stop
+```
+
 Legacy execution compatibility has been removed:
 
 - Use `portal expose ...` explicitly; bare `portal [flags]` is no longer accepted.

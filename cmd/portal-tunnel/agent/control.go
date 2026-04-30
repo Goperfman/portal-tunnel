@@ -1,0 +1,171 @@
+package agent
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/url"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/gosuda/portal-tunnel/v2/types"
+	"github.com/gosuda/portal-tunnel/v2/utils"
+)
+
+const (
+	controlRequestBodyLimit = 8 << 10
+	endpointFilename        = "agent-endpoint.json"
+)
+
+type endpoint struct {
+	ControlAddr string    `json:"control_addr"`
+	Token       string    `json:"token"`
+	PID         int       `json:"pid"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type controlHandler struct {
+	manager  *manager
+	token    string
+	shutdown func()
+	reload   func() error
+}
+
+func (s *controlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")) != s.token {
+		utils.WriteAPIError(w, http.StatusUnauthorized, types.APIErrorCodeUnauthorized, "unauthorized")
+		return
+	}
+
+	switch {
+	case r.URL.Path == types.PathAgentStatus:
+		if !utils.RequireMethod(w, r, http.MethodGet) {
+			return
+		}
+		utils.WriteAPIData(w, http.StatusOK, s.manager.Snapshot())
+	case r.URL.Path == types.PathAgentShutdown:
+		if !utils.RequireMethod(w, r, http.MethodPost) {
+			return
+		}
+		utils.WriteAPIData(w, http.StatusAccepted, map[string]bool{"accepted": true})
+		if s.shutdown != nil {
+			go s.shutdown()
+		}
+	case r.URL.Path == types.PathAgentReload:
+		if !utils.RequireMethod(w, r, http.MethodPost) {
+			return
+		}
+		if s.reload == nil {
+			utils.WriteAPIError(w, http.StatusNotImplemented, types.APIErrorCodeFeatureUnavailable, "reload is not configured")
+			return
+		}
+		if err := s.reload(); err != nil {
+			utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, err.Error())
+			return
+		}
+		utils.WriteAPIData(w, http.StatusAccepted, map[string]bool{"accepted": true})
+	case strings.HasPrefix(r.URL.Path, types.PathAgentTunnelsPrefix):
+		rest := strings.TrimPrefix(r.URL.Path, types.PathAgentTunnelsPrefix)
+		tunnelID, action, ok := strings.Cut(rest, "/")
+		tunnelID, err := url.PathUnescape(tunnelID)
+		if err != nil || strings.TrimSpace(tunnelID) == "" {
+			utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, "invalid tunnel id")
+			return
+		}
+		if !ok {
+			utils.WriteAPIError(w, http.StatusNotFound, types.APIErrorCodeNotFound, "not found")
+			return
+		}
+
+		switch action {
+		case strings.TrimPrefix(types.PathAgentRestartSegment, "/"):
+			if !utils.RequireMethod(w, r, http.MethodPost) {
+				return
+			}
+			if err := s.manager.RestartTunnel(tunnelID); err != nil {
+				utils.WriteAPIError(w, http.StatusNotFound, types.APIErrorCodeNotFound, err.Error())
+				return
+			}
+			utils.WriteAPIData(w, http.StatusAccepted, map[string]bool{"accepted": true})
+		case strings.TrimPrefix(types.PathAgentRelaysSegment, "/"):
+			switch r.Method {
+			case http.MethodPost:
+			case http.MethodDelete:
+			default:
+				utils.MethodNotAllowedError().Write(w)
+				return
+			}
+
+			req, ok := utils.DecodeJSONRequest[types.AgentRelayRequest](w, r, controlRequestBodyLimit)
+			if !ok {
+				return
+			}
+			var err error
+			if r.Method == http.MethodPost {
+				err = s.manager.AddRelay(tunnelID, req.RelayURL)
+			} else {
+				err = s.manager.RemoveRelay(tunnelID, req.RelayURL)
+			}
+			if err != nil {
+				utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, err.Error())
+				return
+			}
+			utils.WriteAPIData(w, http.StatusAccepted, map[string]bool{"accepted": true})
+		default:
+			utils.WriteAPIError(w, http.StatusNotFound, types.APIErrorCodeNotFound, "not found")
+		}
+	default:
+		utils.WriteAPIError(w, http.StatusNotFound, types.APIErrorCodeNotFound, "not found")
+	}
+}
+
+func Status(ctx context.Context, stateDir string) (types.AgentStatusResponse, error) {
+	var status types.AgentStatusResponse
+	err := controlRequest(ctx, stateDir, http.MethodGet, types.PathAgentStatus, nil, &status)
+	return status, err
+}
+
+func Shutdown(ctx context.Context, stateDir string) error {
+	return controlRequest(ctx, stateDir, http.MethodPost, types.PathAgentShutdown, nil, nil)
+}
+
+func Reload(ctx context.Context, stateDir string) error {
+	return controlRequest(ctx, stateDir, http.MethodPost, types.PathAgentReload, nil, nil)
+}
+
+func RestartTunnel(ctx context.Context, stateDir, tunnelID string) error {
+	path := types.PathAgentTunnelsPrefix + url.PathEscape(tunnelID) + types.PathAgentRestartSegment
+	return controlRequest(ctx, stateDir, http.MethodPost, path, nil, nil)
+}
+
+func AddRelay(ctx context.Context, stateDir, tunnelID, relayURL string) error {
+	path := types.PathAgentTunnelsPrefix + url.PathEscape(tunnelID) + types.PathAgentRelaysSegment
+	return controlRequest(ctx, stateDir, http.MethodPost, path, types.AgentRelayRequest{RelayURL: relayURL}, nil)
+}
+
+func RemoveRelay(ctx context.Context, stateDir, tunnelID, relayURL string) error {
+	path := types.PathAgentTunnelsPrefix + url.PathEscape(tunnelID) + types.PathAgentRelaysSegment
+	return controlRequest(ctx, stateDir, http.MethodDelete, path, types.AgentRelayRequest{RelayURL: relayURL}, nil)
+}
+
+func controlRequest(ctx context.Context, stateDir, method, path string, payload any, out any) error {
+	stateDir = strings.TrimSpace(stateDir)
+	if stateDir == "" {
+		return errors.New("state dir is required")
+	}
+	var endpoint endpoint
+	if err := utils.ReadJSONFile(filepath.Join(stateDir, endpointFilename), &endpoint); err != nil {
+		return err
+	}
+	if strings.TrimSpace(endpoint.ControlAddr) == "" || strings.TrimSpace(endpoint.Token) == "" {
+		return errors.New("agent endpoint state is incomplete")
+	}
+	baseURL, err := url.Parse("http://" + endpoint.ControlAddr)
+	if err != nil {
+		return err
+	}
+	headers := http.Header{"Authorization": []string{"Bearer " + endpoint.Token}}
+	return utils.HTTPDoAPIPath(ctx, &http.Client{Timeout: 5 * time.Second}, baseURL, method, path, payload, headers, out)
+}

@@ -143,6 +143,70 @@ The `portal list` subcommand accepts the following flags:
 
 ## Configuration Files
 
+### `config.toml`
+
+`portal agent run` reads the platform default `config.toml` and starts one managed process for all declared tunnels. Relative paths are resolved from the config file directory.
+
+Default paths:
+
+| OS | Config | Default identity |
+|----|--------|------------------|
+| Linux | `/etc/portal-tunnel/agent/config.toml` | `/var/lib/portal-tunnel/agent/identity.json` |
+| macOS | `/Library/Application Support/Portal Tunnel/Agent/config.toml` | `/Library/Application Support/Portal Tunnel/Agent/identity.json` |
+| Windows | `%ProgramData%\Portal Tunnel\Agent\config.toml` | `%ProgramData%\Portal Tunnel\Agent\identity.json` |
+
+```toml
+[agent]
+control_addr = "127.0.0.1:4018"
+service_name = "portal-agent"
+restart_delay = "5s"
+
+[[tunnels]]
+id = "web"
+name = "myapp"
+target = "127.0.0.1:3000"
+relays = ["https://portal.example.com"]
+discovery = false
+description = "Managed web tunnel"
+tags = ["web"]
+
+[[tunnels]]
+id = "frontend-api"
+name = "myapp"
+
+[[tunnels.http_routes]]
+prefix = "/api"
+upstream = "http://127.0.0.1:3001"
+
+[[tunnels.http_routes]]
+prefix = "/"
+upstream = "http://127.0.0.1:5173"
+```
+
+Agent fields:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `state_dir` | Platform default state directory | Stores the local control endpoint token and runtime state |
+| `control_addr` | `127.0.0.1:4018` | Loopback-only local control API address |
+| `service_name` | `portal-agent` | OS service name |
+| `restart_delay` | `5s` | Delay before restarting a failed tunnel |
+
+Tunnel fields mirror `portal expose` flags:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Stable tunnel ID used by `portal agent restart`, `relay-add`, and `relay-remove` |
+| `target` | string | Local TCP target, equivalent to the `portal expose <target>` argument |
+| `http_routes` | table array | HTTP route mappings; cannot be combined with `target` or `udp` |
+| `relays` | string array | Explicit relay API URLs |
+| `discovery` | bool | Include registry and relay discovery expansion |
+| `multi_hop` | string array | Ordered multi-hop relay path |
+| `multi_hop_depth` | int | Automatically select one multi-hop route with this depth |
+| `identity_path` | string | Tunnel identity JSON file path. When omitted, one tunnel uses the platform default `identity.json`; multiple tunnels use `<state-dir>/<tunnel-id>/identity.json` |
+| `udp`, `udp_addr`, `tcp` | bool/string | UDP and raw TCP relay options |
+| `description`, `tags`, `owner`, `thumbnail`, `hide` | mixed | Lease metadata shown by relays |
+
 ### `identity.json`
 
 Stores the secp256k1 identity used to sign tunnel sessions and relay descriptors. `portal expose` treats `--identity-path` as a direct JSON file path. `relay-server` treats `IDENTITY_PATH` as a state directory and stores this file at `IDENTITY_PATH/identity.json`.

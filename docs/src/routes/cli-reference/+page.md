@@ -150,6 +150,33 @@ portal list [flags]
 
 Unlike `portal expose`, `portal list` does not run the relay discovery expansion loop. It only resolves the registry seed list plus explicit `--relays` values.
 
+### `portal agent`
+
+Run a durable local agent that owns multiple tunnels from one config file.
+
+```bash
+portal agent run
+portal agent status
+portal agent stop
+```
+
+`portal agent run` reads the platform default `config.toml`, installs or updates the OS-managed service, and starts it. Use `--foreground` for local debugging without service registration.
+
+**Subcommands:**
+
+| Command | Description |
+|---------|-------------|
+| `portal agent run` | Install/update and start the managed agent service |
+| `portal agent run --config config.toml --foreground` | Run the agent in the current terminal |
+| `portal agent status [--json]` | Print tunnel, relay, public URL, and error state from the local control API |
+| `portal agent reload` | Reload `config.toml` and restart only changed tunnels |
+| `portal agent restart <tunnel-id>` | Restart one managed tunnel |
+| `portal agent relay-add <tunnel-id> <relay-url>` | Attach a relay to one running tunnel |
+| `portal agent relay-remove <tunnel-id> <relay-url>` | Detach a relay from one running tunnel |
+| `portal agent stop` | Gracefully stop the agent and disable/stop the OS service |
+
+The local control API binds only to loopback and uses a token in the agent state directory. See [Configuration Reference](/configuration#configtoml) for the `config.toml` format.
+
 ### `portal update`
 
 Update the CLI binary to the latest release.
