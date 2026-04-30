@@ -3,6 +3,7 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ const (
 	DefaultServiceName = "portal-agent"
 
 	defaultIdentityFilename = "identity.json"
+	defaultTargetAddr       = "127.0.0.1:3000"
 )
 
 type Config struct {
@@ -71,6 +73,31 @@ func LoadConfig(path string) (Config, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return Config{}, err
+	}
+	configDir := filepath.Dir(absPath)
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return Config{}, fmt.Errorf("create agent config directory %q: %w", configDir, err)
+	}
+	if _, err := os.Stat(absPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			data := fmt.Sprintf(`[agent]
+state_dir = %q
+control_addr = %q
+service_name = %q
+restart_delay = "5s"
+
+[[tunnels]]
+id = "default"
+name = "default"
+target = %q
+discovery = true
+`, service.DefaultDataDir(), DefaultControlAddr, DefaultServiceName, defaultTargetAddr)
+			if err := os.WriteFile(absPath, []byte(data), 0o644); err != nil {
+				return Config{}, fmt.Errorf("create default agent config %q: %w", absPath, err)
+			}
+		} else {
+			return Config{}, err
+		}
 	}
 
 	k := koanf.New(".")

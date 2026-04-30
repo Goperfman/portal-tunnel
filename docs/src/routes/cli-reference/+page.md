@@ -156,11 +156,12 @@ Run a durable local agent that owns multiple tunnels from one config file.
 
 ```bash
 portal agent run
-portal agent status
+portal agent dashboard
 portal agent stop
 ```
 
-`portal agent run` reads the platform default `config.toml`, installs or updates the OS-managed service, and starts it. Use `--foreground` for local debugging without service registration.
+`portal agent run` reads or creates the platform default `config.toml`, installs or updates the OS-managed service, starts it, and opens the dashboard when invoked from an interactive terminal. Use `--foreground` for local debugging without service registration.
+Use `portal agent dashboard` to attach to an already running local agent. When using `--foreground`, keep that process running in one terminal and open the dashboard from another.
 
 **Subcommands:**
 
@@ -168,11 +169,7 @@ portal agent stop
 |---------|-------------|
 | `portal agent run` | Install/update and start the managed agent service |
 | `portal agent run --config config.toml --foreground` | Run the agent in the current terminal |
-| `portal agent status [--json]` | Print tunnel, relay, public URL, and error state from the local control API |
-| `portal agent reload` | Reload `config.toml` and restart only changed tunnels |
-| `portal agent restart <tunnel-id>` | Restart one managed tunnel |
-| `portal agent relay-add <tunnel-id> <relay-url>` | Attach a relay to one running tunnel |
-| `portal agent relay-remove <tunnel-id> <relay-url>` | Detach a relay from one running tunnel |
+| `portal agent dashboard` | Open the mouse-capable local TUI for status, discovered relays, logs, reload, restart, relay attach/detach, and multi-hop route changes |
 | `portal agent stop` | Gracefully stop the agent and disable/stop the OS service |
 
 The local control API binds only to loopback and uses a token in the agent state directory. See [Configuration Reference](/configuration#configtoml) for the `config.toml` format.

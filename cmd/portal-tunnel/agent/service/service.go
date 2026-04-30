@@ -23,9 +23,27 @@ func DefaultConfigPath() string {
 	case "windows":
 		return filepath.Join(windowsProgramDataDir(), "Portal Tunnel", "Agent", defaultConfigFilename)
 	case "darwin":
-		return filepath.Join(string(filepath.Separator), "Library", "Application Support", "Portal Tunnel", "Agent", defaultConfigFilename)
+		if os.Geteuid() == 0 {
+			return filepath.Join(string(filepath.Separator), "Library", "Application Support", "Portal Tunnel", "Agent", defaultConfigFilename)
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return filepath.Join(".", "Library", "Application Support", "Portal Tunnel", "Agent", defaultConfigFilename)
+		}
+		return filepath.Join(home, "Library", "Application Support", "Portal Tunnel", "Agent", defaultConfigFilename)
 	default:
-		return filepath.Join(string(filepath.Separator), "etc", "portal-tunnel", "agent", defaultConfigFilename)
+		if os.Geteuid() == 0 {
+			return filepath.Join(string(filepath.Separator), "etc", "portal-tunnel", "agent", defaultConfigFilename)
+		}
+		configHome := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
+		if configHome == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return filepath.Join(".", ".config", "portal-tunnel", "agent", defaultConfigFilename)
+			}
+			configHome = filepath.Join(home, ".config")
+		}
+		return filepath.Join(configHome, "portal-tunnel", "agent", defaultConfigFilename)
 	}
 }
 
@@ -34,9 +52,27 @@ func DefaultDataDir() string {
 	case "windows":
 		return filepath.Join(windowsProgramDataDir(), "Portal Tunnel", "Agent")
 	case "darwin":
-		return filepath.Join(string(filepath.Separator), "Library", "Application Support", "Portal Tunnel", "Agent")
+		if os.Geteuid() == 0 {
+			return filepath.Join(string(filepath.Separator), "Library", "Application Support", "Portal Tunnel", "Agent")
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return filepath.Join(".", "Library", "Application Support", "Portal Tunnel", "Agent")
+		}
+		return filepath.Join(home, "Library", "Application Support", "Portal Tunnel", "Agent")
 	default:
-		return filepath.Join(string(filepath.Separator), "var", "lib", "portal-tunnel", "agent")
+		if os.Geteuid() == 0 {
+			return filepath.Join(string(filepath.Separator), "var", "lib", "portal-tunnel", "agent")
+		}
+		dataHome := strings.TrimSpace(os.Getenv("XDG_DATA_HOME"))
+		if dataHome == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return filepath.Join(".", ".local", "share", "portal-tunnel", "agent")
+			}
+			dataHome = filepath.Join(home, ".local", "share")
+		}
+		return filepath.Join(dataHome, "portal-tunnel", "agent")
 	}
 }
 

@@ -146,13 +146,16 @@ The `portal list` subcommand accepts the following flags:
 ### `config.toml`
 
 `portal agent run` reads the platform default `config.toml` and starts one managed process for all declared tunnels. Relative paths are resolved from the config file directory.
+If the file is missing, `portal agent run` creates a default config and the agent creates the identity file on first tunnel start.
 
 Default paths:
 
 | OS | Config | Default identity |
 |----|--------|------------------|
-| Linux | `/etc/portal-tunnel/agent/config.toml` | `/var/lib/portal-tunnel/agent/identity.json` |
-| macOS | `/Library/Application Support/Portal Tunnel/Agent/config.toml` | `/Library/Application Support/Portal Tunnel/Agent/identity.json` |
+| Linux user | `$XDG_CONFIG_HOME/portal-tunnel/agent/config.toml` or `~/.config/portal-tunnel/agent/config.toml` | `$XDG_DATA_HOME/portal-tunnel/agent/identity.json` or `~/.local/share/portal-tunnel/agent/identity.json` |
+| Linux root | `/etc/portal-tunnel/agent/config.toml` | `/var/lib/portal-tunnel/agent/identity.json` |
+| macOS user | `~/Library/Application Support/Portal Tunnel/Agent/config.toml` | `~/Library/Application Support/Portal Tunnel/Agent/identity.json` |
+| macOS root | `/Library/Application Support/Portal Tunnel/Agent/config.toml` | `/Library/Application Support/Portal Tunnel/Agent/identity.json` |
 | Windows | `%ProgramData%\Portal Tunnel\Agent\config.toml` | `%ProgramData%\Portal Tunnel\Agent\identity.json` |
 
 ```toml
@@ -196,7 +199,7 @@ Tunnel fields mirror `portal expose` flags:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Stable tunnel ID used by `portal agent restart`, `relay-add`, and `relay-remove` |
+| `id` | string | Stable tunnel ID used by the agent dashboard |
 | `target` | string | Local TCP target, equivalent to the `portal expose <target>` argument |
 | `http_routes` | table array | HTTP route mappings; cannot be combined with `target` or `udp` |
 | `relays` | string array | Explicit relay API URLs |

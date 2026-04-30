@@ -200,9 +200,6 @@ func (e *Exposure) AddRelay(relayURL string) error {
 	if err != nil {
 		return err
 	}
-	if len(e.multiHop) > 0 || e.multiHopDepth > 1 {
-		return errors.New("runtime relay add/remove is not supported for multi-hop exposures")
-	}
 	if e.closed() {
 		return net.ErrClosed
 	}
@@ -228,9 +225,6 @@ func (e *Exposure) RemoveRelay(relayURL string) error {
 	if err != nil {
 		return err
 	}
-	if len(e.multiHop) > 0 || e.multiHopDepth > 1 {
-		return errors.New("runtime relay add/remove is not supported for multi-hop exposures")
-	}
 	if e.closed() {
 		return net.ErrClosed
 	}
@@ -246,11 +240,61 @@ func (e *Exposure) RemoveRelay(relayURL string) error {
 		}
 	}
 	e.explicitRelays = nextRelays
+	if slices.Contains(e.multiHop, relayURL) {
+		nextMultiHop := make([]string, 0, len(e.multiHop))
+		for _, existing := range e.multiHop {
+			if existing != relayURL {
+				nextMultiHop = append(nextMultiHop, existing)
+			}
+		}
+		if len(nextMultiHop) < 2 {
+			nextMultiHop = nil
+		}
+		e.multiHop = nextMultiHop
+		e.multiHopDepth = 0
+	}
 	e.listenerMu.Unlock()
 
 	e.relaySet.BanRelayURL(relayURL)
 	e.relaySet.RemoveBootstrapRelayURL(relayURL)
 	return e.reconcileRelayListeners(false)
+}
+
+func (e *Exposure) SetMultiHop(relayURLs []string) error {
+	multiHop := make([]string, 0, len(relayURLs))
+	for _, input := range relayURLs {
+		relayURL, err := utils.NormalizeRelayURL(input)
+		if err != nil {
+			return fmt.Errorf("normalize multi-hop relay url: %w", err)
+		}
+		if slices.Contains(multiHop, relayURL) {
+			return fmt.Errorf("multi-hop relay url repeated: %s", relayURL)
+		}
+		multiHop = append(multiHop, relayURL)
+	}
+	if len(multiHop) == 1 {
+		return errors.New("multi-hop requires at least entry and exit relay urls")
+	}
+	if len(multiHop) > 0 && (e.udpEnabled || e.tcpEnabled) {
+		return errors.New("multi-hop currently supports only the default SNI TLS stream transport")
+	}
+	if e.closed() {
+		return net.ErrClosed
+	}
+	if e.relaySet == nil {
+		return errors.New("exposure relay set is not initialized")
+	}
+
+	for _, relayURL := range multiHop {
+		e.relaySet.AllowRelayURL(relayURL)
+		e.relaySet.AddBootstrapRelayURL(relayURL)
+	}
+
+	e.listenerMu.Lock()
+	e.multiHop = append([]string(nil), multiHop...)
+	e.multiHopDepth = 0
+	e.listenerMu.Unlock()
+	return e.reconcileRelayListeners(len(multiHop) > 0)
 }
 
 func initialRouteCapacity(listenerRelayURLs []string, multiHopDepth int) int {
@@ -296,25 +340,7 @@ func (e *Exposure) Identity() types.Identity {
 	return e.identity
 }
 
-type ExposureSnapshot struct {
-	Identity   types.Identity          `json:"identity"`
-	TargetAddr string                  `json:"target_addr,omitempty"`
-	UDPAddr    string                  `json:"udp_addr,omitempty"`
-	Relays     []ExposureRelaySnapshot `json:"relays,omitempty"`
-}
-
-type ExposureRelaySnapshot struct {
-	RelayURL  string    `json:"relay_url"`
-	Hostname  string    `json:"hostname,omitempty"`
-	PublicURL string    `json:"public_url,omitempty"`
-	UDPAddr   string    `json:"udp_addr,omitempty"`
-	TCPAddr   string    `json:"tcp_addr,omitempty"`
-	ExpiresAt time.Time `json:"expires_at,omitempty"`
-	MultiHop  []string  `json:"multi_hop,omitempty"`
-	Connected bool      `json:"connected"`
-}
-
-func (e *Exposure) Snapshot() ExposureSnapshot {
+func (e *Exposure) Snapshot() types.AgentTunnelStatus {
 	e.listenerMu.RLock()
 	listeners := make([]*listener, 0, len(e.relayListeners))
 	for _, listener := range e.relayListeners {
@@ -322,17 +348,19 @@ func (e *Exposure) Snapshot() ExposureSnapshot {
 			listeners = append(listeners, listener)
 		}
 	}
+	multiHop := append([]string(nil), e.multiHop...)
 	e.listenerMu.RUnlock()
 
-	relays := make([]ExposureRelaySnapshot, 0, len(listeners))
+	relayByURL := make(map[string]types.AgentRelayStatus, len(listeners))
 	for _, listener := range listeners {
 		relayURL := ""
 		if listener.relayURL != nil {
 			relayURL = listener.relayURL.String()
 		}
-		snap := ExposureRelaySnapshot{
+		snap := types.AgentRelayStatus{
 			RelayURL: relayURL,
 			MultiHop: append([]string(nil), listener.multiHop...),
+			Active:   true,
 		}
 		if lease, ok := listener.leaseSnapshot(); ok {
 			snap.Hostname = lease.hostname
@@ -342,16 +370,51 @@ func (e *Exposure) Snapshot() ExposureSnapshot {
 			snap.ExpiresAt = lease.expiresAt
 			snap.Connected = lease.hostname != ""
 		}
+		if relayURL != "" {
+			relayByURL[relayURL] = snap
+		}
+	}
+	if e.relaySet != nil {
+		for _, state := range e.relaySet.AllRelays() {
+			relayURL := strings.TrimSpace(state.Descriptor.APIHTTPSAddr)
+			if relayURL == "" {
+				continue
+			}
+			snap := relayByURL[relayURL]
+			snap.RelayURL = relayURL
+			snap.Address = state.Descriptor.Address
+			snap.DescriptorExpiresAt = state.Descriptor.ExpiresAt
+			snap.LastSeenAt = state.LastSeenAt
+			if !state.DiscoveryRTTAt.IsZero() {
+				snap.DiscoveryRTTMillis = state.DiscoveryRTT.Milliseconds()
+			}
+			snap.Bootstrap = state.Bootstrap
+			snap.Confirmed = state.Confirmed
+			snap.Banned = state.Banned
+			snap.SupportsOverlay = state.Descriptor.SupportsOverlay
+			snap.SupportsUDP = state.Descriptor.SupportsUDP
+			snap.SupportsTCP = state.Descriptor.SupportsTCP
+			relayByURL[relayURL] = snap
+		}
+	}
+	relays := make([]types.AgentRelayStatus, 0, len(relayByURL))
+	for _, snap := range relayByURL {
 		relays = append(relays, snap)
 	}
-	slices.SortFunc(relays, func(a, b ExposureRelaySnapshot) int {
+	slices.SortFunc(relays, func(a, b types.AgentRelayStatus) int {
+		if a.Active != b.Active {
+			if a.Active {
+				return -1
+			}
+			return 1
+		}
 		return strings.Compare(a.RelayURL, b.RelayURL)
 	})
 
-	return ExposureSnapshot{
-		Identity:   e.identity,
+	return types.AgentTunnelStatus{
 		TargetAddr: e.TargetAddr,
 		UDPAddr:    e.UDPAddr,
+		MultiHop:   multiHop,
 		Relays:     relays,
 	}
 }

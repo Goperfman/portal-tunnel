@@ -137,6 +137,17 @@ func (m *manager) RemoveRelay(id, relayURL string) error {
 	return tunnel.RemoveRelay(relayURL)
 }
 
+func (m *manager) SetMultiHop(id string, relayURLs []string) error {
+	id = strings.TrimSpace(id)
+	m.mu.RLock()
+	tunnel := m.tunnels[id]
+	m.mu.RUnlock()
+	if tunnel == nil {
+		return fmt.Errorf("unknown tunnel %q", id)
+	}
+	return tunnel.SetMultiHop(relayURLs)
+}
+
 func (m *manager) Reload(cfg Config) error {
 	m.mu.Lock()
 	rootCtx := m.rootCtx
@@ -350,6 +361,25 @@ func (t *managedTunnel) RemoveRelay(relayURL string) error {
 	return nil
 }
 
+func (t *managedTunnel) SetMultiHop(relayURLs []string) error {
+	t.mu.RLock()
+	id := t.cfg.ID
+	exposure := t.exposure
+	t.mu.RUnlock()
+	if exposure == nil {
+		return fmt.Errorf("tunnel %q is not running", id)
+	}
+	if err := exposure.SetMultiHop(relayURLs); err != nil {
+		return err
+	}
+	message := "multi-hop cleared"
+	if len(relayURLs) > 0 {
+		message = "multi-hop updated"
+	}
+	t.appendLog(types.AgentLogEntry{TunnelID: id, Level: "info", Message: message})
+	return nil
+}
+
 func (t *managedTunnel) Snapshot() types.AgentTunnelStatus {
 	t.mu.RLock()
 	cfg := t.cfg
@@ -378,17 +408,9 @@ func (t *managedTunnel) Snapshot() types.AgentTunnelStatus {
 	snapshot := exposure.Snapshot()
 	status.TargetAddr = snapshot.TargetAddr
 	status.UDPAddr = snapshot.UDPAddr
-	for _, relay := range snapshot.Relays {
-		status.Relays = append(status.Relays, types.AgentRelayStatus{
-			RelayURL:  relay.RelayURL,
-			Hostname:  relay.Hostname,
-			PublicURL: relay.PublicURL,
-			UDPAddr:   relay.UDPAddr,
-			TCPAddr:   relay.TCPAddr,
-			ExpiresAt: relay.ExpiresAt,
-			MultiHop:  append([]string(nil), relay.MultiHop...),
-			Connected: relay.Connected,
-		})
+	status.MultiHop = append([]string(nil), snapshot.MultiHop...)
+	status.Relays = append([]types.AgentRelayStatus(nil), snapshot.Relays...)
+	for _, relay := range status.Relays {
 		if relay.PublicURL != "" {
 			status.PublicURLs = append(status.PublicURLs, relay.PublicURL)
 		}

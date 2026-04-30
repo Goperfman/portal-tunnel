@@ -240,6 +240,16 @@ func (s *RelaySet) AggregateRelays() []RelayState {
 	return policy.SelectAggregate(states)
 }
 
+func (s *RelaySet) AllRelays() []RelayState {
+	s.mu.RLock()
+	states := make([]RelayState, 0, len(s.relays))
+	for _, state := range s.relays {
+		states = append(states, state)
+	}
+	s.mu.RUnlock()
+	return states
+}
+
 func (s *RelaySet) ConfirmedRelays() []RelayState {
 	s.mu.RLock()
 	states := make([]RelayState, 0, len(s.relays))

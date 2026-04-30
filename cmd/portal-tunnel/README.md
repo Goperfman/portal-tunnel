@@ -112,19 +112,23 @@ Flags:
 
 Runs Portal as a managed long-lived tunnel agent.
 
-- `portal agent run` reads the platform default config path and installs or updates the OS service.
+- `portal agent run` reads the platform default config path, installs or updates the OS service, and opens the dashboard when run from an interactive terminal.
 - `portal agent run --config config.toml --foreground` runs the agent in the current terminal without installing a service.
+- `portal agent dashboard` only attaches to a running agent. When using `--foreground`, keep that process running in one terminal and open the dashboard from another.
 - The service process owns multiple tunnel definitions from one `config.toml`.
 - The local control API is bound to loopback and authenticated with a token stored in the agent state directory.
-- `portal agent status` reads the same local control API and prints tunnel state, relays, public URLs, and recent errors.
+- `portal agent dashboard` opens the mouse-capable local TUI for tunnel state, discovered relays, public URLs, logs, reload, restart, relay attach/detach, and multi-hop route changes.
 - `portal agent stop` asks the local agent to shut down, then disables/stops the OS service so intentional shutdown is not immediately restarted.
+- If the config file is missing, `portal agent run` creates a default config and the agent creates the identity file on first tunnel start.
 
 Default paths:
 
 | OS | Config | Default identity |
 |----|--------|------------------|
-| Linux | `/etc/portal-tunnel/agent/config.toml` | `/var/lib/portal-tunnel/agent/identity.json` |
-| macOS | `/Library/Application Support/Portal Tunnel/Agent/config.toml` | `/Library/Application Support/Portal Tunnel/Agent/identity.json` |
+| Linux user | `$XDG_CONFIG_HOME/portal-tunnel/agent/config.toml` or `~/.config/portal-tunnel/agent/config.toml` | `$XDG_DATA_HOME/portal-tunnel/agent/identity.json` or `~/.local/share/portal-tunnel/agent/identity.json` |
+| Linux root | `/etc/portal-tunnel/agent/config.toml` | `/var/lib/portal-tunnel/agent/identity.json` |
+| macOS user | `~/Library/Application Support/Portal Tunnel/Agent/config.toml` | `~/Library/Application Support/Portal Tunnel/Agent/identity.json` |
+| macOS root | `/Library/Application Support/Portal Tunnel/Agent/config.toml` | `/Library/Application Support/Portal Tunnel/Agent/identity.json` |
 | Windows | `%ProgramData%\Portal Tunnel\Agent\config.toml` | `%ProgramData%\Portal Tunnel\Agent\identity.json` |
 
 Example `config.toml`:
@@ -147,11 +151,8 @@ tags = ["web"]
 Runtime controls:
 
 ```text
-portal agent status
-portal agent reload
-portal agent restart web
-portal agent relay-add web https://relay2.example.com
-portal agent relay-remove web https://relay2.example.com
+portal agent run
+portal agent dashboard
 portal agent stop
 ```
 

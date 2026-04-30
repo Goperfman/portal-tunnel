@@ -22,12 +22,10 @@ func Install(ctx context.Context, def Definition) error {
 	if err := os.WriteFile(unitPath, []byte(systemdUnit(def)), 0o644); err != nil {
 		return err
 	}
-	args := systemctlArgs(userMode, "daemon-reload")
-	if err := exec.CommandContext(ctx, "systemctl", args...).Run(); err != nil {
+	if err := runSystemctl(ctx, userMode, "daemon-reload"); err != nil {
 		return err
 	}
-	args = systemctlArgs(userMode, "enable", def.Name+".service")
-	return exec.CommandContext(ctx, "systemctl", args...).Run()
+	return runSystemctl(ctx, userMode, "enable", def.Name+".service")
 }
 
 func Start(ctx context.Context, name string) error {
@@ -35,8 +33,7 @@ func Start(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	args := systemctlArgs(userMode, "start", name+".service")
-	return exec.CommandContext(ctx, "systemctl", args...).Run()
+	return runSystemctl(ctx, userMode, "start", name+".service")
 }
 
 func StopDisable(ctx context.Context, name string) error {
@@ -44,8 +41,7 @@ func StopDisable(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	args := systemctlArgs(userMode, "disable", "--now", name+".service")
-	return exec.CommandContext(ctx, "systemctl", args...).Run()
+	return runSystemctl(ctx, userMode, "disable", "--now", name+".service")
 }
 
 func Run(ctx context.Context, name string, run func(context.Context) error) error {
@@ -68,6 +64,22 @@ func systemctlArgs(userMode bool, args ...string) []string {
 		return append([]string{"--user"}, args...)
 	}
 	return args
+}
+
+func runSystemctl(ctx context.Context, userMode bool, args ...string) error {
+	commandArgs := systemctlArgs(userMode, args...)
+	output, err := exec.CommandContext(ctx, "systemctl", commandArgs...).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	message := "systemctl " + strings.Join(commandArgs, " ")
+	if detail := strings.TrimSpace(string(output)); detail != "" {
+		message += ": " + detail
+	}
+	if userMode {
+		message += "; user systemd must be available for managed agent mode"
+	}
+	return fmt.Errorf("%s: %w", message, err)
 }
 
 func systemdUnit(def Definition) string {
