@@ -19,10 +19,8 @@ const (
 )
 
 type endpoint struct {
-	ControlAddr string    `json:"control_addr"`
-	Token       string    `json:"token"`
-	PID         int       `json:"pid"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ControlAddr string `json:"control_addr"`
+	Token       string `json:"token"`
 }
 
 type controlHandler struct {

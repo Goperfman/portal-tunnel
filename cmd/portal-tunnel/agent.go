@@ -129,7 +129,7 @@ func runAgentForeground(configPath string, cfg agent.Config) error {
 	}()
 
 	readyCtx, readyCancel := context.WithTimeout(ctx, 15*time.Second)
-	status, err := waitAgentStatusOrExit(readyCtx, cfg.Agent.StateDir, errCh)
+	err = waitAgentStatusOrExit(readyCtx, cfg.Agent.StateDir, errCh)
 	readyCancel()
 	if err != nil {
 		stop()
@@ -149,7 +149,7 @@ func runAgentForeground(configPath string, cfg agent.Config) error {
 		return runErr
 	}
 
-	fmt.Fprintf(os.Stdout, "Portal agent stopped after managing %d tunnel(s).\n", len(status.Tunnels))
+	fmt.Fprintln(os.Stdout, "Portal agent stopped.")
 	return nil
 }
 
@@ -238,7 +238,7 @@ func waitAgentStatus(ctx context.Context, stateDir string) (types.AgentStatusRes
 	}
 }
 
-func waitAgentStatusOrExit(ctx context.Context, stateDir string, errCh <-chan error) (types.AgentStatusResponse, error) {
+func waitAgentStatusOrExit(ctx context.Context, stateDir string, errCh <-chan error) error {
 	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
 	var lastErr error
@@ -248,13 +248,13 @@ func waitAgentStatusOrExit(ctx context.Context, stateDir string, errCh <-chan er
 			if err == nil {
 				err = errors.New("portal agent stopped before dashboard was ready")
 			}
-			return types.AgentStatusResponse{}, err
+			return err
 		default:
 		}
 
-		status, err := agent.Status(ctx, stateDir)
+		_, err := agent.Status(ctx, stateDir)
 		if err == nil {
-			return status, nil
+			return nil
 		}
 		lastErr = err
 		select {
@@ -262,9 +262,9 @@ func waitAgentStatusOrExit(ctx context.Context, stateDir string, errCh <-chan er
 			if err == nil {
 				err = errors.New("portal agent stopped before dashboard was ready")
 			}
-			return types.AgentStatusResponse{}, err
+			return err
 		case <-ctx.Done():
-			return types.AgentStatusResponse{}, fmt.Errorf("wait for portal agent status: %w", lastErr)
+			return fmt.Errorf("wait for portal agent status: %w", lastErr)
 		case <-ticker.C:
 		}
 	}

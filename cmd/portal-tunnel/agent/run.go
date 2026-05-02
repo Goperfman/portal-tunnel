@@ -67,8 +67,6 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := utils.WriteJSONFile(filepath.Join(endpointStateDir, endpointFilename), endpoint{
 		ControlAddr: listenAddr,
 		Token:       token,
-		PID:         os.Getpid(),
-		UpdatedAt:   time.Now().UTC(),
 	}, 0o600); err != nil {
 		_ = listener.Close()
 		_ = control.Shutdown(context.Background())

@@ -15,7 +15,10 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/types"
 )
 
-const agentDashboardPollInterval = 2 * time.Second
+const (
+	agentDashboardPollInterval = 2 * time.Second
+	agentDashboardMinListRows  = 10
+)
 
 type agentDashboardMode int
 
@@ -25,40 +28,37 @@ const (
 	agentDashboardAddRelayMode
 )
 
-type agentDashboardClick int
+type agentDashboardAction int
 
 const (
-	agentDashboardClickTunnel agentDashboardClick = iota + 1
-	agentDashboardClickRelay
-	agentDashboardClickAddTunnel
-	agentDashboardClickDeleteTunnel
-	agentDashboardClickAddRelay
-	agentDashboardClickDeleteRelay
-	agentDashboardClickAttachRelay
-	agentDashboardClickSeedRelay
-	agentDashboardClickAddHop
-	agentDashboardClickRemoveHop
-	agentDashboardClickApplyHop
-	agentDashboardClickClearHop
+	agentDashboardActionSelectTunnel agentDashboardAction = iota + 1
+	agentDashboardActionSelectRelay
+	agentDashboardActionAddTunnel
+	agentDashboardActionDeleteTunnel
+	agentDashboardActionAddRelay
+	agentDashboardActionDeleteRelay
+	agentDashboardActionAttachRelay
+	agentDashboardActionDetachRelay
+	agentDashboardActionAddHop
+	agentDashboardActionRemoveHop
+	agentDashboardActionApplyHop
+	agentDashboardActionClearHop
 )
 
 type agentDashboardModel struct {
 	configPath string
 	stateDir   string
 
-	status  types.AgentStatusResponse
-	err     error
-	message string
+	status types.AgentStatusResponse
+	err    error
 
 	width  int
 	height int
 
-	selectedTunnel   int
-	selectedRelay    int
 	selectedTunnelID string
 	selectedRelayURL string
 
-	multiHopDraft []string
+	routeDraft    []string
 	draftTunnelID string
 
 	mode  agentDashboardMode
@@ -71,35 +71,29 @@ type agentDashboardStatusMsg struct {
 }
 
 type agentDashboardActionMsg struct {
-	message string
-	err     error
+	err error
 }
 
-type agentDashboardTickMsg time.Time
+type agentDashboardTickMsg struct{}
 
-type agentDashboardClickRegion struct {
+type agentDashboardRegion struct {
 	x0     int
 	x1     int
 	y      int
-	action agentDashboardClick
-	tunnel int
-	relay  int
-}
-
-type agentDashboardLayout struct {
-	lines   []string
-	regions []agentDashboardClickRegion
+	action agentDashboardAction
+	tunnel string
+	relay  string
 }
 
 type agentDashboardButton struct {
 	label    string
-	action   agentDashboardClick
+	action   agentDashboardAction
 	disabled bool
 }
 
-type agentDashboardPane struct {
+type agentDashboardView struct {
 	lines   []string
-	regions []agentDashboardClickRegion
+	regions []agentDashboardRegion
 }
 
 var (
@@ -110,7 +104,6 @@ var (
 	agentDashboardButtonStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("238"))
 	agentDashboardDisabledStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	agentDashboardErrorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	agentDashboardMessageStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 	agentDashboardOKStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("120"))
 	agentDashboardInputStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("120"))
 )
@@ -151,15 +144,6 @@ func (m agentDashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case agentDashboardActionMsg:
 		m.err = msg.err
-		if msg.err != nil {
-			m.message = msg.err.Error()
-		} else {
-			m.message = msg.message
-			if msg.message == "multi-hop applied" || msg.message == "multi-hop cleared" {
-				m.multiHopDraft = nil
-				m.draftTunnelID = ""
-			}
-		}
 		return m, agentDashboardFetchStatus(m.stateDir)
 	case tea.KeyMsg:
 		return m.updateKeys(msg)
@@ -191,33 +175,29 @@ func (m agentDashboardModel) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "up", "k":
-		m.selectPreviousTunnel()
+		m.selectTunnelOffset(-1)
 	case "down", "j":
-		m.selectNextTunnel()
+		m.selectTunnelOffset(1)
 	case "left", "h":
-		m.selectPreviousRelay()
+		m.selectRelayOffset(-1)
 	case "right", "l":
-		m.selectNextRelay()
+		m.selectRelayOffset(1)
 	case "n":
-		return m.startInput(agentDashboardAddTunnelMode, "New tunnel: ", "name port")
+		return m.runAction(agentDashboardActionAddTunnel, "", "")
 	case "x":
-		return m.deleteSelectedTunnel()
+		return m.runAction(agentDashboardActionDeleteTunnel, "", "")
 	case "a":
-		if _, ok := m.selectedTunnelStatus(); !ok {
-			m.message = "select a tunnel first"
-			return m, nil
-		}
-		return m.startInput(agentDashboardAddRelayMode, "Add relay: ", "https://relay.example.com")
+		return m.runAction(agentDashboardActionAddRelay, "", "")
 	case "d":
-		return m.deleteSelectedRelay()
+		return m.runAction(agentDashboardActionDeleteRelay, "", "")
 	case "m":
-		return m.addSelectedHop()
+		return m.runAction(agentDashboardActionAddHop, "", "")
 	case "u":
-		return m.removeSelectedHop()
+		return m.runAction(agentDashboardActionRemoveHop, "", "")
 	case "p":
-		return m.applyMultiHop()
+		return m.runAction(agentDashboardActionApplyHop, "", "")
 	case "c":
-		return m.clearMultiHop()
+		return m.runAction(agentDashboardActionClearHop, "", "")
 	}
 	return m, nil
 }
@@ -226,10 +206,10 @@ func (m agentDashboardModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) 
 	event := tea.MouseEvent(msg)
 	switch event.Button {
 	case tea.MouseButtonWheelUp:
-		m.selectPreviousTunnel()
+		m.selectTunnelOffset(-1)
 		return m, nil
 	case tea.MouseButtonWheelDown:
-		m.selectNextTunnel()
+		m.selectTunnelOffset(1)
 		return m, nil
 	}
 	if event.Action != tea.MouseActionPress || event.Button != tea.MouseButtonLeft {
@@ -237,46 +217,48 @@ func (m agentDashboardModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) 
 	}
 	for _, region := range m.layout().regions {
 		if event.Y == region.y && event.X >= region.x0 && event.X < region.x1 {
-			return m.applyClick(region)
+			return m.runAction(region.action, region.tunnel, region.relay)
 		}
 	}
 	return m, nil
 }
 
-func (m agentDashboardModel) applyClick(region agentDashboardClickRegion) (tea.Model, tea.Cmd) {
-	switch region.action {
-	case agentDashboardClickTunnel:
-		if region.tunnel >= 0 && region.tunnel < len(m.status.Tunnels) {
-			m.selectTunnel(region.tunnel)
+func (m agentDashboardModel) runAction(action agentDashboardAction, tunnelID, relayURL string) (tea.Model, tea.Cmd) {
+	switch action {
+	case agentDashboardActionSelectTunnel:
+		if tunnelID != "" {
+			m.selectTunnel(tunnelID)
 		}
-	case agentDashboardClickRelay:
-		if tunnel, ok := m.selectedTunnelStatus(); ok && region.relay >= 0 && region.relay < len(tunnel.Relays) {
-			m.selectRelay(region.relay, tunnel.Relays[region.relay].RelayURL)
+	case agentDashboardActionSelectRelay:
+		if tunnelID != "" {
+			m.selectTunnel(tunnelID)
 		}
-	case agentDashboardClickAddTunnel:
+		if relayURL != "" {
+			m.selectRelay(relayURL)
+		}
+	case agentDashboardActionAddTunnel:
 		return m.startInput(agentDashboardAddTunnelMode, "New tunnel: ", "name port")
-	case agentDashboardClickDeleteTunnel:
+	case agentDashboardActionDeleteTunnel:
 		return m.deleteSelectedTunnel()
-	case agentDashboardClickAddRelay:
+	case agentDashboardActionAddRelay:
 		if _, ok := m.selectedTunnelStatus(); !ok {
-			m.message = "select a tunnel first"
 			return m, nil
 		}
 		return m.startInput(agentDashboardAddRelayMode, "Add relay: ", "https://relay.example.com")
-	case agentDashboardClickDeleteRelay:
+	case agentDashboardActionDeleteRelay:
 		return m.deleteSelectedRelay()
-	case agentDashboardClickAttachRelay:
+	case agentDashboardActionAttachRelay:
 		return m.attachSelectedRelay()
-	case agentDashboardClickSeedRelay:
-		return m.seedSelectedRelay()
-	case agentDashboardClickAddHop:
+	case agentDashboardActionDetachRelay:
+		return m.detachSelectedRelay()
+	case agentDashboardActionAddHop:
 		return m.addSelectedHop()
-	case agentDashboardClickRemoveHop:
+	case agentDashboardActionRemoveHop:
 		return m.removeSelectedHop()
-	case agentDashboardClickApplyHop:
-		return m.applyMultiHop()
-	case agentDashboardClickClearHop:
-		return m.clearMultiHop()
+	case agentDashboardActionApplyHop:
+		return m.applyRoute()
+	case agentDashboardActionClearHop:
+		return m.clearRoute()
 	}
 	return m, nil
 }
@@ -295,123 +277,112 @@ func (m agentDashboardModel) View() string {
 	return strings.Join(lines, "\n")
 }
 
-func (m *agentDashboardModel) selectTunnel(index int) {
+func (m agentDashboardModel) selectedTunnelIndex() int {
+	if len(m.status.Tunnels) == 0 {
+		return -1
+	}
+	for i, tunnel := range m.status.Tunnels {
+		if tunnel.ID == m.selectedTunnelID {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m *agentDashboardModel) selectTunnel(id string) {
+	for i, tunnel := range m.status.Tunnels {
+		if tunnel.ID == id {
+			m.selectTunnelIndex(i)
+			return
+		}
+	}
+}
+
+func (m *agentDashboardModel) selectTunnelIndex(index int) {
 	if index < 0 || index >= len(m.status.Tunnels) {
 		return
 	}
-	m.selectedTunnel = index
 	m.selectedTunnelID = m.status.Tunnels[index].ID
-	m.selectedRelay = 0
 	m.selectedRelayURL = ""
 	if len(m.status.Tunnels[index].Relays) > 0 {
 		m.selectedRelayURL = m.status.Tunnels[index].Relays[0].RelayURL
 	}
 }
 
-func (m *agentDashboardModel) selectPreviousTunnel() {
-	if m.selectedTunnel > 0 {
-		m.selectTunnel(m.selectedTunnel - 1)
+func (m *agentDashboardModel) selectTunnelOffset(delta int) {
+	index := m.selectedTunnelIndex()
+	next := index + delta
+	if next >= 0 && next < len(m.status.Tunnels) {
+		m.selectTunnelIndex(next)
 	}
 }
 
-func (m *agentDashboardModel) selectNextTunnel() {
-	if m.selectedTunnel+1 < len(m.status.Tunnels) {
-		m.selectTunnel(m.selectedTunnel + 1)
-	}
-}
-
-func (m *agentDashboardModel) selectRelay(index int, relayURL string) {
-	m.selectedRelay = index
+func (m *agentDashboardModel) selectRelay(relayURL string) {
 	m.selectedRelayURL = relayURL
 }
 
-func (m *agentDashboardModel) selectPreviousRelay() {
+func (m *agentDashboardModel) selectRelayOffset(delta int) {
 	tunnel, ok := m.selectedTunnelStatus()
-	if !ok || len(tunnel.Relays) == 0 || m.selectedRelay <= 0 {
+	index := m.selectedRelayIndex(tunnel)
+	next := index + delta
+	if !ok || next < 0 || next >= len(tunnel.Relays) {
 		return
 	}
-	m.selectRelay(m.selectedRelay-1, tunnel.Relays[m.selectedRelay-1].RelayURL)
-}
-
-func (m *agentDashboardModel) selectNextRelay() {
-	tunnel, ok := m.selectedTunnelStatus()
-	if !ok || m.selectedRelay+1 >= len(tunnel.Relays) {
-		return
-	}
-	m.selectRelay(m.selectedRelay+1, tunnel.Relays[m.selectedRelay+1].RelayURL)
+	m.selectRelay(tunnel.Relays[next].RelayURL)
 }
 
 func (m *agentDashboardModel) clampSelection() {
 	if len(m.status.Tunnels) == 0 {
-		m.selectedTunnel = 0
-		m.selectedRelay = 0
 		m.selectedTunnelID = ""
 		m.selectedRelayURL = ""
 		return
 	}
 
-	if m.selectedTunnelID != "" {
-		found := false
-		for i, tunnel := range m.status.Tunnels {
-			if tunnel.ID == m.selectedTunnelID {
-				m.selectedTunnel = i
-				found = true
-				break
-			}
-		}
-		if !found {
-			m.selectedTunnel = 0
-		}
-	}
-	if m.selectedTunnel < 0 {
-		m.selectedTunnel = 0
-	}
-	if m.selectedTunnel >= len(m.status.Tunnels) {
-		m.selectedTunnel = len(m.status.Tunnels) - 1
-	}
-	m.selectedTunnelID = m.status.Tunnels[m.selectedTunnel].ID
+	tunnelIndex := m.selectedTunnelIndex()
+	m.selectedTunnelID = m.status.Tunnels[tunnelIndex].ID
 
-	relays := m.status.Tunnels[m.selectedTunnel].Relays
+	relays := m.status.Tunnels[tunnelIndex].Relays
 	if len(relays) == 0 {
-		m.selectedRelay = 0
 		m.selectedRelayURL = ""
 		return
 	}
 	if m.selectedRelayURL != "" {
-		found := false
-		for i, relay := range relays {
+		for _, relay := range relays {
 			if relay.RelayURL == m.selectedRelayURL {
-				m.selectedRelay = i
-				found = true
-				break
+				return
 			}
 		}
-		if !found {
-			m.selectedRelay = 0
-		}
 	}
-	if m.selectedRelay < 0 {
-		m.selectedRelay = 0
-	}
-	if m.selectedRelay >= len(relays) {
-		m.selectedRelay = len(relays) - 1
-	}
-	m.selectedRelayURL = relays[m.selectedRelay].RelayURL
+	m.selectedRelayURL = relays[0].RelayURL
 }
 
 func (m agentDashboardModel) selectedTunnelStatus() (types.AgentTunnelStatus, bool) {
-	if m.selectedTunnel < 0 || m.selectedTunnel >= len(m.status.Tunnels) {
+	index := m.selectedTunnelIndex()
+	if index < 0 {
 		return types.AgentTunnelStatus{}, false
 	}
-	return m.status.Tunnels[m.selectedTunnel], true
+	return m.status.Tunnels[index], true
+}
+
+func (m agentDashboardModel) selectedRelayIndex(tunnel types.AgentTunnelStatus) int {
+	if len(tunnel.Relays) == 0 {
+		return -1
+	}
+	for i, relay := range tunnel.Relays {
+		if relay.RelayURL == m.selectedRelayURL {
+			return i
+		}
+	}
+	return 0
 }
 
 func (m agentDashboardModel) selectedRelayStatus() (types.AgentRelayStatus, bool) {
 	tunnel, ok := m.selectedTunnelStatus()
-	if !ok || m.selectedRelay < 0 || m.selectedRelay >= len(tunnel.Relays) {
+	index := m.selectedRelayIndex(tunnel)
+	if !ok || index < 0 {
 		return types.AgentRelayStatus{}, false
 	}
-	return tunnel.Relays[m.selectedRelay], true
+	return tunnel.Relays[index], true
 }
 
 func (m agentDashboardModel) selectedTunnelRelay() (types.AgentTunnelStatus, types.AgentRelayStatus, bool) {
@@ -435,7 +406,6 @@ func (m agentDashboardModel) startInput(mode agentDashboardMode, prompt, placeho
 	m.input.TextStyle = agentDashboardInputStyle
 	m.input.PlaceholderStyle = agentDashboardMutedStyle
 	m.input.Width = max(1, min(88, m.width-8))
-	m.message = ""
 	return m, tea.Batch(m.input.Focus(), textinput.Blink)
 }
 
@@ -443,7 +413,6 @@ func (m *agentDashboardModel) cancelInput() {
 	m.mode = agentDashboardNormalMode
 	m.input.Blur()
 	m.input.Reset()
-	m.message = "input canceled"
 }
 
 func (m agentDashboardModel) submitInput() (tea.Model, tea.Cmd) {
@@ -457,30 +426,31 @@ func (m agentDashboardModel) submitInput() (tea.Model, tea.Cmd) {
 	case agentDashboardAddTunnelMode:
 		fields := strings.Fields(value)
 		if len(fields) < 2 {
-			m.message = "use: name port"
 			return m, nil
 		}
 		name := strings.Join(fields[:len(fields)-1], " ")
 		port := strings.TrimPrefix(fields[len(fields)-1], ":")
 		portNumber, err := strconv.Atoi(port)
 		if err != nil || portNumber < 1 || portNumber > 65535 {
-			m.message = "port must be 1-65535"
 			return m, nil
 		}
-		m.message = "adding tunnel..."
-		return m, agentDashboardAddTunnel(m.stateDir, name, "127.0.0.1:"+port)
+		return m, agentDashboardRun(func(ctx context.Context) error {
+			return AddTunnel(ctx, m.stateDir, types.AgentTunnelRequest{
+				Name:       name,
+				TargetAddr: "127.0.0.1:" + port,
+			})
+		})
 	case agentDashboardAddRelayMode:
 		if value == "" {
-			m.message = "relay url is required"
 			return m, nil
 		}
 		tunnel, ok := m.selectedTunnelStatus()
 		if !ok {
-			m.message = "select a tunnel first"
 			return m, nil
 		}
-		m.message = "adding relay..."
-		return m, agentDashboardAddRelay(m.stateDir, tunnel.ID, value)
+		return m, agentDashboardRun(func(ctx context.Context) error {
+			return AddRelay(ctx, m.stateDir, tunnel.ID, value)
+		})
 	}
 	return m, nil
 }
@@ -488,130 +458,124 @@ func (m agentDashboardModel) submitInput() (tea.Model, tea.Cmd) {
 func (m agentDashboardModel) deleteSelectedTunnel() (tea.Model, tea.Cmd) {
 	tunnel, ok := m.selectedTunnelStatus()
 	if !ok {
-		m.message = "no tunnel selected"
 		return m, nil
 	}
 	if len(m.status.Tunnels) <= 1 {
-		m.message = "cannot delete the last tunnel"
 		return m, nil
 	}
-	m.message = "deleting " + tunnel.ID + "..."
-	return m, agentDashboardDeleteTunnel(m.stateDir, tunnel.ID)
+	return m, agentDashboardRun(func(ctx context.Context) error {
+		return DeleteTunnel(ctx, m.stateDir, tunnel.ID)
+	})
 }
 
 func (m agentDashboardModel) deleteSelectedRelay() (tea.Model, tea.Cmd) {
 	tunnel, relay, ok := m.selectedTunnelRelay()
 	if !ok {
-		m.message = "select a relay first"
 		return m, nil
 	}
-	m.message = "deleting relay..."
-	return m, agentDashboardRemoveRelay(m.stateDir, tunnel.ID, relay.RelayURL)
+	return m, agentDashboardRun(func(ctx context.Context) error {
+		return RemoveRelay(ctx, m.stateDir, tunnel.ID, relay.RelayURL)
+	})
 }
 
 func (m agentDashboardModel) attachSelectedRelay() (tea.Model, tea.Cmd) {
 	tunnel, relay, ok := m.selectedTunnelRelay()
 	if !ok {
-		m.message = "select a relay first"
 		return m, nil
 	}
-	if relayDashboardAttached(relay) {
-		m.message = "relay is already attached"
+	if relayDashboardInUse(relay) {
 		return m, nil
 	}
-	m.message = "attaching relay..."
-	return m, agentDashboardAddRelay(m.stateDir, tunnel.ID, relay.RelayURL)
+	return m, agentDashboardRun(func(ctx context.Context) error {
+		return AddRelay(ctx, m.stateDir, tunnel.ID, relay.RelayURL)
+	})
 }
 
-func (m agentDashboardModel) seedSelectedRelay() (tea.Model, tea.Cmd) {
+func (m agentDashboardModel) detachSelectedRelay() (tea.Model, tea.Cmd) {
 	tunnel, relay, ok := m.selectedTunnelRelay()
 	if !ok {
-		m.message = "select a relay first"
 		return m, nil
 	}
-	m.message = "switching relay to seed..."
-	return m, agentDashboardSeedRelay(m.stateDir, tunnel.ID, relay.RelayURL)
+	return m, agentDashboardRun(func(ctx context.Context) error {
+		return SeedRelay(ctx, m.stateDir, tunnel.ID, relay.RelayURL)
+	})
 }
 
 func (m agentDashboardModel) addSelectedHop() (tea.Model, tea.Cmd) {
 	tunnel, relay, ok := m.selectedTunnelRelay()
 	if !ok {
-		m.message = "select a relay first"
 		return m, nil
 	}
 	if !relay.SupportsOverlay {
-		m.message = "selected relay does not support multi-hop"
 		return m, nil
 	}
-	m.ensureMultiHopDraft(tunnel)
-	if slices.Contains(m.multiHopDraft, relay.RelayURL) {
-		m.message = "relay is already in the route"
+	m.ensureRouteDraft(tunnel)
+	if slices.Contains(m.routeDraft, relay.RelayURL) {
 		return m, nil
 	}
-	m.multiHopDraft = append(m.multiHopDraft, relay.RelayURL)
-	m.message = "route draft updated"
+	m.routeDraft = append(m.routeDraft, relay.RelayURL)
 	return m, nil
 }
 
 func (m agentDashboardModel) removeSelectedHop() (tea.Model, tea.Cmd) {
 	tunnel, relay, ok := m.selectedTunnelRelay()
 	if !ok {
-		m.message = "select a relay first"
 		return m, nil
 	}
-	m.ensureMultiHopDraft(tunnel)
+	m.ensureRouteDraft(tunnel)
 
-	next := m.multiHopDraft[:0]
-	for _, relayURL := range m.multiHopDraft {
+	next := m.routeDraft[:0]
+	for _, relayURL := range m.routeDraft {
 		if relayURL != relay.RelayURL {
 			next = append(next, relayURL)
 		}
 	}
-	if len(next) == len(m.multiHopDraft) {
-		m.message = "selected relay is not in the route"
+	if len(next) == len(m.routeDraft) {
 		return m, nil
 	}
-	m.multiHopDraft = next
-	m.message = "route draft updated"
+	m.routeDraft = next
 	return m, nil
 }
 
-func (m agentDashboardModel) applyMultiHop() (tea.Model, tea.Cmd) {
+func (m agentDashboardModel) applyRoute() (tea.Model, tea.Cmd) {
 	tunnel, ok := m.selectedTunnelStatus()
 	if !ok {
-		m.message = "no tunnel selected"
 		return m, nil
 	}
-	route := m.displayedMultiHop(tunnel)
+	route := m.displayedRoute(tunnel)
 	if len(route) < 2 {
-		m.message = "multi-hop requires at least two relays"
 		return m, nil
 	}
-	m.message = "applying route..."
-	return m, agentDashboardSetMultiHop(m.stateDir, tunnel.ID, route)
+	m.routeDraft = nil
+	m.draftTunnelID = ""
+	return m, agentDashboardRun(func(ctx context.Context) error {
+		return SetMultiHop(ctx, m.stateDir, tunnel.ID, route)
+	})
 }
 
-func (m agentDashboardModel) clearMultiHop() (tea.Model, tea.Cmd) {
+func (m agentDashboardModel) clearRoute() (tea.Model, tea.Cmd) {
 	tunnel, ok := m.selectedTunnelStatus()
 	if !ok {
-		m.message = "no tunnel selected"
 		return m, nil
 	}
-	m.message = "clearing route..."
-	return m, agentDashboardSetMultiHop(m.stateDir, tunnel.ID, nil)
+	m.routeDraft = nil
+	m.draftTunnelID = ""
+	return m, agentDashboardRun(func(ctx context.Context) error {
+		return SetMultiHop(ctx, m.stateDir, tunnel.ID, nil)
+	})
 }
 
-func (m *agentDashboardModel) ensureMultiHopDraft(tunnel types.AgentTunnelStatus) {
+func (m *agentDashboardModel) ensureRouteDraft(tunnel types.AgentTunnelStatus) {
 	if m.draftTunnelID == tunnel.ID {
 		return
 	}
 	m.draftTunnelID = tunnel.ID
-	m.multiHopDraft = append([]string(nil), tunnel.MultiHop...)
+	m.routeDraft = append([]string(nil), tunnel.MultiHop...)
 }
 
-func (m agentDashboardModel) displayedMultiHop(tunnel types.AgentTunnelStatus) []string {
+func (m agentDashboardModel) displayedRoute(tunnel types.AgentTunnelStatus) []string {
 	if m.draftTunnelID == tunnel.ID {
-		return append([]string(nil), m.multiHopDraft...)
+		return append([]string(nil), m.routeDraft...)
 	}
 	return append([]string(nil), tunnel.MultiHop...)
 }
@@ -628,118 +592,40 @@ func agentDashboardFetchStatus(stateDir string) tea.Cmd {
 
 func agentDashboardTick() tea.Cmd {
 	return tea.Tick(agentDashboardPollInterval, func(t time.Time) tea.Msg {
-		return agentDashboardTickMsg(t)
+		return agentDashboardTickMsg{}
 	})
 }
 
-func agentDashboardAddRelay(stateDir, tunnelID, relayURL string) tea.Cmd {
+func agentDashboardRun(run func(context.Context) error) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		err := AddRelay(ctx, stateDir, tunnelID, relayURL)
-		return agentDashboardActionMsg{message: "relay added", err: err}
+		return agentDashboardActionMsg{err: run(ctx)}
 	}
 }
 
-func agentDashboardRemoveRelay(stateDir, tunnelID, relayURL string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		err := RemoveRelay(ctx, stateDir, tunnelID, relayURL)
-		return agentDashboardActionMsg{message: "relay deleted", err: err}
-	}
-}
-
-func agentDashboardSeedRelay(stateDir, tunnelID, relayURL string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		err := SeedRelay(ctx, stateDir, tunnelID, relayURL)
-		return agentDashboardActionMsg{message: "relay switched to seed", err: err}
-	}
-}
-
-func agentDashboardSetMultiHop(stateDir, tunnelID string, relayURLs []string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		err := SetMultiHop(ctx, stateDir, tunnelID, relayURLs)
-		message := "multi-hop applied"
-		if relayURLs == nil {
-			message = "multi-hop cleared"
-		}
-		return agentDashboardActionMsg{message: message, err: err}
-	}
-}
-
-func agentDashboardAddTunnel(stateDir, name, target string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		err := AddTunnel(ctx, stateDir, types.AgentTunnelRequest{
-			Name:       name,
-			TargetAddr: target,
-		})
-		return agentDashboardActionMsg{message: "tunnel added", err: err}
-	}
-}
-
-func agentDashboardDeleteTunnel(stateDir, id string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		err := DeleteTunnel(ctx, stateDir, id)
-		return agentDashboardActionMsg{message: "tunnel deleted", err: err}
-	}
-}
-
-func (m agentDashboardModel) layout() agentDashboardLayout {
+func (m agentDashboardModel) layout() agentDashboardView {
 	width := m.width
 	if width <= 0 {
 		width = 88
 	}
-	leftWidth, rightWidth, bodyHeight := agentDashboardPaneSizes(width, m.height)
+	leftWidth, rightWidth, bodyHeight := agentDashboardSizes(width, m.height)
 
-	var layout agentDashboardLayout
-	layout.addLine(agentDashboardTitleStyle.Render(agentDashboardFit("Portal Agent  "+types.ReleaseVersion, width)))
+	var layout agentDashboardView
+	layout.addStyled(width, agentDashboardTitleStyle, "Portal Agent  "+types.ReleaseVersion)
 	layout.addLine(agentDashboardMutedStyle.Render(strings.Repeat("-", min(width, 120))))
 
 	if m.err != nil && m.status.ControlAddr == "" {
-		layout.addLine(agentDashboardErrorStyle.Render(agentDashboardFit(fmt.Sprintf("Agent unavailable: %v", m.err), width)))
+		layout.addStyled(width, agentDashboardErrorStyle, fmt.Sprintf("Agent unavailable: %v", m.err))
 		layout.addLine("")
-		layout.addLine(agentDashboardFit("Start managed service: portal agent run --config "+m.configPath, width))
-		layout.addLine(agentDashboardFit("No service manager:   portal agent run --foreground --config "+m.configPath, width))
+		layout.addText(width, "Start managed service: portal agent run --config "+m.configPath)
+		layout.addText(width, "No service manager:   portal agent run --foreground --config "+m.configPath)
 		return layout
 	}
 
-	tunnelCount := len(m.status.Tunnels)
-	runningCount := 0
-	errorCount := 0
-	for _, tunnel := range m.status.Tunnels {
-		switch tunnel.State {
-		case tunnelStateRunning:
-			runningCount++
-		case tunnelStateError:
-			errorCount++
-		}
-	}
-	layout.addLine(agentDashboardFit(fmt.Sprintf("Control: %s  Tunnels: %d  Running: %d  Errors: %d",
-		valueOrDash(m.status.ControlAddr),
-		tunnelCount,
-		runningCount,
-		errorCount,
-	), width))
-	if m.message != "" {
-		layout.addLine(agentDashboardMessageStyle.Render(agentDashboardFit("Message: "+m.message, width)))
-	}
 	if m.err != nil {
-		layout.addLine(agentDashboardErrorStyle.Render(agentDashboardFit(fmt.Sprintf("Error: %v", m.err), width)))
+		layout.addStyled(width, agentDashboardErrorStyle, fmt.Sprintf("Error: %v", m.err))
 	}
 	if m.mode != agentDashboardNormalMode {
 		layout.addLine(m.input.View())
@@ -755,18 +641,18 @@ func (m agentDashboardModel) layout() agentDashboardLayout {
 	return layout
 }
 
-func (m agentDashboardModel) renderTunnelsPane(width, height int) agentDashboardPane {
-	var pane agentDashboardPane
-	pane.addLine(agentDashboardSectionStyle.Render(agentDashboardFit("Tunnels", width)))
+func (m agentDashboardModel) renderTunnelsPane(width, height int) agentDashboardView {
+	var pane agentDashboardView
+	pane.addStyled(width, agentDashboardSectionStyle, "Tunnels")
 	pane.addButtons(width,
-		agentDashboardButton{label: "Add Tunnel", action: agentDashboardClickAddTunnel},
-		agentDashboardButton{label: "Delete Tunnel", action: agentDashboardClickDeleteTunnel, disabled: len(m.status.Tunnels) <= 1},
+		agentDashboardButton{label: "Add Tunnel", action: agentDashboardActionAddTunnel},
+		agentDashboardButton{label: "Delete Tunnel", action: agentDashboardActionDeleteTunnel, disabled: len(m.status.Tunnels) <= 1},
 	)
-	pane.addLine(agentDashboardMutedStyle.Render(agentDashboardFit(fmt.Sprintf("%d managed", len(m.status.Tunnels)), width)))
+	pane.addStyled(width, agentDashboardMutedStyle, fmt.Sprintf("%d managed", len(m.status.Tunnels)))
 	pane.addLine(agentDashboardMutedStyle.Render(strings.Repeat("-", width)))
 
 	if len(m.status.Tunnels) == 0 {
-		pane.addLine(agentDashboardMutedStyle.Render(agentDashboardFit("no managed tunnels", width)))
+		pane.addStyled(width, agentDashboardMutedStyle, "no managed tunnels")
 		pane.clip(height)
 		return pane
 	}
@@ -778,19 +664,20 @@ func (m agentDashboardModel) renderTunnelsPane(width, height int) agentDashboard
 			agentDashboardSectionStyle.Render(agentDashboardFit("Selected Tunnel", width)),
 			agentDashboardFit("State: "+valueOrDash(tunnel.State), width),
 			agentDashboardFit("Target: "+valueOrDash(tunnel.TargetAddr), width),
-			agentDashboardFit("Public: "+firstOrDash(tunnel.PublicURLs), width),
+			agentDashboardFit("Public: "+tunnelPublicURL(tunnel), width),
 		)
 		if strings.TrimSpace(tunnel.LastError) != "" {
 			detailLines = append(detailLines, agentDashboardErrorStyle.Render(agentDashboardFit("Error: "+tunnel.LastError, width)))
 		}
 	}
-	listLimit := height - len(pane.lines) - len(detailLines)
-	if listLimit < 3 {
-		listLimit = height - len(pane.lines)
+	listLimit := max(agentDashboardMinListRows, height-len(pane.lines)-len(detailLines))
+	selectedTunnelID := m.selectedTunnelID
+	if selectedTunnelID == "" && len(m.status.Tunnels) > 0 {
+		selectedTunnelID = m.status.Tunnels[0].ID
 	}
 	for i, tunnel := range m.status.Tunnels {
 		if i >= listLimit || len(pane.lines) >= height {
-			pane.addLine(agentDashboardMutedStyle.Render(agentDashboardFit(fmt.Sprintf("+ %d more", len(m.status.Tunnels)-i), width)))
+			pane.addStyled(width, agentDashboardMutedStyle, fmt.Sprintf("+ %d more", len(m.status.Tunnels)-i))
 			break
 		}
 		name := tunnel.ID
@@ -799,7 +686,7 @@ func (m agentDashboardModel) renderTunnelsPane(width, height int) agentDashboard
 		}
 		nameWidth := max(8, width-11)
 		line := fmt.Sprintf("%-10s %s", truncateDashboardValue(tunnel.State, 10), agentDashboardFit(name, nameWidth))
-		pane.addClickRow(line, width, agentDashboardTunnelStyle(i == m.selectedTunnel, tunnel.State), agentDashboardClickTunnel, i, -1)
+		pane.addClickRow(line, width, agentDashboardTunnelStyle(tunnel.ID == selectedTunnelID, tunnel.State), agentDashboardActionSelectTunnel, tunnel.ID, "")
 	}
 	for _, line := range detailLines {
 		if len(pane.lines) >= height {
@@ -811,104 +698,116 @@ func (m agentDashboardModel) renderTunnelsPane(width, height int) agentDashboard
 	return pane
 }
 
-func (m agentDashboardModel) renderTunnelPane(width, height int) agentDashboardPane {
-	var pane agentDashboardPane
+func (m agentDashboardModel) renderTunnelPane(width, height int) agentDashboardView {
+	var pane agentDashboardView
 	tunnel, ok := m.selectedTunnelStatus()
 	if !ok {
-		pane.addLine(agentDashboardSectionStyle.Render(agentDashboardFit("Relays", width)))
-		pane.addLine(agentDashboardMutedStyle.Render(agentDashboardFit("select a managed tunnel", width)))
+		pane.addStyled(width, agentDashboardSectionStyle, "Relays")
+		pane.addStyled(width, agentDashboardMutedStyle, "select a managed tunnel")
 		pane.clip(height)
 		return pane
 	}
 
-	relayLimit := max(4, (height-len(pane.lines)-6)/2)
+	relayLimit := max(agentDashboardMinListRows, (height-len(pane.lines)-6)/2)
 	m.renderRelaysSection(&pane, width, relayLimit, tunnel)
 	pane.addLine("")
-	m.renderMultiHopSection(&pane, width, height, tunnel)
+	m.renderRouteSection(&pane, width, height, tunnel)
 	pane.clip(height)
 	return pane
 }
 
-func (m agentDashboardModel) renderRelaysSection(pane *agentDashboardPane, width, maxRows int, tunnel types.AgentTunnelStatus) {
+func (m agentDashboardModel) renderRelaysSection(pane *agentDashboardView, width, maxRows int, tunnel types.AgentTunnelStatus) {
 	relay, hasRelay := m.selectedRelayStatus()
-	attached := hasRelay && relayDashboardAttached(relay)
-	attachDisabled := !hasRelay || attached || relay.Banned
-	seedDisabled := !hasRelay || relay.Banned || (!attached && relay.Bootstrap)
+	inUse := hasRelay && relayDashboardInUse(relay)
+	attachDisabled := !hasRelay || inUse || relay.Connecting || relay.Banned
+	detachDisabled := !hasRelay || relay.Banned || (!inUse && !relay.Connecting && relay.Bootstrap)
 	deleteDisabled := !hasRelay
 
-	pane.addLine(agentDashboardSectionStyle.Render(agentDashboardFit("Relays", width)))
+	pane.addStyled(width, agentDashboardSectionStyle, "Relays")
 	pane.addButtons(width,
-		agentDashboardButton{label: "Attach", action: agentDashboardClickAttachRelay, disabled: attachDisabled},
-		agentDashboardButton{label: "Seed", action: agentDashboardClickSeedRelay, disabled: seedDisabled},
-		agentDashboardButton{label: "Add URL", action: agentDashboardClickAddRelay},
-		agentDashboardButton{label: "Remove", action: agentDashboardClickDeleteRelay, disabled: deleteDisabled},
+		agentDashboardButton{label: "Attach", action: agentDashboardActionAttachRelay, disabled: attachDisabled},
+		agentDashboardButton{label: "Detach", action: agentDashboardActionDetachRelay, disabled: detachDisabled},
+		agentDashboardButton{label: "Add URL", action: agentDashboardActionAddRelay},
+		agentDashboardButton{label: "Remove", action: agentDashboardActionDeleteRelay, disabled: deleteDisabled},
 	)
 	if hasRelay {
-		pane.addLine(agentDashboardMutedStyle.Render(agentDashboardFit("Selected: "+relay.RelayURL, width)))
+		pane.addStyled(width, agentDashboardMutedStyle, "Selected: "+relay.RelayURL)
 	}
-	pane.addLine(agentDashboardMutedStyle.Render(agentDashboardRelayRow(width, "STATE", "ROLE", "CAPS", "RTT", "RELAY")))
+	pane.addLine(agentDashboardMutedStyle.Render(agentDashboardRelayRow(width, "STATE", "ROLE", "FEATURES", "RELAY")))
 
 	if len(tunnel.Relays) == 0 {
-		pane.addLine(agentDashboardMutedStyle.Render(agentDashboardFit("no relays", width)))
+		pane.addStyled(width, agentDashboardMutedStyle, "no relays")
 		return
+	}
+	selectedRelayURL := m.selectedRelayURL
+	if selectedRelayURL == "" && len(tunnel.Relays) > 0 {
+		selectedRelayURL = tunnel.Relays[0].RelayURL
 	}
 	for i, relay := range tunnel.Relays {
 		if i >= maxRows {
-			pane.addLine(agentDashboardMutedStyle.Render(agentDashboardFit(fmt.Sprintf("+ %d more", len(tunnel.Relays)-i), width)))
+			pane.addStyled(width, agentDashboardMutedStyle, fmt.Sprintf("+ %d more", len(tunnel.Relays)-i))
 			break
 		}
 		line := agentDashboardRelayRow(width,
 			relayDashboardState(relay),
 			relayDashboardRole(relay),
-			relayDashboardCaps(relay),
-			relayDashboardRTT(relay),
+			relayDashboardFeatures(relay),
 			relay.RelayURL,
 		)
-		pane.addClickRow(line, width, agentDashboardRelayStyle(i == m.selectedRelay, relay), agentDashboardClickRelay, m.selectedTunnel, i)
+		pane.addClickRow(line, width, agentDashboardRelayStyle(relay.RelayURL == selectedRelayURL, relay), agentDashboardActionSelectRelay, tunnel.ID, relay.RelayURL)
 	}
 }
 
-func (m agentDashboardModel) renderMultiHopSection(pane *agentDashboardPane, width, height int, tunnel types.AgentTunnelStatus) {
-	route := m.displayedMultiHop(tunnel)
+func (m agentDashboardModel) renderRouteSection(pane *agentDashboardView, width, height int, tunnel types.AgentTunnelStatus) {
+	route := m.displayedRoute(tunnel)
 	relay, hasRelay := m.selectedRelayStatus()
 	inRoute := hasRelay && slices.Contains(route, relay.RelayURL)
 	canAdd := hasRelay && relay.SupportsOverlay && !inRoute
 
-	pane.addLine(agentDashboardSectionStyle.Render(agentDashboardFit("Multi-hop", width)))
+	pane.addStyled(width, agentDashboardSectionStyle, "Route")
 	pane.addButtons(width,
-		agentDashboardButton{label: "Add Hop", action: agentDashboardClickAddHop, disabled: !canAdd},
-		agentDashboardButton{label: "Remove Hop", action: agentDashboardClickRemoveHop, disabled: !inRoute},
-		agentDashboardButton{label: "Apply", action: agentDashboardClickApplyHop, disabled: len(route) < 2},
-		agentDashboardButton{label: "Clear", action: agentDashboardClickClearHop, disabled: len(route) == 0},
+		agentDashboardButton{label: "Add Hop", action: agentDashboardActionAddHop, disabled: !canAdd},
+		agentDashboardButton{label: "Remove Hop", action: agentDashboardActionRemoveHop, disabled: !inRoute},
+		agentDashboardButton{label: "Apply", action: agentDashboardActionApplyHop, disabled: len(route) < 2},
+		agentDashboardButton{label: "Clear", action: agentDashboardActionClearHop, disabled: len(route) == 0},
 	)
 
-	routeLabel := "Route: none"
-	if len(route) > 0 {
-		routeLabel = "Route: " + strings.Join(route, " -> ")
-		if m.draftTunnelID == tunnel.ID {
-			routeLabel += " (draft)"
-		}
+	routeLabel := "Route:"
+	if m.draftTunnelID == tunnel.ID {
+		routeLabel += " draft"
 	}
-	for _, line := range agentDashboardWrap(routeLabel, width) {
+	if len(route) == 0 {
+		routeLabel = "Route: none"
+	}
+	pane.addText(width, routeLabel)
+	for i, relayURL := range route {
 		if len(pane.lines) >= height {
 			return
 		}
-		pane.addLine(agentDashboardFit(line, width))
+		pane.addText(width, fmt.Sprintf("%d. %s", i+1, relayURL))
 	}
 }
 
-func (l *agentDashboardLayout) addLine(line string) {
-	l.lines = append(l.lines, line)
+func (v *agentDashboardView) addLine(line string) {
+	v.lines = append(v.lines, line)
 }
 
-func (l *agentDashboardLayout) addButtons(width int, buttons ...agentDashboardButton) {
-	lines, regions := agentDashboardRenderButtons(width, len(l.lines), 0, buttons...)
-	l.lines = append(l.lines, lines...)
-	l.regions = append(l.regions, regions...)
+func (v *agentDashboardView) addText(width int, text string) {
+	v.addLine(agentDashboardFit(text, width))
 }
 
-func (l *agentDashboardLayout) addPanes(left, right agentDashboardPane, leftWidth, gutter int) {
-	startY := len(l.lines)
+func (v *agentDashboardView) addStyled(width int, style lipgloss.Style, text string) {
+	v.addLine(style.Render(agentDashboardFit(text, width)))
+}
+
+func (v *agentDashboardView) addButtons(width int, buttons ...agentDashboardButton) {
+	lines, regions := agentDashboardRenderButtons(width, len(v.lines), 0, buttons...)
+	v.lines = append(v.lines, lines...)
+	v.regions = append(v.regions, regions...)
+}
+
+func (v *agentDashboardView) addPanes(left, right agentDashboardView, leftWidth, gutter int) {
+	startY := len(v.lines)
 	height := max(len(left.lines), len(right.lines))
 	for i := 0; i < height; i++ {
 		leftLine := ""
@@ -919,35 +818,25 @@ func (l *agentDashboardLayout) addPanes(left, right agentDashboardPane, leftWidt
 		if i < len(right.lines) {
 			rightLine = right.lines[i]
 		}
-		l.lines = append(l.lines, agentDashboardPadStyled(leftLine, leftWidth)+strings.Repeat(" ", gutter)+rightLine)
+		v.lines = append(v.lines, agentDashboardPadStyled(leftLine, leftWidth)+strings.Repeat(" ", gutter)+rightLine)
 	}
 	for _, region := range left.regions {
 		region.y += startY
-		l.regions = append(l.regions, region)
+		v.regions = append(v.regions, region)
 	}
 	for _, region := range right.regions {
 		region.y += startY
 		region.x0 += leftWidth + gutter
 		region.x1 += leftWidth + gutter
-		l.regions = append(l.regions, region)
+		v.regions = append(v.regions, region)
 	}
 }
 
-func (p *agentDashboardPane) addLine(line string) {
-	p.lines = append(p.lines, line)
-}
-
-func (p *agentDashboardPane) addButtons(width int, buttons ...agentDashboardButton) {
-	lines, regions := agentDashboardRenderButtons(width, len(p.lines), 0, buttons...)
-	p.lines = append(p.lines, lines...)
-	p.regions = append(p.regions, regions...)
-}
-
-func (p *agentDashboardPane) addClickRow(line string, width int, style lipgloss.Style, action agentDashboardClick, tunnel, relay int) {
+func (v *agentDashboardView) addClickRow(line string, width int, style lipgloss.Style, action agentDashboardAction, tunnel, relay string) {
 	plain := agentDashboardFit(line, width)
-	y := len(p.lines)
-	p.lines = append(p.lines, style.Width(width).Render(plain))
-	p.regions = append(p.regions, agentDashboardClickRegion{
+	y := len(v.lines)
+	v.lines = append(v.lines, style.Width(width).Render(plain))
+	v.regions = append(v.regions, agentDashboardRegion{
 		x0:     0,
 		x1:     width,
 		y:      y,
@@ -957,27 +846,27 @@ func (p *agentDashboardPane) addClickRow(line string, width int, style lipgloss.
 	})
 }
 
-func (p *agentDashboardPane) clip(height int) {
-	if height <= 0 || len(p.lines) <= height {
+func (v *agentDashboardView) clip(height int) {
+	if height <= 0 || len(v.lines) <= height {
 		return
 	}
-	p.lines = p.lines[:height]
-	regions := p.regions[:0]
-	for _, region := range p.regions {
+	v.lines = v.lines[:height]
+	regions := v.regions[:0]
+	for _, region := range v.regions {
 		if region.y < height {
 			regions = append(regions, region)
 		}
 	}
-	p.regions = regions
+	v.regions = regions
 }
 
-func agentDashboardRenderButtons(width, y, x int, buttons ...agentDashboardButton) ([]string, []agentDashboardClickRegion) {
+func agentDashboardRenderButtons(width, y, x int, buttons ...agentDashboardButton) ([]string, []agentDashboardRegion) {
 	if width <= 0 {
 		width = 1
 	}
 	var line strings.Builder
 	var lines []string
-	var regions []agentDashboardClickRegion
+	var regions []agentDashboardRegion
 	lineY := y
 	lineX := x
 	for i, button := range buttons {
@@ -1005,7 +894,7 @@ func agentDashboardRenderButtons(width, y, x int, buttons ...agentDashboardButto
 		if button.disabled {
 			style = agentDashboardDisabledStyle
 		} else {
-			regions = append(regions, agentDashboardClickRegion{
+			regions = append(regions, agentDashboardRegion{
 				x0:     lineX,
 				x1:     min(lineX+plainWidth, width),
 				y:      lineY,
@@ -1021,7 +910,7 @@ func agentDashboardRenderButtons(width, y, x int, buttons ...agentDashboardButto
 	return lines, regions
 }
 
-func agentDashboardPaneSizes(width, height int) (int, int, int) {
+func agentDashboardSizes(width, height int) (int, int, int) {
 	if width <= 0 {
 		width = 104
 	}
@@ -1064,7 +953,7 @@ func agentDashboardTunnelStyle(selected bool, state string) lipgloss.Style {
 	case "error":
 		return agentDashboardErrorStyle
 	case "starting":
-		return agentDashboardMessageStyle
+		return agentDashboardMutedStyle
 	default:
 		return lipgloss.NewStyle()
 	}
@@ -1077,7 +966,7 @@ func agentDashboardRelayStyle(selected bool, relay types.AgentRelayStatus) lipgl
 	if relay.Banned {
 		return agentDashboardErrorStyle
 	}
-	if relay.Connected || relay.Active {
+	if relayDashboardInUse(relay) {
 		return agentDashboardOKStyle
 	}
 	return agentDashboardMutedStyle
@@ -1086,17 +975,15 @@ func agentDashboardRelayStyle(selected bool, relay types.AgentRelayStatus) lipgl
 func relayDashboardState(relay types.AgentRelayStatus) string {
 	switch {
 	case relay.Banned:
-		return "removed"
-	case relay.Connected:
-		return "up"
-	case relay.Active:
-		return "active"
-	case relay.Confirmed:
-		return "known"
+		return "blocked"
+	case relay.PublicURL != "":
+		return "ready"
+	case relay.Connecting:
+		return "trying"
 	case relay.Bootstrap:
 		return "seed"
 	default:
-		return "seen"
+		return "known"
 	}
 }
 
@@ -1104,46 +991,39 @@ func relayDashboardRole(relay types.AgentRelayStatus) string {
 	switch {
 	case relay.Banned:
 		return "blocked"
-	case relay.Active || relay.Connected:
+	case relayDashboardInUse(relay):
 		return "attached"
+	case relay.Connecting:
+		return "trying"
 	case relay.Bootstrap:
-		return "bootstrap"
-	case relay.Confirmed:
-		return "known"
+		return "seed"
 	default:
-		return "discovered"
+		return "candidate"
 	}
 }
 
-func relayDashboardAttached(relay types.AgentRelayStatus) bool {
-	return relay.Active || relay.Connected
+func relayDashboardInUse(relay types.AgentRelayStatus) bool {
+	return relay.PublicURL != ""
 }
 
-func relayDashboardCaps(relay types.AgentRelayStatus) string {
-	var caps []string
+func relayDashboardFeatures(relay types.AgentRelayStatus) string {
+	var features []string
 	if relay.SupportsOverlay {
-		caps = append(caps, "hop")
+		features = append(features, "hop")
 	}
 	if relay.SupportsUDP {
-		caps = append(caps, "udp")
+		features = append(features, "udp")
 	}
 	if relay.SupportsTCP {
-		caps = append(caps, "tcp")
+		features = append(features, "tcp")
 	}
-	if len(caps) == 0 {
+	if len(features) == 0 {
 		return "-"
 	}
-	return strings.Join(caps, "/")
+	return strings.Join(features, ",")
 }
 
-func relayDashboardRTT(relay types.AgentRelayStatus) string {
-	if relay.DiscoveryRTTMillis <= 0 {
-		return "-"
-	}
-	return fmt.Sprintf("%dms", relay.DiscoveryRTTMillis)
-}
-
-func agentDashboardRelayRow(width int, state, role, caps, rtt, relayURL string) string {
+func agentDashboardRelayRow(width int, state, role, features, relayURL string) string {
 	if width < 28 {
 		return agentDashboardFit(state+" "+relayURL, width)
 	}
@@ -1151,34 +1031,29 @@ func agentDashboardRelayRow(width int, state, role, caps, rtt, relayURL string) 
 		stateW := 7
 		return agentDashboardCell(state, stateW) + " " + agentDashboardFit(relayURL, width-stateW-1)
 	}
-	if width < 64 {
-		stateW := 7
-		roleW := 9
-		rttW := 6
-		relayW := max(1, width-stateW-roleW-rttW-3)
-		return agentDashboardCell(state, stateW) + " " +
-			agentDashboardCell(role, roleW) + " " +
-			agentDashboardCell(rtt, rttW) + " " +
-			agentDashboardFit(relayURL, relayW)
-	}
-
 	stateW := 8
 	roleW := 9
-	capsW := 8
-	rttW := 6
-	relayW := max(1, width-stateW-roleW-capsW-rttW-4)
+	if width < 68 {
+		relayW := max(1, width-stateW-roleW-2)
+		return agentDashboardCell(state, stateW) + " " +
+			agentDashboardCell(role, roleW) + " " +
+			agentDashboardFit(relayURL, relayW)
+	}
+	featuresW := 11
+	relayW := max(1, width-stateW-roleW-featuresW-3)
 	return agentDashboardCell(state, stateW) + " " +
 		agentDashboardCell(role, roleW) + " " +
-		agentDashboardCell(caps, capsW) + " " +
-		agentDashboardCell(rtt, rttW) + " " +
+		agentDashboardCell(features, featuresW) + " " +
 		agentDashboardFit(relayURL, relayW)
 }
 
-func firstOrDash(values []string) string {
-	if len(values) == 0 {
-		return "-"
+func tunnelPublicURL(tunnel types.AgentTunnelStatus) string {
+	for _, relay := range tunnel.Relays {
+		if strings.TrimSpace(relay.PublicURL) != "" {
+			return relay.PublicURL
+		}
 	}
-	return valueOrDash(values[0])
+	return "-"
 }
 
 func valueOrDash(value string) string {
@@ -1227,24 +1102,6 @@ func agentDashboardCell(value string, width int) string {
 		return value
 	}
 	return value + strings.Repeat(" ", width-lipgloss.Width(value))
-}
-
-func agentDashboardWrap(value string, width int) []string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil
-	}
-	var lines []string
-	remaining := value
-	for len([]rune(remaining)) > width && width > 1 {
-		lines = append(lines, agentDashboardFit(remaining, width))
-		runes := []rune(remaining)
-		remaining = string(runes[min(width-1, len(runes)):])
-	}
-	if strings.TrimSpace(remaining) != "" {
-		lines = append(lines, remaining)
-	}
-	return lines
 }
 
 func agentDashboardPadStyled(value string, width int) string {

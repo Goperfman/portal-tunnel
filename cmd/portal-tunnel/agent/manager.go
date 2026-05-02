@@ -17,13 +17,6 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/types"
 )
 
-const (
-	tunnelStateStarting = "starting"
-	tunnelStateRunning  = "running"
-	tunnelStateStopped  = "stopped"
-	tunnelStateError    = "error"
-)
-
 type manager struct {
 	controlAddr string
 
@@ -101,47 +94,53 @@ func (m *manager) Stop(ctx context.Context) error {
 }
 
 func (m *manager) AddRelay(id, relayURL string) error {
-	id = strings.TrimSpace(id)
-	m.mu.RLock()
-	tunnel := m.tunnels[id]
-	m.mu.RUnlock()
-	if tunnel == nil {
-		return fmt.Errorf("unknown tunnel %q", id)
+	exposure, err := m.runningExposure(id)
+	if err != nil {
+		return err
 	}
-	return tunnel.AddRelay(relayURL)
+	return exposure.AddRelay(relayURL)
 }
 
 func (m *manager) RemoveRelay(id, relayURL string) error {
-	id = strings.TrimSpace(id)
-	m.mu.RLock()
-	tunnel := m.tunnels[id]
-	m.mu.RUnlock()
-	if tunnel == nil {
-		return fmt.Errorf("unknown tunnel %q", id)
+	exposure, err := m.runningExposure(id)
+	if err != nil {
+		return err
 	}
-	return tunnel.RemoveRelay(relayURL)
+	return exposure.RemoveRelay(relayURL)
 }
 
 func (m *manager) SeedRelay(id, relayURL string) error {
-	id = strings.TrimSpace(id)
-	m.mu.RLock()
-	tunnel := m.tunnels[id]
-	m.mu.RUnlock()
-	if tunnel == nil {
-		return fmt.Errorf("unknown tunnel %q", id)
+	exposure, err := m.runningExposure(id)
+	if err != nil {
+		return err
 	}
-	return tunnel.SeedRelay(relayURL)
+	return exposure.SeedRelay(relayURL)
 }
 
 func (m *manager) SetMultiHop(id string, relayURLs []string) error {
+	exposure, err := m.runningExposure(id)
+	if err != nil {
+		return err
+	}
+	return exposure.SetMultiHop(relayURLs)
+}
+
+func (m *manager) runningExposure(id string) (*sdk.Exposure, error) {
 	id = strings.TrimSpace(id)
 	m.mu.RLock()
 	tunnel := m.tunnels[id]
 	m.mu.RUnlock()
 	if tunnel == nil {
-		return fmt.Errorf("unknown tunnel %q", id)
+		return nil, fmt.Errorf("unknown tunnel %q", id)
 	}
-	return tunnel.SetMultiHop(relayURLs)
+	tunnel.mu.RLock()
+	tunnelID := tunnel.cfg.ID
+	exposure := tunnel.exposure
+	tunnel.mu.RUnlock()
+	if exposure == nil {
+		return nil, fmt.Errorf("tunnel %q is not running", tunnelID)
+	}
+	return exposure, nil
 }
 
 func (m *manager) AddTunnel(req types.AgentTunnelRequest) error {
@@ -355,20 +354,14 @@ type managedTunnel struct {
 	mu  sync.RWMutex
 	cfg TunnelConfig
 
-	stopCancel context.CancelFunc
-	runCancel  context.CancelFunc
-	done       chan struct{}
-	exposure   *sdk.Exposure
-
-	state     string
+	cancel    context.CancelFunc
+	done      chan struct{}
+	exposure  *sdk.Exposure
 	lastError string
 }
 
 func newTunnel(cfg TunnelConfig) *managedTunnel {
-	return &managedTunnel{
-		cfg:   cfg,
-		state: tunnelStateStopped,
-	}
+	return &managedTunnel{cfg: cfg}
 }
 
 func (t *managedTunnel) Start(parent context.Context) {
@@ -378,7 +371,7 @@ func (t *managedTunnel) Start(parent context.Context) {
 		return
 	}
 	ctx, cancel := context.WithCancel(parent)
-	t.stopCancel = cancel
+	t.cancel = cancel
 	t.done = make(chan struct{})
 	done := t.done
 	t.mu.Unlock()
@@ -391,17 +384,12 @@ func (t *managedTunnel) Start(parent context.Context) {
 
 func (t *managedTunnel) Stop(ctx context.Context) error {
 	t.mu.Lock()
-	stopCancel := t.stopCancel
-	runCancel := t.runCancel
+	cancel := t.cancel
 	done := t.done
-	t.stopCancel = nil
-	t.runCancel = nil
+	t.cancel = nil
 	t.done = nil
-	if runCancel != nil {
-		runCancel()
-	}
-	if stopCancel != nil {
-		stopCancel()
+	if cancel != nil {
+		cancel()
 	}
 	t.mu.Unlock()
 
@@ -416,76 +404,38 @@ func (t *managedTunnel) Stop(ctx context.Context) error {
 	}
 }
 
-func (t *managedTunnel) AddRelay(relayURL string) error {
-	t.mu.RLock()
-	id := t.cfg.ID
-	exposure := t.exposure
-	t.mu.RUnlock()
-	if exposure == nil {
-		return fmt.Errorf("tunnel %q is not running", id)
-	}
-	if err := exposure.AddRelay(relayURL); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (t *managedTunnel) RemoveRelay(relayURL string) error {
-	t.mu.RLock()
-	id := t.cfg.ID
-	exposure := t.exposure
-	t.mu.RUnlock()
-	if exposure == nil {
-		return fmt.Errorf("tunnel %q is not running", id)
-	}
-	if err := exposure.RemoveRelay(relayURL); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (t *managedTunnel) SeedRelay(relayURL string) error {
-	t.mu.RLock()
-	id := t.cfg.ID
-	exposure := t.exposure
-	t.mu.RUnlock()
-	if exposure == nil {
-		return fmt.Errorf("tunnel %q is not running", id)
-	}
-	if err := exposure.SeedRelay(relayURL); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (t *managedTunnel) SetMultiHop(relayURLs []string) error {
-	t.mu.RLock()
-	id := t.cfg.ID
-	exposure := t.exposure
-	t.mu.RUnlock()
-	if exposure == nil {
-		return fmt.Errorf("tunnel %q is not running", id)
-	}
-	if err := exposure.SetMultiHop(relayURLs); err != nil {
-		return err
-	}
-	return nil
-}
-
 func (t *managedTunnel) Snapshot() types.AgentTunnelStatus {
 	t.mu.RLock()
 	cfg := t.cfg
-	state := t.state
 	lastError := t.lastError
 	exposure := t.exposure
+	done := t.done
 	t.mu.RUnlock()
+
+	running := false
+	if done != nil {
+		select {
+		case <-done:
+		default:
+			running = true
+		}
+	}
+
+	state := "stopped"
+	switch {
+	case lastError != "":
+		state = "error"
+	case exposure != nil:
+		state = "running"
+	case running:
+		state = "starting"
+	}
 
 	status := types.AgentTunnelStatus{
 		ID:         cfg.ID,
 		Name:       cfg.Name,
 		State:      state,
 		TargetAddr: cfg.TargetAddr,
-		UDPAddr:    cfg.UDPAddr,
 		LastError:  lastError,
 	}
 	if exposure == nil {
@@ -493,33 +443,19 @@ func (t *managedTunnel) Snapshot() types.AgentTunnelStatus {
 	}
 	snapshot := exposure.Snapshot()
 	status.TargetAddr = snapshot.TargetAddr
-	status.UDPAddr = snapshot.UDPAddr
 	status.MultiHop = append([]string(nil), snapshot.MultiHop...)
 	status.Relays = append([]types.AgentRelayStatus(nil), snapshot.Relays...)
-	for _, relay := range status.Relays {
-		if relay.PublicURL != "" {
-			status.PublicURLs = append(status.PublicURLs, relay.PublicURL)
-		}
-	}
 	return status
 }
 
 func (t *managedTunnel) runLoop(ctx context.Context) {
-	runCtx, runCancel := context.WithCancel(ctx)
-	t.mu.Lock()
-	t.runCancel = runCancel
-	t.mu.Unlock()
-
-	err := t.runOnce(runCtx)
+	err := t.runOnce(ctx)
 
 	t.mu.Lock()
-	t.runCancel = nil
 	t.exposure = nil
-	t.lastError = ""
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) || err == nil {
-		t.state = tunnelStateStopped
+		t.lastError = ""
 	} else {
-		t.state = tunnelStateError
 		t.lastError = err.Error()
 	}
 	t.mu.Unlock()
@@ -528,7 +464,6 @@ func (t *managedTunnel) runLoop(ctx context.Context) {
 func (t *managedTunnel) runOnce(ctx context.Context) error {
 	t.mu.Lock()
 	cfg := t.cfg
-	t.state = tunnelStateStarting
 	t.lastError = ""
 	t.mu.Unlock()
 
@@ -567,7 +502,6 @@ func (t *managedTunnel) runOnce(ctx context.Context) error {
 	}
 	t.mu.Lock()
 	t.exposure = exposure
-	t.state = tunnelStateRunning
 	t.lastError = ""
 	t.mu.Unlock()
 

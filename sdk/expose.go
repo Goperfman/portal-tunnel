@@ -361,7 +361,7 @@ func (e *Exposure) SetMultiHop(relayURLs []string) error {
 	e.multiHop = append([]string(nil), multiHop...)
 	e.multiHopDepth = 0
 	e.listenerMu.Unlock()
-	return e.reconcileRelayListeners(len(multiHop) > 0)
+	return e.reconcileRelayListeners(false)
 }
 
 func initialRouteCapacity(listenerRelayURLs []string, multiHopDepth int) int {
@@ -425,17 +425,11 @@ func (e *Exposure) Snapshot() types.AgentTunnelStatus {
 			relayURL = listener.relayURL.String()
 		}
 		snap := types.AgentRelayStatus{
-			RelayURL: relayURL,
-			MultiHop: append([]string(nil), listener.multiHop...),
-			Active:   true,
+			RelayURL:   relayURL,
+			Connecting: true,
 		}
 		if lease, ok := listener.leaseSnapshot(); ok {
-			snap.Hostname = lease.hostname
 			snap.PublicURL = listener.publicURLForLease(lease)
-			snap.UDPAddr = lease.udpAddr
-			snap.TCPAddr = lease.tcpAddr
-			snap.ExpiresAt = lease.expiresAt
-			snap.Connected = lease.hostname != ""
 		}
 		if relayURL != "" {
 			relayByURL[relayURL] = snap
@@ -449,14 +443,7 @@ func (e *Exposure) Snapshot() types.AgentTunnelStatus {
 			}
 			snap := relayByURL[relayURL]
 			snap.RelayURL = relayURL
-			snap.Address = state.Descriptor.Address
-			snap.DescriptorExpiresAt = state.Descriptor.ExpiresAt
-			snap.LastSeenAt = state.LastSeenAt
-			if !state.DiscoveryRTTAt.IsZero() {
-				snap.DiscoveryRTTMillis = state.DiscoveryRTT.Milliseconds()
-			}
 			snap.Bootstrap = state.Bootstrap
-			snap.Confirmed = state.Confirmed
 			snap.Banned = state.Banned
 			snap.SupportsOverlay = state.Descriptor.SupportsOverlay
 			snap.SupportsUDP = state.Descriptor.SupportsUDP
@@ -469,8 +456,16 @@ func (e *Exposure) Snapshot() types.AgentTunnelStatus {
 		relays = append(relays, snap)
 	}
 	slices.SortFunc(relays, func(a, b types.AgentRelayStatus) int {
-		if a.Active != b.Active {
-			if a.Active {
+		aReady := a.PublicURL != ""
+		bReady := b.PublicURL != ""
+		if aReady != bReady {
+			if aReady {
+				return -1
+			}
+			return 1
+		}
+		if a.Connecting != b.Connecting {
+			if a.Connecting {
 				return -1
 			}
 			return 1
@@ -480,7 +475,6 @@ func (e *Exposure) Snapshot() types.AgentTunnelStatus {
 
 	return types.AgentTunnelStatus{
 		TargetAddr: e.TargetAddr,
-		UDPAddr:    e.UDPAddr,
 		MultiHop:   multiHop,
 		Relays:     relays,
 	}
@@ -705,7 +699,17 @@ func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
 	explicitRelays := append([]string(nil), e.explicitRelays...)
 	seedOnlyRelays := append([]string(nil), e.seedOnlyRelays...)
 	if len(multiHop) > 0 {
-		listenerRelayURLs = []string{multiHop[len(multiHop)-1]}
+		listenerRelayURLs = e.relaySet.PriorityRelays(discovery.ClientState{
+			ExplicitRelayURLs:   explicitRelays,
+			SuppressedRelayURLs: seedOnlyRelays,
+			MaxActiveRelays:     e.maxActiveRelays,
+			RequireUDP:          e.udpEnabled,
+			RequireTCP:          e.tcpEnabled,
+			LocalAddress:        e.identity.Address,
+		})
+		if exitRelayURL := multiHop[len(multiHop)-1]; !slices.Contains(listenerRelayURLs, exitRelayURL) {
+			listenerRelayURLs = append(listenerRelayURLs, exitRelayURL)
+		}
 	} else if e.multiHopDepth > 1 {
 		multiHop = e.relaySet.PriorityMultiHop(discovery.ClientState{
 			SuppressedRelayURLs: seedOnlyRelays,
@@ -727,11 +731,14 @@ func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
 			LocalAddress:        e.identity.Address,
 		})
 	}
-
 	staleRelayListeners := make(map[string]*listener)
 	removedRelayURLs := make([]string, 0)
 	for relayURL, listener := range e.relayListeners {
-		if slices.Contains(listenerRelayURLs, relayURL) && slices.Equal(listener.multiHop, multiHop) {
+		wantMultiHop := []string(nil)
+		if len(multiHop) > 0 && relayURL == multiHop[len(multiHop)-1] {
+			wantMultiHop = multiHop
+		}
+		if slices.Contains(listenerRelayURLs, relayURL) && slices.Equal(listener.multiHop, wantMultiHop) {
 			continue
 		}
 		staleRelayListeners[relayURL] = listener
@@ -761,15 +768,19 @@ func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
 		}
 	}
 	for _, relayURL := range missingRelayURLs {
+		listenerMultiHop := []string(nil)
+		if len(multiHop) > 0 && relayURL == multiHop[len(multiHop)-1] {
+			listenerMultiHop = append([]string(nil), multiHop...)
+		}
 		retryCount := 10
-		if len(multiHop) > 0 || slices.Contains(explicitRelays, relayURL) {
+		if len(listenerMultiHop) > 0 || slices.Contains(explicitRelays, relayURL) {
 			retryCount = 0
 		}
 		listener, err := newListener(context.Background(), relayURL, listenerConfig{
 			Identity:   e.identity,
 			UDPEnabled: e.udpEnabled,
 			TCPEnabled: e.tcpEnabled,
-			MultiHop:   multiHop,
+			MultiHop:   listenerMultiHop,
 			BanMITM:    e.banMITM,
 			RetryCount: retryCount,
 			Metadata:   e.metadata,
