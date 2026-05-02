@@ -11,6 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+
 	"github.com/gosuda/portal-tunnel/v2/cmd/portal-tunnel/agent"
 	"github.com/gosuda/portal-tunnel/v2/cmd/portal-tunnel/agent/service"
 	"github.com/gosuda/portal-tunnel/v2/types"
@@ -53,12 +56,15 @@ func runAgentRunCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	if serviceMode || foreground {
+	if serviceMode {
 		ctx, stop := utils.SignalContext()
 		defer stop()
 		return service.Run(ctx, cfg.Agent.ServiceName, func(ctx context.Context) error {
 			return agent.Run(ctx, cfg)
 		})
+	}
+	if foreground {
+		return runAgentForeground(configPath, cfg)
 	}
 
 	executable, err := os.Executable()
@@ -99,6 +105,60 @@ func runAgentRunCommand(args []string) error {
 
 	fmt.Fprintf(os.Stdout, "Portal agent running at %s with %d tunnel(s).\n", status.ControlAddr, len(status.Tunnels))
 	return nil
+}
+
+func runAgentForeground(configPath string, cfg agent.Config) error {
+	ctx, stop := utils.SignalContext()
+	defer stop()
+
+	if !agentCLIInteractive() {
+		return agent.Run(ctx, cfg)
+	}
+
+	resolvedConfigPath, err := filepath.Abs(strings.TrimSpace(configPath))
+	if err != nil {
+		return err
+	}
+
+	restoreLogs := suppressTerminalLogs()
+	defer restoreLogs()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- agent.Run(ctx, cfg)
+	}()
+
+	readyCtx, readyCancel := context.WithTimeout(ctx, 15*time.Second)
+	status, err := waitAgentStatusOrExit(readyCtx, cfg.Agent.StateDir, errCh)
+	readyCancel()
+	if err != nil {
+		stop()
+		return err
+	}
+
+	dashboardErr := agent.RunDashboard(resolvedConfigPath, cfg.Agent.StateDir)
+	stop()
+	runErr := <-errCh
+	if errors.Is(runErr, context.Canceled) {
+		runErr = nil
+	}
+	if dashboardErr != nil {
+		return dashboardErr
+	}
+	if runErr != nil {
+		return runErr
+	}
+
+	fmt.Fprintf(os.Stdout, "Portal agent stopped after managing %d tunnel(s).\n", len(status.Tunnels))
+	return nil
+}
+
+func suppressTerminalLogs() func() {
+	previous := log.Logger
+	log.Logger = zerolog.New(io.Discard)
+	return func() {
+		log.Logger = previous
+	}
 }
 
 func runAgentStopCommand(args []string) error {
@@ -171,6 +231,38 @@ func waitAgentStatus(ctx context.Context, stateDir string) (types.AgentStatusRes
 		}
 		lastErr = err
 		select {
+		case <-ctx.Done():
+			return types.AgentStatusResponse{}, fmt.Errorf("wait for portal agent status: %w", lastErr)
+		case <-ticker.C:
+		}
+	}
+}
+
+func waitAgentStatusOrExit(ctx context.Context, stateDir string, errCh <-chan error) (types.AgentStatusResponse, error) {
+	ticker := time.NewTicker(300 * time.Millisecond)
+	defer ticker.Stop()
+	var lastErr error
+	for {
+		select {
+		case err := <-errCh:
+			if err == nil {
+				err = errors.New("portal agent stopped before dashboard was ready")
+			}
+			return types.AgentStatusResponse{}, err
+		default:
+		}
+
+		status, err := agent.Status(ctx, stateDir)
+		if err == nil {
+			return status, nil
+		}
+		lastErr = err
+		select {
+		case err := <-errCh:
+			if err == nil {
+				err = errors.New("portal agent stopped before dashboard was ready")
+			}
+			return types.AgentStatusResponse{}, err
 		case <-ctx.Done():
 			return types.AgentStatusResponse{}, fmt.Errorf("wait for portal agent status: %w", lastErr)
 		case <-ticker.C:

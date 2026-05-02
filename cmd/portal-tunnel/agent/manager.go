@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"slices"
 	"strings"
 	"sync"
-	"time"
+	"unicode"
 
 	"github.com/rs/zerolog/log"
 
@@ -17,35 +18,31 @@ import (
 )
 
 const (
-	tunnelStateStarting   = "starting"
-	tunnelStateRunning    = "running"
-	tunnelStateRestarting = "restarting"
-	tunnelStateStopped    = "stopped"
-	tunnelStateError      = "error"
+	tunnelStateStarting = "starting"
+	tunnelStateRunning  = "running"
+	tunnelStateStopped  = "stopped"
+	tunnelStateError    = "error"
 )
 
 type manager struct {
-	startedAt   time.Time
 	controlAddr string
 
+	configMu sync.Mutex
+
 	mu      sync.RWMutex
+	cfg     Config
 	tunnels map[string]*managedTunnel
-	logs    []types.AgentLogEntry
 	rootCtx context.Context
 }
 
 func newManager(cfg Config, controlAddr string) *manager {
-	restartDelay, _ := time.ParseDuration(cfg.Agent.RestartDelay)
-	if restartDelay <= 0 {
-		restartDelay = 5 * time.Second
-	}
 	manager := &manager{
-		startedAt:   time.Now().UTC(),
 		controlAddr: controlAddr,
+		cfg:         cfg,
 		tunnels:     make(map[string]*managedTunnel, len(cfg.Tunnels)),
 	}
 	for _, tunnelCfg := range cfg.Tunnels {
-		manager.tunnels[tunnelCfg.ID] = newTunnel(tunnelCfg, restartDelay, manager.appendLog)
+		manager.tunnels[tunnelCfg.ID] = newTunnel(tunnelCfg)
 	}
 	return manager
 }
@@ -103,18 +100,6 @@ func (m *manager) Stop(ctx context.Context) error {
 	}
 }
 
-func (m *manager) RestartTunnel(id string) error {
-	id = strings.TrimSpace(id)
-	m.mu.RLock()
-	tunnel := m.tunnels[id]
-	m.mu.RUnlock()
-	if tunnel == nil {
-		return fmt.Errorf("unknown tunnel %q", id)
-	}
-	tunnel.Restart()
-	return nil
-}
-
 func (m *manager) AddRelay(id, relayURL string) error {
 	id = strings.TrimSpace(id)
 	m.mu.RLock()
@@ -137,6 +122,17 @@ func (m *manager) RemoveRelay(id, relayURL string) error {
 	return tunnel.RemoveRelay(relayURL)
 }
 
+func (m *manager) SeedRelay(id, relayURL string) error {
+	id = strings.TrimSpace(id)
+	m.mu.RLock()
+	tunnel := m.tunnels[id]
+	m.mu.RUnlock()
+	if tunnel == nil {
+		return fmt.Errorf("unknown tunnel %q", id)
+	}
+	return tunnel.SeedRelay(relayURL)
+}
+
 func (m *manager) SetMultiHop(id string, relayURLs []string) error {
 	id = strings.TrimSpace(id)
 	m.mu.RLock()
@@ -148,20 +144,157 @@ func (m *manager) SetMultiHop(id string, relayURLs []string) error {
 	return tunnel.SetMultiHop(relayURLs)
 }
 
-func (m *manager) Reload(cfg Config) error {
-	m.mu.Lock()
-	rootCtx := m.rootCtx
-	restartDelay, _ := time.ParseDuration(cfg.Agent.RestartDelay)
-	if restartDelay <= 0 {
-		restartDelay = 5 * time.Second
+func (m *manager) AddTunnel(req types.AgentTunnelRequest) error {
+	m.configMu.Lock()
+	defer m.configMu.Unlock()
+
+	cfg, path, mode, err := m.loadConfigDocument()
+	if err != nil {
+		return err
 	}
+	m.preserveCurrentIdentityPaths(&cfg)
+	id := strings.TrimSpace(req.ID)
+	name := strings.TrimSpace(req.Name)
+	if id == "" {
+		id = agentTunnelID(name)
+	}
+	if id == "" {
+		return errors.New("tunnel name is required")
+	}
+	if strings.ContainsAny(id, " \t\r\n/") {
+		return errors.New("tunnel id cannot contain whitespace or slash")
+	}
+	target := strings.TrimSpace(req.TargetAddr)
+	if target == "" {
+		target = defaultTargetAddr
+	}
+	if name == "" {
+		name = id
+	}
+	discovery := true
+	tunnelCfg := TunnelConfig{
+		ID:         id,
+		Name:       name,
+		TargetAddr: target,
+		RelayURLs:  append([]string(nil), req.RelayURLs...),
+		Discovery:  &discovery,
+	}
+	for _, tunnel := range cfg.Tunnels {
+		if tunnel.ID == tunnelCfg.ID {
+			return fmt.Errorf("tunnel %q already exists", tunnelCfg.ID)
+		}
+	}
+	cfg.Tunnels = append(cfg.Tunnels, tunnelCfg)
+	return m.writeConfigAndApply(path, mode, cfg)
+}
+
+func agentTunnelID(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	var out strings.Builder
+	dash := false
+	for _, r := range name {
+		if r == '/' || unicode.IsSpace(r) {
+			if out.Len() > 0 && !dash {
+				out.WriteByte('-')
+				dash = true
+			}
+			continue
+		}
+		if r < 0x20 {
+			continue
+		}
+		out.WriteRune(r)
+		dash = false
+	}
+	return strings.Trim(out.String(), "-")
+}
+
+func (m *manager) DeleteTunnel(id string) error {
+	m.configMu.Lock()
+	defer m.configMu.Unlock()
+
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("tunnel id is required")
+	}
+	cfg, path, mode, err := m.loadConfigDocument()
+	if err != nil {
+		return err
+	}
+	m.preserveCurrentIdentityPaths(&cfg)
+	if len(cfg.Tunnels) <= 1 {
+		return errors.New("cannot delete the last tunnel")
+	}
+
+	next := cfg.Tunnels[:0]
+	found := false
+	for _, tunnel := range cfg.Tunnels {
+		if tunnel.ID == id {
+			found = true
+			continue
+		}
+		next = append(next, tunnel)
+	}
+	if !found {
+		return fmt.Errorf("tunnel %q not found", id)
+	}
+	cfg.Tunnels = next
+	return m.writeConfigAndApply(path, mode, cfg)
+}
+
+func (m *manager) loadConfigDocument() (Config, string, os.FileMode, error) {
+	m.mu.RLock()
+	configPath := m.cfg.sourcePath
+	m.mu.RUnlock()
+	return loadConfigDocument(configPath)
+}
+
+func (m *manager) preserveCurrentIdentityPaths(cfg *Config) {
+	m.mu.RLock()
+	identityPathByID := make(map[string]string, len(m.cfg.Tunnels))
+	for _, tunnel := range m.cfg.Tunnels {
+		if strings.TrimSpace(tunnel.IdentityPath) != "" {
+			identityPathByID[tunnel.ID] = tunnel.IdentityPath
+		}
+	}
+	m.mu.RUnlock()
+
+	for i := range cfg.Tunnels {
+		tunnel := &cfg.Tunnels[i]
+		if strings.TrimSpace(tunnel.IdentityPath) != "" {
+			continue
+		}
+		if identityPath := identityPathByID[tunnel.ID]; identityPath != "" {
+			tunnel.IdentityPath = identityPath
+		}
+	}
+}
+
+func (m *manager) writeConfigAndApply(path string, mode os.FileMode, cfg Config) error {
+	if err := validateConfigDocument(path, cfg); err != nil {
+		return err
+	}
+	if err := writeConfigDocument(path, mode, cfg); err != nil {
+		return err
+	}
+	next, err := LoadConfig(path)
+	if err != nil {
+		return err
+	}
+	return m.ApplyConfig(next)
+}
+
+func (m *manager) ApplyConfig(cfg Config) error {
+	m.mu.Lock()
+	m.cfg = cfg
+	rootCtx := m.rootCtx
 	next := make(map[string]TunnelConfig, len(cfg.Tunnels))
 	for _, tunnelCfg := range cfg.Tunnels {
 		next[tunnelCfg.ID] = tunnelCfg
 	}
 	toStop := make([]*managedTunnel, 0)
 	toStart := make([]*managedTunnel, 0)
-	toRestart := make([]*managedTunnel, 0)
+	toUpdate := make([]*managedTunnel, 0)
 	for id, tunnel := range m.tunnels {
 		tunnelCfg, ok := next[id]
 		if !ok {
@@ -170,33 +303,28 @@ func (m *manager) Reload(cfg Config) error {
 			continue
 		}
 		tunnel.mu.Lock()
-		tunnel.restartDelay = restartDelay
 		if !reflect.DeepEqual(tunnel.cfg, tunnelCfg) {
 			tunnel.cfg = tunnelCfg
-			tunnel.updatedAt = time.Now().UTC()
-			toRestart = append(toRestart, tunnel)
+			toUpdate = append(toUpdate, tunnel)
 		}
 		tunnel.mu.Unlock()
 		delete(next, id)
 	}
 	for _, tunnelCfg := range next {
-		tunnel := newTunnel(tunnelCfg, restartDelay, m.appendLog)
+		tunnel := newTunnel(tunnelCfg)
 		m.tunnels[tunnelCfg.ID] = tunnel
 		toStart = append(toStart, tunnel)
 	}
 	m.mu.Unlock()
 
-	for _, tunnel := range toStop {
+	for _, tunnel := range append(toStop, toUpdate...) {
 		_ = tunnel.Stop(context.Background())
 	}
 	if rootCtx == nil {
 		rootCtx = context.Background()
 	}
-	for _, tunnel := range toStart {
+	for _, tunnel := range append(toStart, toUpdate...) {
 		tunnel.Start(rootCtx)
-	}
-	for _, tunnel := range toRestart {
-		tunnel.Restart()
 	}
 	return nil
 }
@@ -207,51 +335,25 @@ func (m *manager) Snapshot() types.AgentStatusResponse {
 	for _, tunnel := range m.tunnels {
 		tunnels = append(tunnels, tunnel)
 	}
-	logs := append([]types.AgentLogEntry(nil), m.logs...)
 	m.mu.RUnlock()
 
 	statuses := make([]types.AgentTunnelStatus, 0, len(tunnels))
-	summary := types.AgentMetricsSummary{TunnelCount: len(tunnels)}
 	for _, tunnel := range tunnels {
-		status := tunnel.Snapshot()
-		switch status.State {
-		case tunnelStateRunning:
-			summary.RunningCount++
-		case tunnelStateError:
-			summary.ErrorCount++
-		}
-		statuses = append(statuses, status)
+		statuses = append(statuses, tunnel.Snapshot())
 	}
 	slices.SortFunc(statuses, func(a, b types.AgentTunnelStatus) int {
 		return strings.Compare(a.ID, b.ID)
 	})
 
 	return types.AgentStatusResponse{
-		ReleaseVersion: types.ReleaseVersion,
-		StartedAt:      m.startedAt,
-		ControlAddr:    m.controlAddr,
-		Tunnels:        statuses,
-		Logs:           logs,
-		Summary:        summary,
-	}
-}
-
-func (m *manager) appendLog(entry types.AgentLogEntry) {
-	entry.Time = time.Now().UTC()
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.logs = append(m.logs, entry)
-	if len(m.logs) > 200 {
-		copy(m.logs, m.logs[len(m.logs)-200:])
-		m.logs = m.logs[:200]
+		ControlAddr: m.controlAddr,
+		Tunnels:     statuses,
 	}
 }
 
 type managedTunnel struct {
-	mu           sync.RWMutex
-	cfg          TunnelConfig
-	restartDelay time.Duration
-	appendLog    func(types.AgentLogEntry)
+	mu  sync.RWMutex
+	cfg TunnelConfig
 
 	stopCancel context.CancelFunc
 	runCancel  context.CancelFunc
@@ -260,19 +362,12 @@ type managedTunnel struct {
 
 	state     string
 	lastError string
-	startedAt time.Time
-	updatedAt time.Time
-	restarts  int
 }
 
-func newTunnel(cfg TunnelConfig, restartDelay time.Duration, appendLog func(types.AgentLogEntry)) *managedTunnel {
-	now := time.Now().UTC()
+func newTunnel(cfg TunnelConfig) *managedTunnel {
 	return &managedTunnel{
-		cfg:          cfg,
-		restartDelay: restartDelay,
-		appendLog:    appendLog,
-		state:        tunnelStateStopped,
-		updatedAt:    now,
+		cfg:   cfg,
+		state: tunnelStateStopped,
 	}
 }
 
@@ -321,16 +416,6 @@ func (t *managedTunnel) Stop(ctx context.Context) error {
 	}
 }
 
-func (t *managedTunnel) Restart() {
-	t.mu.Lock()
-	if t.runCancel != nil {
-		t.state = tunnelStateRestarting
-		t.updatedAt = time.Now().UTC()
-		t.runCancel()
-	}
-	t.mu.Unlock()
-}
-
 func (t *managedTunnel) AddRelay(relayURL string) error {
 	t.mu.RLock()
 	id := t.cfg.ID
@@ -342,7 +427,6 @@ func (t *managedTunnel) AddRelay(relayURL string) error {
 	if err := exposure.AddRelay(relayURL); err != nil {
 		return err
 	}
-	t.appendLog(types.AgentLogEntry{TunnelID: id, Level: "info", Message: "relay added"})
 	return nil
 }
 
@@ -357,7 +441,20 @@ func (t *managedTunnel) RemoveRelay(relayURL string) error {
 	if err := exposure.RemoveRelay(relayURL); err != nil {
 		return err
 	}
-	t.appendLog(types.AgentLogEntry{TunnelID: id, Level: "info", Message: "relay removed"})
+	return nil
+}
+
+func (t *managedTunnel) SeedRelay(relayURL string) error {
+	t.mu.RLock()
+	id := t.cfg.ID
+	exposure := t.exposure
+	t.mu.RUnlock()
+	if exposure == nil {
+		return fmt.Errorf("tunnel %q is not running", id)
+	}
+	if err := exposure.SeedRelay(relayURL); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -372,11 +469,6 @@ func (t *managedTunnel) SetMultiHop(relayURLs []string) error {
 	if err := exposure.SetMultiHop(relayURLs); err != nil {
 		return err
 	}
-	message := "multi-hop cleared"
-	if len(relayURLs) > 0 {
-		message = "multi-hop updated"
-	}
-	t.appendLog(types.AgentLogEntry{TunnelID: id, Level: "info", Message: message})
 	return nil
 }
 
@@ -385,9 +477,6 @@ func (t *managedTunnel) Snapshot() types.AgentTunnelStatus {
 	cfg := t.cfg
 	state := t.state
 	lastError := t.lastError
-	startedAt := t.startedAt
-	updatedAt := t.updatedAt
-	restarts := t.restarts
 	exposure := t.exposure
 	t.mu.RUnlock()
 
@@ -398,9 +487,6 @@ func (t *managedTunnel) Snapshot() types.AgentTunnelStatus {
 		TargetAddr: cfg.TargetAddr,
 		UDPAddr:    cfg.UDPAddr,
 		LastError:  lastError,
-		StartedAt:  startedAt,
-		UpdatedAt:  updatedAt,
-		Restarts:   restarts,
 	}
 	if exposure == nil {
 		return status
@@ -419,64 +505,24 @@ func (t *managedTunnel) Snapshot() types.AgentTunnelStatus {
 }
 
 func (t *managedTunnel) runLoop(ctx context.Context) {
-	stop := func() {
-		t.mu.Lock()
+	runCtx, runCancel := context.WithCancel(ctx)
+	t.mu.Lock()
+	t.runCancel = runCancel
+	t.mu.Unlock()
+
+	err := t.runOnce(runCtx)
+
+	t.mu.Lock()
+	t.runCancel = nil
+	t.exposure = nil
+	t.lastError = ""
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || err == nil {
 		t.state = tunnelStateStopped
-		t.updatedAt = time.Now().UTC()
-		t.exposure = nil
-		tunnelID := t.cfg.ID
-		t.mu.Unlock()
-		t.appendLog(types.AgentLogEntry{TunnelID: tunnelID, Level: "info", Message: "tunnel stopped"})
-	}
-
-	for {
-		if ctx.Err() != nil {
-			stop()
-			return
-		}
-		runCtx, runCancel := context.WithCancel(ctx)
-		t.mu.Lock()
-		t.runCancel = runCancel
-		t.mu.Unlock()
-		err := t.runOnce(runCtx)
-		t.mu.Lock()
-		t.runCancel = nil
-		t.exposure = nil
-		t.mu.Unlock()
-		if ctx.Err() != nil {
-			stop()
-			return
-		}
-
-		level := "error"
-		t.mu.Lock()
-		delay := t.restartDelay
-		message := fmt.Sprintf("tunnel stopped; restarting in %s", delay)
-		t.restarts++
+	} else {
 		t.state = tunnelStateError
-		t.lastError = ""
-		if errors.Is(err, context.Canceled) {
-			t.state = tunnelStateRestarting
-			delay = 100 * time.Millisecond
-			level = "info"
-			message = "tunnel restarting"
-		} else if err != nil {
-			t.lastError = err.Error()
-		}
-		t.updatedAt = time.Now().UTC()
-		tunnelID := t.cfg.ID
-		t.mu.Unlock()
-
-		t.appendLog(types.AgentLogEntry{TunnelID: tunnelID, Level: level, Message: message})
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			stop()
-			return
-		case <-timer.C:
-		}
+		t.lastError = err.Error()
 	}
+	t.mu.Unlock()
 }
 
 func (t *managedTunnel) runOnce(ctx context.Context) error {
@@ -484,7 +530,6 @@ func (t *managedTunnel) runOnce(ctx context.Context) error {
 	cfg := t.cfg
 	t.state = tunnelStateStarting
 	t.lastError = ""
-	t.updatedAt = time.Now().UTC()
 	t.mu.Unlock()
 
 	discovery := true
@@ -524,12 +569,8 @@ func (t *managedTunnel) runOnce(ctx context.Context) error {
 	t.exposure = exposure
 	t.state = tunnelStateRunning
 	t.lastError = ""
-	t.startedAt = time.Now().UTC()
-	t.updatedAt = t.startedAt
-	tunnelID := t.cfg.ID
 	t.mu.Unlock()
 
-	t.appendLog(types.AgentLogEntry{TunnelID: tunnelID, Level: "info", Message: "tunnel started"})
 	defer exposure.Close()
 
 	if len(cfg.HTTPRoutes) > 0 {

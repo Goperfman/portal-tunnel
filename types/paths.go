@@ -27,7 +27,7 @@ const (
 	PathAgentPrefix        = "/v1/agent"
 	PathAgentStatus        = PathAgentPrefix + "/status"
 	PathAgentShutdown      = PathAgentPrefix + "/shutdown"
-	PathAgentReload        = PathAgentPrefix + "/reload"
+	PathAgentTunnels       = PathAgentPrefix + "/tunnels"
 	PathAgentTunnelsPrefix = PathAgentPrefix + "/tunnels/"
 
 	PathTunnelStatus    = "/tunnel/status"

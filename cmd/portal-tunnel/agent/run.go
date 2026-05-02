@@ -30,17 +30,6 @@ func Run(ctx context.Context, cfg Config) error {
 	defer cancel()
 
 	manager := newManager(cfg, "")
-	reload := func() error {
-		if cfg.sourcePath == "" {
-			return errors.New("config path is not available")
-		}
-		next, err := LoadConfig(cfg.sourcePath)
-		if err != nil {
-			return err
-		}
-		cfg = next
-		return manager.Reload(next)
-	}
 	controlAddr := strings.TrimSpace(cfg.Agent.ControlAddr)
 	if controlAddr == "" {
 		return errors.New("control address is required")
@@ -69,7 +58,6 @@ func Run(ctx context.Context, cfg Config) error {
 			manager:  manager,
 			token:    token,
 			shutdown: cancel,
-			reload:   reload,
 		},
 		ReadHeaderTimeout: 5 * time.Second,
 	}

@@ -169,7 +169,7 @@ Use `portal agent dashboard` to attach to an already running local agent. When u
 |---------|-------------|
 | `portal agent run` | Install/update and start the managed agent service |
 | `portal agent run --config config.toml --foreground` | Run the agent in the current terminal |
-| `portal agent dashboard` | Open the mouse-capable local TUI for status, discovered relays, logs, reload, restart, relay attach/detach, and multi-hop route changes |
+| `portal agent dashboard` | Open the mouse-capable local TUI for tunnels, relay attach/detach, relay lists, and multi-hop route changes |
 | `portal agent stop` | Gracefully stop the agent and disable/stop the OS service |
 
 The local control API binds only to loopback and uses a token in the agent state directory. See [Configuration Reference](/configuration#configtoml) for the `config.toml` format.

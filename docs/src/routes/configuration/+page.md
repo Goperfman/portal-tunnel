@@ -162,7 +162,6 @@ Default paths:
 [agent]
 control_addr = "127.0.0.1:4018"
 service_name = "portal-agent"
-restart_delay = "5s"
 
 [[tunnels]]
 id = "web"
@@ -193,7 +192,6 @@ Agent fields:
 | `state_dir` | Platform default state directory | Stores the local control endpoint token and runtime state |
 | `control_addr` | `127.0.0.1:4018` | Loopback-only local control API address |
 | `service_name` | `portal-agent` | OS service name |
-| `restart_delay` | `5s` | Delay before restarting a failed tunnel |
 
 Tunnel fields mirror `portal expose` flags:
 

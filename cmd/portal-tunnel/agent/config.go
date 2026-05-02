@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/knadh/koanf/parsers/toml/v2"
 	"github.com/knadh/koanf/providers/file"
@@ -31,10 +30,9 @@ type Config struct {
 }
 
 type AgentConfig struct {
-	StateDir     string `koanf:"state_dir"`
-	ControlAddr  string `koanf:"control_addr"`
-	ServiceName  string `koanf:"service_name"`
-	RestartDelay string `koanf:"restart_delay"`
+	StateDir    string `koanf:"state_dir"`
+	ControlAddr string `koanf:"control_addr"`
+	ServiceName string `koanf:"service_name"`
 }
 
 type TunnelConfig struct {
@@ -84,7 +82,6 @@ func LoadConfig(path string) (Config, error) {
 state_dir = %q
 control_addr = %q
 service_name = %q
-restart_delay = "5s"
 
 [[tunnels]]
 id = "default"
@@ -116,6 +113,170 @@ discovery = true
 	return cfg, cfg.Validate()
 }
 
+func loadConfigDocument(path string) (Config, string, os.FileMode, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = service.DefaultConfigPath()
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return Config{}, "", 0, err
+	}
+	if _, err := os.Stat(absPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if _, err := LoadConfig(absPath); err != nil {
+				return Config{}, "", 0, err
+			}
+		} else {
+			return Config{}, "", 0, err
+		}
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return Config{}, "", 0, err
+	}
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return Config{}, "", 0, err
+	}
+
+	var cfg Config
+	if strings.TrimSpace(string(data)) != "" {
+		k := koanf.New(".")
+		if err := k.Load(file.Provider(absPath), toml.Parser()); err != nil {
+			return Config{}, "", 0, err
+		}
+		if err := k.Unmarshal("", &cfg); err != nil {
+			return Config{}, "", 0, err
+		}
+	}
+	cfg.sourcePath = absPath
+	return cfg, absPath, info.Mode().Perm(), nil
+}
+
+func writeConfigDocument(path string, mode os.FileMode, cfg Config) error {
+	data, err := toml.Parser().Marshal(configDocumentMap(cfg))
+	if err != nil {
+		return err
+	}
+	if mode == 0 {
+		mode = 0o644
+	}
+	return os.WriteFile(path, data, mode)
+}
+
+func configDocumentMap(cfg Config) map[string]any {
+	return map[string]any{
+		"agent":   agentConfigDocumentMap(cfg.Agent),
+		"tunnels": tunnelConfigDocumentMaps(cfg.Tunnels),
+	}
+}
+
+func agentConfigDocumentMap(cfg AgentConfig) map[string]any {
+	out := make(map[string]any)
+	addStringDocumentField(out, "state_dir", cfg.StateDir)
+	addStringDocumentField(out, "control_addr", cfg.ControlAddr)
+	addStringDocumentField(out, "service_name", cfg.ServiceName)
+	return out
+}
+
+func tunnelConfigDocumentMaps(tunnels []TunnelConfig) []map[string]any {
+	out := make([]map[string]any, 0, len(tunnels))
+	for _, tunnel := range tunnels {
+		out = append(out, tunnelConfigDocumentMap(tunnel))
+	}
+	return out
+}
+
+func tunnelConfigDocumentMap(cfg TunnelConfig) map[string]any {
+	out := make(map[string]any)
+	addStringDocumentField(out, "id", cfg.ID)
+	addStringDocumentField(out, "name", cfg.Name)
+	addStringDocumentField(out, "target", cfg.TargetAddr)
+	if len(cfg.HTTPRoutes) > 0 {
+		routes := make([]map[string]any, 0, len(cfg.HTTPRoutes))
+		for _, route := range cfg.HTTPRoutes {
+			routeMap := make(map[string]any)
+			addStringDocumentField(routeMap, "prefix", route.Prefix)
+			addStringDocumentField(routeMap, "upstream", route.Upstream)
+			routes = append(routes, routeMap)
+		}
+		out["http_routes"] = routes
+	}
+	addStringSliceDocumentField(out, "relays", cfg.RelayURLs)
+	if cfg.Discovery != nil {
+		out["discovery"] = *cfg.Discovery
+	}
+	addStringDocumentField(out, "identity_path", cfg.IdentityPath)
+	addStringDocumentField(out, "identity_json", cfg.IdentityJSON)
+	if cfg.UDPEnabled {
+		out["udp"] = cfg.UDPEnabled
+	}
+	addStringDocumentField(out, "udp_addr", cfg.UDPAddr)
+	if cfg.TCPEnabled {
+		out["tcp"] = cfg.TCPEnabled
+	}
+	addStringSliceDocumentField(out, "multi_hop", cfg.MultiHop)
+	if cfg.MultiHopDepth != 0 {
+		out["multi_hop_depth"] = cfg.MultiHopDepth
+	}
+	if cfg.BanMITM != nil {
+		out["ban_mitm"] = *cfg.BanMITM
+	}
+	if cfg.MaxActiveRelays != 0 {
+		out["max_active_relays"] = cfg.MaxActiveRelays
+	}
+	addStringDocumentField(out, "description", cfg.Description)
+	addStringSliceDocumentField(out, "tags", cfg.Tags)
+	addStringDocumentField(out, "owner", cfg.Owner)
+	addStringDocumentField(out, "thumbnail", cfg.Thumbnail)
+	if cfg.Hide {
+		out["hide"] = cfg.Hide
+	}
+	return out
+}
+
+func addStringDocumentField(out map[string]any, key, value string) {
+	if strings.TrimSpace(value) != "" {
+		out[key] = value
+	}
+}
+
+func addStringSliceDocumentField(out map[string]any, key string, value []string) {
+	if len(value) > 0 {
+		out[key] = append([]string(nil), value...)
+	}
+}
+
+func validateConfigDocument(path string, cfg Config) error {
+	next := cloneConfig(cfg)
+	if err := next.ApplyDefaults(path); err != nil {
+		return err
+	}
+	return next.Validate()
+}
+
+func cloneConfig(cfg Config) Config {
+	next := cfg
+	next.Tunnels = append([]TunnelConfig(nil), cfg.Tunnels...)
+	for i := range next.Tunnels {
+		tunnel := &next.Tunnels[i]
+		tunnel.HTTPRoutes = append([]HTTPRouteConfig(nil), tunnel.HTTPRoutes...)
+		tunnel.RelayURLs = append([]string(nil), tunnel.RelayURLs...)
+		tunnel.MultiHop = append([]string(nil), tunnel.MultiHop...)
+		tunnel.Tags = append([]string(nil), tunnel.Tags...)
+		if tunnel.Discovery != nil {
+			value := *tunnel.Discovery
+			tunnel.Discovery = &value
+		}
+		if tunnel.BanMITM != nil {
+			value := *tunnel.BanMITM
+			tunnel.BanMITM = &value
+		}
+	}
+	return next
+}
+
 func (cfg *Config) ApplyDefaults(configPath string) error {
 	configDir := "."
 	if absConfig, err := filepath.Abs(strings.TrimSpace(configPath)); err == nil {
@@ -132,9 +293,6 @@ func (cfg *Config) ApplyDefaults(configPath string) error {
 	}
 	if strings.TrimSpace(cfg.Agent.ServiceName) == "" {
 		cfg.Agent.ServiceName = DefaultServiceName
-	}
-	if strings.TrimSpace(cfg.Agent.RestartDelay) == "" {
-		cfg.Agent.RestartDelay = "5s"
 	}
 
 	for i := range cfg.Tunnels {
@@ -183,9 +341,6 @@ func (cfg Config) Validate() error {
 	}
 	if strings.TrimSpace(cfg.Agent.ControlAddr) == "" {
 		return errors.New("agent.control_addr is required")
-	}
-	if _, err := time.ParseDuration(cfg.Agent.RestartDelay); err != nil {
-		return fmt.Errorf("agent.restart_delay: %w", err)
 	}
 	if len(cfg.Tunnels) == 0 {
 		return errors.New("at least one tunnel is required")

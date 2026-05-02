@@ -113,11 +113,11 @@ Flags:
 Runs Portal as a managed long-lived tunnel agent.
 
 - `portal agent run` reads the platform default config path, installs or updates the OS service, and opens the dashboard when run from an interactive terminal.
-- `portal agent run --config config.toml --foreground` runs the agent in the current terminal without installing a service.
-- `portal agent dashboard` only attaches to a running agent. When using `--foreground`, keep that process running in one terminal and open the dashboard from another.
+- `portal agent run --config config.toml --foreground` runs the agent in the current terminal and opens the dashboard when the terminal is interactive.
+- `portal agent dashboard` attaches to an already running agent.
 - The service process owns multiple tunnel definitions from one `config.toml`.
 - The local control API is bound to loopback and authenticated with a token stored in the agent state directory.
-- `portal agent dashboard` opens the mouse-capable local TUI for tunnel state, discovered relays, public URLs, logs, reload, restart, relay attach/detach, and multi-hop route changes.
+- `portal agent dashboard` opens the mouse-capable local TUI for tunnel add/delete, per-tunnel relay add/delete/listing, and multi-hop route changes.
 - `portal agent stop` asks the local agent to shut down, then disables/stops the OS service so intentional shutdown is not immediately restarted.
 - If the config file is missing, `portal agent run` creates a default config and the agent creates the identity file on first tunnel start.
 
