@@ -58,6 +58,13 @@ The relay server (`relay-server`) reads configuration from environment variables
 |----------|---------|------|-------------|
 | `HEADLESS_SHELL_URL` | `""` | string | Headless Chrome CDP WebSocket URL for thumbnail generation (e.g. `ws://headless-shell:9222`) |
 
+### Diagnostics
+
+| Variable | Default | Type | Description |
+|----------|---------|------|-------------|
+| `PPROF_ENABLED` | `false` | bool | Enable the relay pprof diagnostics HTTP server |
+| `PPROF_ADDR` | `127.0.0.1:6060` | string | pprof listen address when enabled; keep it on loopback unless the port is protected |
+
 ### Cloudflare
 
 | Variable | Default | Type | Description |
