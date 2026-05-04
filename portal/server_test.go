@@ -32,11 +32,9 @@ func tempIdentityPath(t *testing.T) string {
 
 func newTestClient(t *testing.T, cancel context.CancelFunc, server *Server) *http.Client {
 	t.Helper()
-	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-	}
+	client := utils.NewHTTPClient(
+		utils.WithHTTPTLSConfig(&tls.Config{InsecureSkipVerify: true}),
+	)
 	t.Cleanup(func() {
 		client.CloseIdleConnections()
 		cancel()

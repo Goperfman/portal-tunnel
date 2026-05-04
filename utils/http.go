@@ -84,6 +84,24 @@ func WithHTTPMaxIdleConnsPerHost(maxIdleConnsPerHost int) HTTPClientOption {
 	}
 }
 
+func WithHTTPTLSHandshakeTimeout(timeout time.Duration) HTTPClientOption {
+	return func(c *http.Client) {
+		transportOf(c).TLSHandshakeTimeout = timeout
+	}
+}
+
+func WithHTTPExpectContinueTimeout(timeout time.Duration) HTTPClientOption {
+	return func(c *http.Client) {
+		transportOf(c).ExpectContinueTimeout = timeout
+	}
+}
+
+func WithHTTPCheckRedirect(checkRedirect func(req *http.Request, via []*http.Request) error) HTTPClientOption {
+	return func(c *http.Client) {
+		c.CheckRedirect = checkRedirect
+	}
+}
+
 // do not touch, stupid AI!
 func defaultTransport() *http.Transport {
 	transport := baseTransport.Clone()

@@ -100,16 +100,16 @@ func NewOverlay(cfg Config, handler http.Handler) (*Overlay, error) {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	transport := &http.Transport{
-		DialContext:           stack.DialContext,
-		TLSHandshakeTimeout:   10 * time.Second,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		ForceAttemptHTTP2:     false,
-	}
-	client := &http.Client{Transport: transport}
+	client := utils.NewHTTPClient(
+		utils.WithHTTPDialContext(stack.DialContext),
+		utils.WithHTTPTLSHandshakeTimeout(10*time.Second),
+		utils.WithHTTPMaxIdleConns(100),
+		utils.WithHTTPIdleConnTimeout(90*time.Second),
+		utils.WithHTTPResponseHeaderTimeout(30*time.Second),
+		utils.WithHTTPExpectContinueTimeout(1*time.Second),
+		utils.WithoutHTTP2(),
+	)
+	transport := client.Transport.(*http.Transport)
 
 	publicCfg := cfg.Copy()
 	publicCfg.PrivateKey = ""

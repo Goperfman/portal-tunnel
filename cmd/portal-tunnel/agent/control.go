@@ -18,6 +18,8 @@ const (
 	endpointFilename        = "agent-endpoint.json"
 )
 
+var controlHTTPClient = utils.NewHTTPClient(utils.WithHTTPTimeout(5 * time.Second))
+
 type endpoint struct {
 	ControlAddr string `json:"control_addr"`
 	Token       string `json:"token"`
@@ -209,5 +211,5 @@ func controlRequest(ctx context.Context, stateDir, method, path string, payload 
 		return err
 	}
 	headers := http.Header{"Authorization": []string{"Bearer " + endpoint.Token}}
-	return utils.HTTPDoAPIPath(ctx, &http.Client{Timeout: 5 * time.Second}, baseURL, method, path, payload, headers, out)
+	return utils.HTTPDoAPIPath(ctx, controlHTTPClient, baseURL, method, path, payload, headers, out)
 }
