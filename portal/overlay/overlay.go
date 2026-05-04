@@ -66,12 +66,11 @@ func NormalizeConfig(cfg Config) (Config, error) {
 }
 
 type Overlay struct {
-	cfg       Config
-	stack     *stack
-	listener  net.Listener
-	server    *http.Server
-	transport *http.Transport
-	client    *http.Client
+	cfg      Config
+	stack    *stack
+	listener net.Listener
+	server   *http.Server
+	client   *http.Client
 }
 
 func NewOverlay(cfg Config, handler http.Handler) (*Overlay, error) {
@@ -109,17 +108,15 @@ func NewOverlay(cfg Config, handler http.Handler) (*Overlay, error) {
 		utils.WithHTTPExpectContinueTimeout(1*time.Second),
 		utils.WithoutHTTP2(),
 	)
-	transport := client.Transport.(*http.Transport)
 
 	publicCfg := cfg.Copy()
 	publicCfg.PrivateKey = ""
 	return &Overlay{
-		cfg:       publicCfg,
-		stack:     stack,
-		listener:  listener,
-		server:    server,
-		transport: transport,
-		client:    client,
+		cfg:      publicCfg,
+		stack:    stack,
+		listener: listener,
+		server:   server,
+		client:   client,
 	}, nil
 }
 
@@ -154,8 +151,8 @@ func (o *Overlay) Shutdown(ctx context.Context) error {
 			shutdownErr = errors.Join(shutdownErr, err)
 		}
 	}
-	if o.transport != nil {
-		o.transport.CloseIdleConnections()
+	if o.client != nil {
+		o.client.CloseIdleConnections()
 	}
 	if o.listener != nil {
 		err := o.listener.Close()
