@@ -263,43 +263,79 @@ func (p MOLSRelayPolicy) rankRelayPool(autoPool []RelayState, localAddress strin
 		return molsScore(int(ingressIdx)%order, idx, int(m1), int(m2), order)
 	}
 
-	var candidates [molsCandidateDepth]molsCandidate
-	candidateCount := 0
-	for i, state := range autoPool {
-		state.EvaluateSaturation()
-		candidate := molsCandidate{
-			state: state,
-			score: scoreFor(state),
-			seq:   i,
-		}
-		insertAt := candidateCount
-		for insertAt > 0 && betterMOLSCandidate(candidate, candidates[insertAt-1]) {
-			if insertAt < molsCandidateDepth {
-				candidates[insertAt] = candidates[insertAt-1]
-			}
-			insertAt--
-		}
-		if insertAt >= molsCandidateDepth {
-			continue
-		}
-		candidates[insertAt] = candidate
-		if candidateCount < molsCandidateDepth {
-			candidateCount++
+	// Partition by fallback status and promote to meet minimum active nodes.
+	activeStates := make([]RelayState, 0, len(autoPool))
+	fallbackStates := make([]RelayState, 0)
+	for _, s := range autoPool {
+		if isRelayFallback(s) {
+			fallbackStates = append(fallbackStates, s)
+		} else {
+			activeStates = append(activeStates, s)
 		}
 	}
 
-	out := make([]string, 0, candidateCount)
-	for i := 0; i < candidateCount; i++ {
-		if !candidates[i].state.IsSaturated {
-			out = append(out, candidates[i].state.Descriptor.APIHTTPSAddr)
-		}
+	if len(activeStates) < molsMinActiveNodes && len(fallbackStates) > 0 {
+		slices.SortFunc(fallbackStates, func(a, b RelayState) int {
+			if a.DiscoveryRTT < b.DiscoveryRTT {
+				return -1
+			}
+			if a.DiscoveryRTT > b.DiscoveryRTT {
+				return 1
+			}
+			return 0
+		})
+		promote := min(molsMinActiveNodes-len(activeStates), len(fallbackStates))
+		activeStates = append(activeStates, fallbackStates[:promote]...)
+		fallbackStates = fallbackStates[promote:]
 	}
-	for i := 0; i < candidateCount; i++ {
-		if candidates[i].state.IsSaturated {
-			out = append(out, candidates[i].state.Descriptor.APIHTTPSAddr)
+
+	rankTier := func(states []RelayState) []string {
+		if len(states) == 0 {
+			return nil
 		}
+		var candidates [molsCandidateDepth]molsCandidate
+		count := 0
+		for i, state := range states {
+			state.EvaluateSaturation()
+			candidate := molsCandidate{
+				state: state,
+				score: scoreFor(state),
+				seq:   i,
+			}
+			insertAt := count
+			for insertAt > 0 && betterMOLSCandidate(candidate, candidates[insertAt-1]) {
+				if insertAt < molsCandidateDepth {
+					candidates[insertAt] = candidates[insertAt-1]
+				}
+				insertAt--
+			}
+			if insertAt >= molsCandidateDepth {
+				continue
+			}
+			candidates[insertAt] = candidate
+			if count < molsCandidateDepth {
+				count++
+			}
+		}
+
+		tierOut := make([]string, 0, count)
+		for i := 0; i < count; i++ {
+			if !candidates[i].state.IsSaturated {
+				tierOut = append(tierOut, candidates[i].state.Descriptor.APIHTTPSAddr)
+			}
+		}
+		for i := 0; i < count; i++ {
+			if candidates[i].state.IsSaturated {
+				tierOut = append(tierOut, candidates[i].state.Descriptor.APIHTTPSAddr)
+			}
+		}
+		return tierOut
 	}
-	return out
+
+	activeURLs := rankTier(activeStates)
+	fallbackURLs := rankTier(fallbackStates)
+
+	return append(activeURLs, fallbackURLs...)
 }
 
 // SelectPriorityWithTrace is the telemetry-instrumented sibling of
