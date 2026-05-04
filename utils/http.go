@@ -28,7 +28,10 @@ func NewHTTPClient(options ...HTTPClientOption) *http.Client {
 	return client
 }
 
-func transportOf(c *http.Client) *http.Transport {
+// mustTransportOf returns c.Transport as *http.Transport.
+// Panics if c.Transport is nil or not *http.Transport — only safe for clients
+// created by NewHTTPClient, whose Transport is always a fresh *http.Transport.
+func mustTransportOf(c *http.Client) *http.Transport {
 	return c.Transport.(*http.Transport)
 }
 
@@ -41,58 +44,58 @@ func WithHTTPTimeout(timeout time.Duration) HTTPClientOption {
 func WithHTTPTLSConfig(tlsConfig *tls.Config) HTTPClientOption {
 	return func(c *http.Client) {
 		if tlsConfig == nil {
-			transportOf(c).TLSClientConfig = nil
+			mustTransportOf(c).TLSClientConfig = nil
 			return
 		}
-		transportOf(c).TLSClientConfig = tlsConfig.Clone()
+		mustTransportOf(c).TLSClientConfig = tlsConfig.Clone()
 	}
 }
 
 func WithHTTPDialContext(dialContext func(context.Context, string, string) (net.Conn, error)) HTTPClientOption {
 	return func(c *http.Client) {
-		transportOf(c).DialContext = dialContext
+		mustTransportOf(c).DialContext = dialContext
 	}
 }
 
 func WithoutHTTP2() HTTPClientOption {
 	return func(c *http.Client) {
-		transportOf(c).ForceAttemptHTTP2 = false
+		mustTransportOf(c).ForceAttemptHTTP2 = false
 	}
 }
 
 func WithHTTPResponseHeaderTimeout(timeout time.Duration) HTTPClientOption {
 	return func(c *http.Client) {
-		transportOf(c).ResponseHeaderTimeout = timeout
+		mustTransportOf(c).ResponseHeaderTimeout = timeout
 	}
 }
 
 func WithHTTPIdleConnTimeout(timeout time.Duration) HTTPClientOption {
 	return func(c *http.Client) {
-		transportOf(c).IdleConnTimeout = timeout
+		mustTransportOf(c).IdleConnTimeout = timeout
 	}
 }
 
 func WithHTTPMaxIdleConns(maxIdleConns int) HTTPClientOption {
 	return func(c *http.Client) {
-		transportOf(c).MaxIdleConns = maxIdleConns
+		mustTransportOf(c).MaxIdleConns = maxIdleConns
 	}
 }
 
 func WithHTTPMaxIdleConnsPerHost(maxIdleConnsPerHost int) HTTPClientOption {
 	return func(c *http.Client) {
-		transportOf(c).MaxIdleConnsPerHost = maxIdleConnsPerHost
+		mustTransportOf(c).MaxIdleConnsPerHost = maxIdleConnsPerHost
 	}
 }
 
 func WithHTTPTLSHandshakeTimeout(timeout time.Duration) HTTPClientOption {
 	return func(c *http.Client) {
-		transportOf(c).TLSHandshakeTimeout = timeout
+		mustTransportOf(c).TLSHandshakeTimeout = timeout
 	}
 }
 
 func WithHTTPExpectContinueTimeout(timeout time.Duration) HTTPClientOption {
 	return func(c *http.Client) {
-		transportOf(c).ExpectContinueTimeout = timeout
+		mustTransportOf(c).ExpectContinueTimeout = timeout
 	}
 }
 
