@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/gosuda/portal-tunnel/v2/portal/auth"
+	"github.com/gosuda/portal-tunnel/v2/portal/telemetry"
 	"github.com/gosuda/portal-tunnel/v2/types"
 )
 
@@ -177,9 +178,7 @@ func (s *RelaySet) SetBootstrapRelayURLs(inputs []string) {
 	for key, state := range s.relays {
 		_, bootstrap := keep[key]
 		state.Bootstrap = bootstrap
-		if !state.Bootstrap && !state.hasObservedDescriptor() && !state.Banned &&
-			state.discoveryFailures == 0 && state.activeFailures == 0 &&
-			state.nextDiscoveryRefreshAt.IsZero() && state.suppressActiveUntil.IsZero() {
+		if disposableRelayState(state) {
 			delete(s.relays, key)
 			continue
 		}
@@ -198,6 +197,40 @@ func (s *RelaySet) SetBootstrapRelayURLs(inputs []string) {
 	}
 }
 
+func (s *RelaySet) AddBootstrapRelayURL(relayURL string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, ok := s.relays[relayURL]
+	if !ok {
+		state = newRelayState(relayURL)
+	}
+	state.Bootstrap = true
+	s.relays[relayURL] = state
+}
+
+func (s *RelaySet) RemoveBootstrapRelayURL(relayURL string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, ok := s.relays[relayURL]
+	if !ok {
+		return
+	}
+	state.Bootstrap = false
+	if disposableRelayState(state) {
+		delete(s.relays, relayURL)
+		return
+	}
+	s.relays[relayURL] = state
+}
+
+func disposableRelayState(state RelayState) bool {
+	return !state.Bootstrap && !state.hasObservedDescriptor() && !state.Banned &&
+		state.discoveryFailures == 0 && state.activeFailures == 0 &&
+		state.nextDiscoveryRefreshAt.IsZero() && state.suppressActiveUntil.IsZero()
+}
+
 func (s *RelaySet) AggregateRelays() []RelayState {
 	s.mu.RLock()
 	states := make([]RelayState, 0, len(s.relays))
@@ -208,6 +241,16 @@ func (s *RelaySet) AggregateRelays() []RelayState {
 	s.mu.RUnlock()
 
 	return policy.SelectAggregate(states)
+}
+
+func (s *RelaySet) AllRelays() []RelayState {
+	s.mu.RLock()
+	states := make([]RelayState, 0, len(s.relays))
+	for _, state := range s.relays {
+		states = append(states, state)
+	}
+	s.mu.RUnlock()
+	return states
 }
 
 func (s *RelaySet) ConfirmedRelays() []RelayState {
@@ -227,7 +270,7 @@ func (s *RelaySet) ConfirmedRelays() []RelayState {
 // eligibility classification, and the scoring parameters used. Prometheus
 // metrics are emitted from the trace before returning, and a sampled zerolog
 // debug entry is written.
-func (s *RelaySet) PriorityRelaysWithTrace(clientState ClientState) ([]string, SelectionTrace) {
+func (s *RelaySet) PriorityRelaysWithTrace(clientState ClientState) ([]string, telemetry.SelectionTrace) {
 	s.mu.RLock()
 	states := make([]RelayState, 0, len(s.relays))
 	for _, state := range s.relays {
@@ -237,7 +280,7 @@ func (s *RelaySet) PriorityRelaysWithTrace(clientState ClientState) ([]string, S
 	s.mu.RUnlock()
 
 	result, trace := policy.SelectPriorityWithTrace(states, clientState)
-	EmitFromTrace(trace)
+	telemetry.EmitFromTrace(trace)
 	log.Debug().
 		Uint8("client_hash", trace.ClientHash).
 		Int("pool_size", trace.PoolTotal).
@@ -262,7 +305,7 @@ func (s *RelaySet) PriorityRelays(clientState ClientState) []string {
 // eligibility classification, and the scoring parameters used. Prometheus
 // metrics are emitted from the trace before returning, and a sampled zerolog
 // debug entry is written.
-func (s *RelaySet) PriorityMultiHopWithTrace(clientState ClientState) ([]string, SelectionTrace) {
+func (s *RelaySet) PriorityMultiHopWithTrace(clientState ClientState) ([]string, telemetry.SelectionTrace) {
 	s.mu.RLock()
 	states := make([]RelayState, 0, len(s.relays))
 	for _, state := range s.relays {
@@ -272,7 +315,7 @@ func (s *RelaySet) PriorityMultiHopWithTrace(clientState ClientState) ([]string,
 	s.mu.RUnlock()
 
 	result, trace := policy.SelectMultiHopWithTrace(states, clientState)
-	EmitFromTrace(trace)
+	telemetry.EmitFromTrace(trace)
 	log.Debug().
 		Uint8("client_hash", trace.ClientHash).
 		Int("pool_size", trace.PoolTotal).
@@ -405,6 +448,18 @@ func (s *RelaySet) BanRelayURL(relayURL string) {
 	s.relays[relayURL] = state
 }
 
+func (s *RelaySet) AllowRelayURL(relayURL string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, ok := s.relays[relayURL]
+	if !ok {
+		state = newRelayState(relayURL)
+	}
+	state.Banned = false
+	s.relays[relayURL] = state
+}
+
 func (s *RelaySet) ConfirmRelayURL(relayURL string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -496,6 +551,7 @@ func (s *RelaySet) ApplyRelayDiscoveryResponse(targetURL string, resp types.Disc
 			record.DiscoveryRTT = existingAtURL.DiscoveryRTT
 			record.DiscoveryRTTAt = existingAtURL.DiscoveryRTTAt
 		}
+		record.inheritAdaptiveTelemetry(existingAtURL)
 
 		isAuthoritativeTarget := !protocolMismatch && !missingTarget && authoritative && relayURL == targetURL
 		if isAuthoritativeTarget {
@@ -544,6 +600,19 @@ func (s *RelaySet) RecordDiscoveryRTT(relayURL string, rtt time.Duration, measur
 
 	state.DiscoveryRTT = rtt
 	state.DiscoveryRTTAt = measuredAt
+	s.relays[relayURL] = state
+}
+
+func (s *RelaySet) RecordLoadFactor(relayURL string, loadFixed uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, ok := s.relays[relayURL]
+	if !ok {
+		return
+	}
+
+	state.StoreLoadFactor(loadFixed)
 	s.relays[relayURL] = state
 }
 
@@ -610,6 +679,7 @@ func (s *RelaySet) InsertAnnounced(desc types.RelayDescriptor, now time.Time) er
 			record.DiscoveryRTT = existing.DiscoveryRTT
 			record.DiscoveryRTTAt = existing.DiscoveryRTTAt
 		}
+		record.inheritAdaptiveTelemetry(existing)
 	}
 
 	switch s.upsertDescriptorLocked(record, now, false) {

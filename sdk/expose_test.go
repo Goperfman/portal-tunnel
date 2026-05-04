@@ -125,3 +125,43 @@ func TestExposureReconcileRemovesStaleListener(t *testing.T) {
 		t.Fatal("active relay listener missing from exposure.listeners")
 	}
 }
+
+func TestExposureRemoveRelayDetachesRunningListener(t *testing.T) {
+	const relayA = "https://relay-a.example"
+
+	relayAURL, err := url.Parse(relayA)
+	if err != nil {
+		t.Fatalf("url.Parse(relayA) error = %v", err)
+	}
+
+	relayAClosed := make(chan struct{})
+	exposure := &Exposure{
+		explicitRelays: []string{relayA},
+		relaySet:       mustRelaySet(t, relayA),
+		relayListeners: make(map[string]*listener, 1),
+	}
+	exposure.relayListeners[relayA] = &listener{
+		relayURL: relayAURL,
+		cancel:   func() { close(relayAClosed) },
+		doneCh:   relayAClosed,
+	}
+
+	if err := exposure.RemoveRelay(relayA); err != nil {
+		t.Fatalf("RemoveRelay() error = %v", err)
+	}
+
+	select {
+	case <-relayAClosed:
+	default:
+		t.Fatal("removed relay listener was not closed")
+	}
+	if got := exposure.ActiveRelayURLs(); len(got) != 0 {
+		t.Fatalf("ActiveRelayURLs() = %v, want empty", got)
+	}
+	if len(exposure.explicitRelays) != 0 {
+		t.Fatalf("explicitRelays = %v, want empty", exposure.explicitRelays)
+	}
+	if got := exposure.relaySet.PriorityRelays(discovery.ClientState{ExplicitRelayURLs: []string{relayA}}); len(got) != 0 {
+		t.Fatalf("PriorityRelays() = %v, want empty", got)
+	}
+}

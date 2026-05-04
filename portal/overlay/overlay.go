@@ -70,6 +70,7 @@ type Overlay struct {
 	stack    *stack
 	listener net.Listener
 	server   *http.Server
+	client   *http.Client
 }
 
 func NewOverlay(cfg Config, handler http.Handler) (*Overlay, error) {
@@ -98,6 +99,16 @@ func NewOverlay(cfg Config, handler http.Handler) (*Overlay, error) {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	client := utils.NewHTTPClient(
+		utils.WithHTTPDialContext(stack.DialContext),
+		utils.WithHTTPTLSHandshakeTimeout(10*time.Second),
+		utils.WithHTTPMaxIdleConns(100),
+		utils.WithHTTPIdleConnTimeout(90*time.Second),
+		utils.WithHTTPResponseHeaderTimeout(30*time.Second),
+		utils.WithHTTPExpectContinueTimeout(1*time.Second),
+		utils.WithoutHTTP2(),
+	)
+
 	publicCfg := cfg.Copy()
 	publicCfg.PrivateKey = ""
 	return &Overlay{
@@ -105,6 +116,7 @@ func NewOverlay(cfg Config, handler http.Handler) (*Overlay, error) {
 		stack:    stack,
 		listener: listener,
 		server:   server,
+		client:   client,
 	}, nil
 }
 
@@ -139,6 +151,9 @@ func (o *Overlay) Shutdown(ctx context.Context) error {
 			shutdownErr = errors.Join(shutdownErr, err)
 		}
 	}
+	if o.client != nil {
+		o.client.CloseIdleConnections()
+	}
 	if o.listener != nil {
 		err := o.listener.Close()
 		if err != nil && !errors.Is(err, net.ErrClosed) {
@@ -155,12 +170,7 @@ func (o *Overlay) Client() *http.Client {
 	if o == nil || o.stack == nil {
 		return nil
 	}
-	return &http.Client{
-		Transport: &http.Transport{
-			DialContext:       o.stack.DialContext,
-			ForceAttemptHTTP2: false,
-		},
-	}
+	return o.client
 }
 
 func (o *Overlay) DiscoverRelay(ctx context.Context, relay types.RelayDescriptor) (types.DiscoveryResponse, error) {

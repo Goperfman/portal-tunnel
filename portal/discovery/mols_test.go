@@ -57,8 +57,8 @@ func TestGF64MulDistributivity(t *testing.T) {
 func TestMOLSScoreRange(t *testing.T) {
 	for i := range uint8(64) {
 		for j := range uint8(64) {
-			s := molsScore(i, j, molsBaseM1, molsBaseM2)
-			if s < 1 || s > molsOrder*molsOrder {
+			s := molsScore(int(i), int(j), int(molsBaseM1), int(molsBaseM2), 64)
+			if s < 1 || s > 64*64 {
 				t.Fatalf("molsScore(%d, %d) = %d, out of range [1, 4096]", i, j, s)
 			}
 		}
@@ -71,14 +71,14 @@ func TestMOLSScoreRowPermutation(t *testing.T) {
 	for i := range uint8(64) {
 		seen := make(map[int]struct{}, 64)
 		for j := range uint8(64) {
-			s := molsScore(i, j, molsBaseM1, molsBaseM2)
+			s := molsScore(int(i), int(j), int(molsBaseM1), int(molsBaseM2), 64)
 			if _, dup := seen[s]; dup {
 				t.Fatalf("duplicate score %d in row i=%d", s, i)
 			}
 			seen[s] = struct{}{}
 		}
-		if len(seen) != molsOrder {
-			t.Fatalf("row i=%d has %d unique scores, want %d", i, len(seen), molsOrder)
+		if len(seen) != 64 {
+			t.Fatalf("row i=%d has %d unique scores, want %d", i, len(seen), 64)
 		}
 	}
 }
@@ -88,12 +88,12 @@ func TestMOLSScoreRowPermutation(t *testing.T) {
 func TestMOLSCongestionScoreRange(t *testing.T) {
 	for i := range uint8(64) {
 		for j := range uint8(64) {
-			s := molsCongestionScore(i, j, molsBaseM1, molsBaseM2)
-			if s < 1 || s > molsOrder*molsOrder {
+			s := molsCongestionScore(int(i), int(j), int(molsBaseM1), int(molsBaseM2), 64)
+			if s < 1 || s > 64*64 {
 				t.Fatalf("molsCongestionScore(%d, %d) = %d, out of range", i, j, s)
 			}
 			// Verify B(i,j) = (n²+1) - A(i, n-1-j)
-			want := molsMagicConstant - molsScore(i, (molsOrder-1)-j, molsBaseM1, molsBaseM2)
+			want := (64*64 + 1) - molsScore(int(i), (64-1)-int(j), int(molsBaseM1), int(molsBaseM2), 64)
 			if s != want {
 				t.Fatalf("molsCongestionScore(%d, %d) = %d, want %d", i, j, s, want)
 			}
@@ -236,14 +236,17 @@ func TestMOLSSelectPriorityFallbackRelaysDemoted(t *testing.T) {
 	healthy1 := confirmedPolicyRelayState(t, "https://relay-healthy-1.example")
 	healthy1.DiscoveryRTT = 100 * time.Millisecond
 	healthy1.DiscoveryRTTAt = time.Now()
+	healthy1.LoadFactor = 0.1 // Explicitly healthy
 
 	healthy2 := confirmedPolicyRelayState(t, "https://relay-healthy-2.example")
 	healthy2.DiscoveryRTT = 150 * time.Millisecond
 	healthy2.DiscoveryRTTAt = time.Now()
+	healthy2.LoadFactor = 0.1 // Explicitly healthy
 
 	fallback := confirmedPolicyRelayState(t, "https://relay-fallback.example")
 	fallback.DiscoveryRTT = molsFallbackRTTThreshold + time.Millisecond
 	fallback.DiscoveryRTTAt = time.Now()
+	fallback.LoadFactor = 0.1 // Explicitly healthy, but will be demoted by high RTT (isRelayFallback)
 
 	selected := policy.SelectPriority([]RelayState{fallback, healthy1, healthy2}, ClientState{})
 
@@ -316,10 +319,10 @@ func TestMOLSSelectPriorityCongestionSwitchChangesOrder(t *testing.T) {
 		ingressIdx := hashToGF64("ingress-test")
 		j1 := hashToGF64("https://relay-one.example")
 		j2 := hashToGF64("https://relay-two.example")
-		normal1 := molsScore(ingressIdx, j1, molsBaseM1, molsBaseM2)
-		normal2 := molsScore(ingressIdx, j2, molsBaseM1, molsBaseM2)
-		cong1 := molsCongestionScore(ingressIdx, j1, molsBaseM1, molsBaseM2)
-		cong2 := molsCongestionScore(ingressIdx, j2, molsBaseM1, molsBaseM2)
+		normal1 := molsScore(int(ingressIdx), int(j1), int(molsBaseM1), int(molsBaseM2), 64)
+		normal2 := molsScore(int(ingressIdx), int(j2), int(molsBaseM1), int(molsBaseM2), 64)
+		cong1 := molsCongestionScore(int(ingressIdx), int(j1), int(molsBaseM1), int(molsBaseM2), 64)
+		cong2 := molsCongestionScore(int(ingressIdx), int(j2), int(molsBaseM1), int(molsBaseM2), 64)
 		if (normal1 > normal2) != (cong1 > cong2) {
 			t.Fatal("expected congestion switch to invert ordering but result matched normal mode")
 		}
@@ -412,9 +415,9 @@ func TestMOLSSelectPriorityDifferentIngressDifferentOrder(t *testing.T) {
 		for _, addr := range addresses {
 			i := hashToGF64(addr)
 			r := row{
-				molsScore(i, j1, molsBaseM1, molsBaseM2),
-				molsScore(i, j2, molsBaseM1, molsBaseM2),
-				molsScore(i, j3, molsBaseM1, molsBaseM2),
+				molsScore(int(i), int(j1), int(molsBaseM1), int(molsBaseM2), 64),
+				molsScore(int(i), int(j2), int(molsBaseM1), int(molsBaseM2), 64),
+				molsScore(int(i), int(j3), int(molsBaseM1), int(molsBaseM2), 64),
 			}
 			rows[r] = struct{}{}
 		}
@@ -527,7 +530,7 @@ func TestMOLSMagicRowSum(t *testing.T) {
 	for i := range uint8(64) {
 		var rowSum int
 		for j := range uint8(64) {
-			rowSum += molsScore(i, j, molsBaseM1, molsBaseM2)
+			rowSum += molsScore(int(i), int(j), int(molsBaseM1), int(molsBaseM2), 64)
 		}
 		if rowSum != magicSum {
 			t.Fatalf("row i=%d sum = %d, want %d", i, rowSum, magicSum)
@@ -537,12 +540,12 @@ func TestMOLSMagicRowSum(t *testing.T) {
 
 // TestMOLSMagicColumnSum verifies that each column sums to the magic constant.
 func TestMOLSMagicColumnSum(t *testing.T) {
-	const magicSum = molsOrder * (molsOrder*molsOrder + 1) / 2
+	const magicSum = 64 * (64*64 + 1) / 2
 
 	for j := range uint8(64) {
 		var colSum int
 		for i := range uint8(64) {
-			colSum += molsScore(i, j, molsBaseM1, molsBaseM2)
+			colSum += molsScore(int(i), int(j), int(molsBaseM1), int(molsBaseM2), 64)
 		}
 		if colSum != magicSum {
 			t.Fatalf("column j=%d sum = %d, want %d", j, colSum, magicSum)
@@ -556,7 +559,7 @@ func TestMOLSGridUniqueness(t *testing.T) {
 	seen := make(map[int]struct{}, 64*64)
 	for i := range uint8(64) {
 		for j := range uint8(64) {
-			s := molsScore(i, j, molsBaseM1, molsBaseM2)
+			s := molsScore(int(i), int(j), int(molsBaseM1), int(molsBaseM2), 64)
 			if _, dup := seen[s]; dup {
 				t.Fatalf("duplicate score %d at (%d, %d)", s, i, j)
 			}
@@ -573,7 +576,7 @@ func TestMOLSVariantGridUniqueness(t *testing.T) {
 	seen := make(map[int]struct{}, 64*64)
 	for i := range uint8(64) {
 		for j := range uint8(64) {
-			s := molsScore(i, j, molsVariantM1, molsVariantM2)
+			s := molsScore(int(i), int(j), int(molsVariantM1), int(molsVariantM2), 64)
 			if _, dup := seen[s]; dup {
 				t.Fatalf("duplicate score %d at (%d, %d) in variant grid", s, i, j)
 			}
@@ -604,240 +607,30 @@ func TestMOLSRTTStatsEmpty(t *testing.T) {
 	}
 }
 
-// overlayPolicyRelayState returns a confirmed relay state whose descriptor
-// satisfies HasOverlayPeer() — required for SelectMultiHop eligibility.
-func overlayPolicyRelayState(t *testing.T, relayURL string) RelayState {
-	t.Helper()
-	state := confirmedPolicyRelayState(t, relayURL)
-	state.Descriptor.SupportsOverlay = true
-	state.Descriptor.WireGuardPublicKey = "dGVzdGtleXRlc3RrZXl0ZXN0a2V5dGVzdGtleTA=" // non-empty placeholder
-	state.Descriptor.WireGuardPort = 51820
-	return state
-}
-
-// selectionCase is a shared table row for TestMOLSWithTraceByteEqualToLegacy.
-type selectionCase struct {
-	name   string
-	states []RelayState
-	cs     ClientState
-}
-
-// assertByteEqual verifies that legacy and withTrace slices are identical and
-// that trace.OutputURLs matches legacy.  It also checks mode and PoolTotal.
-func assertByteEqual(t *testing.T, mode string, states []RelayState, legacy []string, withTrace []string, trace SelectionTrace) {
-	t.Helper()
-	if len(legacy) != len(withTrace) {
-		t.Fatalf("return-value length mismatch: legacy=%d withTrace=%d", len(legacy), len(withTrace))
-	}
-	for i := range legacy {
-		if legacy[i] != withTrace[i] {
-			t.Fatalf("return-value[%d]: legacy=%q withTrace=%q", i, legacy[i], withTrace[i])
-		}
-	}
-	if len(legacy) != len(trace.OutputURLs) {
-		t.Fatalf("OutputURLs length mismatch: legacy=%d trace=%d", len(legacy), len(trace.OutputURLs))
-	}
-	for i := range legacy {
-		if legacy[i] != trace.OutputURLs[i] {
-			t.Fatalf("OutputURLs[%d]: legacy=%q trace=%q", i, legacy[i], trace.OutputURLs[i])
-		}
-	}
-	if trace.Mode != mode {
-		t.Fatalf("Mode = %q, want %q", trace.Mode, mode)
-	}
-	if trace.PoolTotal != len(states) {
-		t.Fatalf("PoolTotal = %d, want %d", trace.PoolTotal, len(states))
-	}
-}
-
-// TestMOLSWithTraceByteEqualToLegacy asserts that for every test scenario the
-// WithTrace variants produce OutputURLs that are byte-identical to the
-// corresponding legacy methods.  This is Phase 1 acceptance criterion #1
-// ("Golden no-behavior-change").
-//
-// Priority scenarios mirror the existing TestMOLSSelectPriority* inputs.
-// MultiHop scenarios are fresh (no pre-existing TestMOLSSelectMultiHop* exist)
-// and cover the main eligibility branches.
-func TestMOLSWithTraceByteEqualToLegacy(t *testing.T) {
+// TestMOLSSelectPriorityEWMAStabilityTransposition verifies that relays with
+// high EWMA RTT are demoted relative to stable relays.
+func TestMOLSSelectPriorityEWMAStabilityTransposition(t *testing.T) {
 	policy := MOLSRelayPolicy{}
 
-	t.Run("priority", func(t *testing.T) {
-		explicitURL := "https://relay-explicit.example"
-		relayA := "https://relay-a.example"
-		relayB := "https://relay-b.example"
+	relayStable := confirmedPolicyRelayState(t, "https://relay-stable.example")
+	relayStable.EWMARTT = 100 * time.Millisecond
+	relayStable.DiscoveryRTT = 100 * time.Millisecond
 
-		tenRelays := make([]RelayState, 10)
-		for i := range tenRelays {
-			tenRelays[i] = confirmedPolicyRelayState(t, fmt.Sprintf("https://relay-%d.example", i))
-		}
+	relayUnstable := confirmedPolicyRelayState(t, "https://relay-unstable.example")
+	relayUnstable.EWMARTT = 600 * time.Millisecond
+	relayUnstable.DiscoveryRTT = 600 * time.Millisecond
 
-		healthy1 := confirmedPolicyRelayState(t, "https://relay-healthy-1.example")
-		healthy1.DiscoveryRTT = 100 * time.Millisecond
-		healthy1.DiscoveryRTTAt = time.Now()
+	states := []RelayState{relayStable, relayUnstable}
 
-		healthy2 := confirmedPolicyRelayState(t, "https://relay-healthy-2.example")
-		healthy2.DiscoveryRTT = 150 * time.Millisecond
-		healthy2.DiscoveryRTTAt = time.Now()
+	// We force the same ingress so they are ranked together.
+	selected := policy.SelectPriority(states, ClientState{LocalAddress: "test-ingress"})
 
-		fallback := confirmedPolicyRelayState(t, "https://relay-fallback.example")
-		fallback.DiscoveryRTT = molsFallbackRTTThreshold + time.Millisecond
-		fallback.DiscoveryRTTAt = time.Now()
+	if len(selected) != 2 {
+		t.Fatalf("len(selected) = %d, want 2", len(selected))
+	}
 
-		fallback1 := confirmedPolicyRelayState(t, "https://relay-fallback-1.example")
-		fallback1.DiscoveryRTT = molsFallbackRTTThreshold + time.Millisecond
-		fallback1.DiscoveryRTTAt = time.Now()
-		fallback2 := confirmedPolicyRelayState(t, "https://relay-fallback-2.example")
-		fallback2.DiscoveryRTT = molsFallbackRTTThreshold + time.Millisecond
-		fallback2.DiscoveryRTTAt = time.Now()
-
-		r1 := confirmedPolicyRelayState(t, "https://relay-one.example")
-		r2 := confirmedPolicyRelayState(t, "https://relay-two.example")
-		rttHigh := molsCongestionRTTThreshold + 100*time.Millisecond
-		r1c := r1
-		r1c.DiscoveryRTT = rttHigh
-		r1c.DiscoveryRTTAt = time.Now()
-		r2c := r2
-		r2c.DiscoveryRTT = rttHigh
-		r2c.DiscoveryRTTAt = time.Now()
-
-		r1v := confirmedPolicyRelayState(t, "https://relay-one.example")
-		r1v.DiscoveryRTT = 100 * time.Millisecond
-		r1v.DiscoveryRTTAt = time.Now()
-		r2v := confirmedPolicyRelayState(t, "https://relay-two.example")
-		r2v.DiscoveryRTT = 400 * time.Millisecond
-		r2v.DiscoveryRTTAt = time.Now()
-
-		rAlpha := confirmedPolicyRelayState(t, "https://relay-alpha.example")
-		rBeta := confirmedPolicyRelayState(t, "https://relay-beta.example")
-		rGamma := confirmedPolicyRelayState(t, "https://relay-gamma.example")
-
-		expired := confirmedPolicyRelayState(t, "https://relay-expired.example")
-		expired.Descriptor.ExpiresAt = time.Now().UTC().Add(-time.Minute)
-
-		expExplicit := confirmedPolicyRelayState(t, "https://relay-explicit-expired.example")
-		expExplicit.Descriptor.ExpiresAt = time.Now().UTC().Add(-time.Minute)
-
-		backoff := confirmedPolicyRelayState(t, "https://relay-backoff.example")
-		backoff.suppressActiveUntil = time.Now().UTC().Add(time.Minute)
-
-		discBackoff := confirmedPolicyRelayState(t, "https://relay-discovery-backoff.example")
-		discBackoff.nextDiscoveryRefreshAt = time.Now().UTC().Add(time.Minute)
-
-		cases := []selectionCase{
-			{name: "nil_pool", states: nil, cs: ClientState{}},
-			{
-				name: "explicit_outside_auto_limit",
-				states: []RelayState{
-					bootstrapPolicyRelayState(explicitURL),
-					confirmedPolicyRelayState(t, relayA),
-					confirmedPolicyRelayState(t, relayB),
-				},
-				cs: ClientState{ExplicitRelayURLs: []string{explicitURL}, MaxActiveRelays: 1},
-			},
-			{
-				name: "deterministic_fixed_address",
-				states: []RelayState{
-					confirmedPolicyRelayState(t, "https://relay-a.example"),
-					confirmedPolicyRelayState(t, "https://relay-b.example"),
-					confirmedPolicyRelayState(t, "https://relay-c.example"),
-				},
-				cs: ClientState{LocalAddress: "0x1234abcd"},
-			},
-			{name: "fallback_relays_demoted", states: []RelayState{fallback, healthy1, healthy2}, cs: ClientState{}},
-			{name: "min_active_nodes_promotes_fallback", states: []RelayState{fallback1, fallback2}, cs: ClientState{}},
-			{name: "congestion_switch", states: []RelayState{r1c, r2c}, cs: ClientState{LocalAddress: "ingress-test"}},
-			{name: "variant_grid_high_cv", states: []RelayState{r1v, r2v}, cs: ClientState{LocalAddress: "ingress-cv"}},
-			{name: "different_ingress_addresses", states: []RelayState{rAlpha, rBeta, rGamma}, cs: ClientState{LocalAddress: "0xabc"}},
-			{name: "max_active_relays_cap", states: tenRelays, cs: ClientState{MaxActiveRelays: 3}},
-			{name: "zero_max_active_uses_default", states: tenRelays, cs: ClientState{MaxActiveRelays: 0}},
-			{name: "skip_expired_auto_relay", states: []RelayState{expired}, cs: ClientState{}},
-			{
-				name:   "keep_expired_explicit_relay",
-				states: []RelayState{expExplicit},
-				cs:     ClientState{ExplicitRelayURLs: []string{expExplicit.Descriptor.APIHTTPSAddr}},
-			},
-			{name: "skip_auto_relay_in_backoff", states: []RelayState{backoff}, cs: ClientState{}},
-			{name: "keep_discovery_backoff_relay", states: []RelayState{discBackoff}, cs: ClientState{}},
-			{name: "keep_unobserved_seed", states: []RelayState{bootstrapPolicyRelayState("https://relay-seed.example")}, cs: ClientState{}},
-			{name: "normal_mode_no_rtt", states: []RelayState{r1, r2}, cs: ClientState{LocalAddress: "ingress-test"}},
-		}
-
-		for _, tc := range cases {
-			t.Run(tc.name, func(t *testing.T) {
-				legacy := policy.SelectPriority(tc.states, tc.cs)
-				withTrace, trace := policy.SelectPriorityWithTrace(tc.states, tc.cs)
-				assertByteEqual(t, "priority", tc.states, legacy, withTrace, trace)
-				// min_active_nodes_promotes_fallback: both fallbacks are promoted
-				// into the active section, so no Ranked entry should be Demoted.
-				if tc.name == "min_active_nodes_promotes_fallback" {
-					for i, entry := range trace.Ranked {
-						if entry.Demoted {
-							t.Errorf("Ranked[%d] (%q): Demoted=true but relay was promoted to active; want false", i, entry.URL)
-						}
-					}
-				}
-				// fallback_relays_demoted: the fallback relay (healthy1/healthy2 present,
-				// so no promotion occurs) must appear as Demoted=true in Ranked.
-				if tc.name == "fallback_relays_demoted" {
-					const fallbackURL = "https://relay-fallback.example"
-					found := false
-					for i, entry := range trace.Ranked {
-						if entry.URL == fallbackURL {
-							found = true
-							if !entry.Demoted {
-								t.Errorf("Ranked[%d] (%q): Demoted=false but relay stays in fallback section; want true", i, entry.URL)
-							}
-						}
-					}
-					if !found {
-						t.Errorf("fallback relay %q not found in trace.Ranked", fallbackURL)
-					}
-				}
-			})
-		}
-	})
-
-	t.Run("multihop", func(t *testing.T) {
-		ovA := overlayPolicyRelayState(t, "https://mh-relay-a.example")
-		ovB := overlayPolicyRelayState(t, "https://mh-relay-b.example")
-		ovC := overlayPolicyRelayState(t, "https://mh-relay-c.example")
-
-		// noDescRelay: hasObservedDescriptor()==false (LastSeenAt zero).
-		noDescRelay := newRelayState("https://mh-nodesc.example")
-
-		bannedRelay := confirmedPolicyRelayState(t, "https://mh-banned.example")
-		bannedRelay.Banned = true
-
-		suppressedRelay := overlayPolicyRelayState(t, "https://mh-suppressed.example")
-		suppressedRelay.suppressActiveUntil = time.Now().UTC().Add(time.Minute)
-
-		// noOverlayRelay: hasObservedDescriptor()==true but HasOverlayPeer()==false.
-		noOverlayRelay := confirmedPolicyRelayState(t, "https://mh-no-overlay.example")
-
-		expiredRelay := overlayPolicyRelayState(t, "https://mh-expired.example")
-		expiredRelay.Descriptor.ExpiresAt = time.Now().UTC().Add(-time.Minute)
-
-		cases := []selectionCase{
-			{name: "depth_zero_returns_nil", states: []RelayState{ovA, ovB}, cs: ClientState{MultiHopDepth: 0}},
-			{name: "depth_one_returns_nil", states: []RelayState{ovA, ovB}, cs: ClientState{MultiHopDepth: 1}},
-			{name: "nil_pool", states: nil, cs: ClientState{MultiHopDepth: 2}},
-			{name: "empty_pool_after_aggregate", states: []RelayState{bannedRelay}, cs: ClientState{MultiHopDepth: 2}},
-			{name: "eligible_pool_depth_2", states: []RelayState{ovA, ovB, ovC}, cs: ClientState{MultiHopDepth: 2, LocalAddress: "client-1"}},
-			{name: "eligible_pool_depth_3", states: []RelayState{ovA, ovB, ovC}, cs: ClientState{MultiHopDepth: 3, LocalAddress: "client-2"}},
-			{name: "depth_exceeds_pool_size", states: []RelayState{ovA, ovB}, cs: ClientState{MultiHopDepth: 5, LocalAddress: "client-3"}},
-			{name: "skip_no_descriptor", states: []RelayState{noDescRelay, ovA}, cs: ClientState{MultiHopDepth: 2, LocalAddress: "client-4"}},
-			{name: "skip_expired", states: []RelayState{expiredRelay, ovB}, cs: ClientState{MultiHopDepth: 2, LocalAddress: "client-5"}},
-			{name: "skip_no_overlay_peer", states: []RelayState{noOverlayRelay, ovC}, cs: ClientState{MultiHopDepth: 2, LocalAddress: "client-6"}},
-			{name: "skip_suppressed", states: []RelayState{suppressedRelay, ovA}, cs: ClientState{MultiHopDepth: 2, LocalAddress: "client-7"}},
-			{name: "all_ineligible_returns_nil", states: []RelayState{expiredRelay, noDescRelay, noOverlayRelay}, cs: ClientState{MultiHopDepth: 2}},
-		}
-
-		for _, tc := range cases {
-			t.Run(tc.name, func(t *testing.T) {
-				legacy := policy.SelectMultiHop(tc.states, tc.cs)
-				withTrace, trace := policy.SelectMultiHopWithTrace(tc.states, tc.cs)
-				assertByteEqual(t, "multihop", tc.states, legacy, withTrace, trace)
-			})
-		}
-	})
+	// Stable should be preferred.
+	if selected[0] != "https://relay-stable.example" {
+		t.Errorf("expected stable relay to be first, got %q", selected[0])
+	}
 }

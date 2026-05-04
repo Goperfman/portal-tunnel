@@ -1,49 +1,20 @@
 package discovery
 
-// MOLSRelayPolicy uses a GF(64) MOLS-derived score as the primary
-// deterministic ordering for eligible relays. Health and freshness gates decide
-// eligibility before the MOLS score is applied.
-
-// # Core Design
+// MOLSRelayPolicy ranks relays using a GF(64)-based MOLS grid with a
+// non-invasive adaptive partition over local load telemetry.
 //
-// The engine uses an order-64 grid derived from Galois Field GF(64). The
-// composite score is deterministic for a (client identity, relay URL) pair and
-// drives ordering after freshness and failure-suppression gates. Confirmation
-// and RTT remain tie-breakers for equal scores.
+// Ordering Pipeline:
+//   1. Filter: Apply ban, expiry, and protocol compatibility gates.
+//   2. Extract: Keep the top fixed-depth deterministic MOLS candidates.
+//   3. Partition: Move saturated relays behind active relays.
+//   4. Preserve: Keep intra-tier MOLS order unchanged.
 //
-//      L_m[i][j] = gf64Mul(m, i) XOR j           (Latin-square row for multiplier m)
-//      score(i, j) = L_m1[i][j] * 64 + L_m2[i][j] + 1   (composite, range 1..4096)
-//
-// # Congestion Switching (Reverse-Siamese)
-//
-// When the mean discovery RTT across the auto pool exceeds
-// molsCongestionRTTThreshold, the engine applies:
-//
-//      congestionScore(i, j) = (n^2+1) - score(i, 63-j)
-//
-// This mirrors the deterministic tie-break order when the whole observed pool
-// appears slow.
-//
-// # Non-Linear Load (Variant Grid)
-//
-// When the coefficient of variation of per-relay discovery RTTs exceeds
-// molsCVThreshold, the engine switches multipliers from (3, 5) to (7, 11).
-// Non-linear detection takes precedence over congestion switching.
-//
-// # Health & Fallback
-//
-// Relays whose measured discovery RTT exceeds molsFallbackRTTThreshold are
-// treated as Fallback and placed at the end of the priority queue. Discovery
-// polling failures and SDK listener failures are tracked separately so a
-// discovery retry delay does not by itself remove an otherwise active relay
-// candidate.
-
 import (
-	"hash/fnv"
 	"math"
 	"slices"
-	"sort"
 	"time"
+
+	"github.com/gosuda/portal-tunnel/v2/portal/telemetry"
 )
 
 const (
@@ -60,6 +31,7 @@ const (
 	molsFallbackRTTThreshold   = 2 * time.Second
 	molsMinActiveNodes         = 2
 	defaultMaxActiveRelays     = 3
+	molsCandidateDepth         = 8
 )
 
 // gf64Mul performs multiplication in GF(2^6) with primitive polynomial x^6 + x + 1 (0x43).
@@ -81,54 +53,89 @@ func gf64Mul(a, b uint8) uint8 {
 	return r
 }
 
-func molsScore(i, j, m1, m2 uint8) int {
-	// L1, L2 form the orthogonal latin squares.
-	l1 := gf64Mul(m1, i) ^ j
-	l2 := gf64Mul(m2, i) ^ j
-
-	score := int(l1)*molsOrder + int(l2) + 1
-	return score
+// gridOrderForSize returns the smallest supported MOLS grid order (64, 96, 128)
+// that can accommodate the relay pool size.
+func gridOrderForSize(poolSize int) int {
+	if poolSize <= 64 {
+		return 64
+	}
+	// Continuously scale up in increments of 32 to handle arbitrary pool sizes
+	rem := poolSize % 32
+	if rem == 0 {
+		return poolSize
+	}
+	return poolSize + (32 - rem)
 }
 
-func molsCongestionScore(i, j, m1, m2 uint8) int {
-	return molsMagicConstant - molsScore(i, (molsOrder-1)-j, m1, m2)
+// NOTE: For orders 96 and 128, which are not powers of 2, the GF implementation
+// needs to be treated as a composite or modular field. For this progressive
+// scaling, we use a simple linear congruence as a fallback to preserve
+// deterministic uniqueness when the standard GF(64) grid is exceeded.
+func molsScore(i, j, m1, m2, order int) int {
+	// Standard GF(64) case
+	if order == 64 {
+		l1 := gf64Mul(uint8(m1), uint8(i)) ^ uint8(j)
+		l2 := gf64Mul(uint8(m2), uint8(i)) ^ uint8(j)
+		return int(l1)*order + int(l2) + 1
+	}
+
+	// Fallback for non-power-of-two orders: Linear Congruential approach
+	// to maintain deterministic uniqueness across larger relay sets.
+	return ((m1*i+j)%order)*order + ((m2*i + j) % order) + 1
+}
+
+func molsCongestionScore(i, j, m1, m2, order int) int {
+	return (order*order + 1) - molsScore(i, (order-1)-j, m1, m2, order)
 }
 
 func hashToGF64(s string) uint8 {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(s))
-	return uint8(h.Sum32() & 0x3f)
+	var h uint32 = 2166136261
+	for i := 0; i < len(s); i++ {
+		h ^= uint32(s[i])
+		h *= 16777619
+	}
+	return uint8(h & 0x3f)
 }
 
 func molsRTTStats(states []RelayState) (mean time.Duration, cv float64) {
-	var samples []float64
+	var count int
+	var sum float64
 	for _, s := range states {
 		if s.DiscoveryRTTAt.IsZero() {
 			continue
 		}
-		samples = append(samples, float64(s.DiscoveryRTT))
+		count++
+		sum += float64(s.DiscoveryRTT)
 	}
-	if len(samples) == 0 {
+	if count == 0 {
 		return 0, 0
 	}
-	var sum float64
-	for _, v := range samples {
-		sum += v
-	}
-	avg := sum / float64(len(samples))
-	if len(samples) == 1 {
+	avg := sum / float64(count)
+	if count == 1 {
 		return time.Duration(avg), 0
 	}
 	var sq float64
-	for _, v := range samples {
-		d := v - avg
+	for _, s := range states {
+		if s.DiscoveryRTTAt.IsZero() {
+			continue
+		}
+		d := float64(s.DiscoveryRTT) - avg
 		sq += d * d
 	}
-	stddev := math.Sqrt(sq / float64(len(samples)))
+	stddev := math.Sqrt(sq / float64(count))
 	if avg > 0 {
 		cv = stddev / avg
 	}
 	return time.Duration(avg), cv
+}
+
+func isRelayFallbackByURL(url string, states []RelayState) bool {
+	for _, s := range states {
+		if s.Descriptor.APIHTTPSAddr == url {
+			return isRelayFallback(s)
+		}
+	}
+	return false
 }
 
 func isRelayFallback(state RelayState) bool {
@@ -136,6 +143,27 @@ func isRelayFallback(state RelayState) bool {
 }
 
 type MOLSRelayPolicy struct{}
+
+type molsCandidate struct {
+	state RelayState
+	score int
+	seq   int
+}
+
+func betterMOLSCandidate(a, b molsCandidate) bool {
+	if a.score != b.score {
+		return a.score > b.score
+	}
+	if a.state.Confirmed != b.state.Confirmed {
+		return a.state.Confirmed
+	}
+	aURL := a.state.Descriptor.APIHTTPSAddr
+	bURL := b.state.Descriptor.APIHTTPSAddr
+	if aURL != bURL {
+		return aURL < bURL
+	}
+	return a.seq < b.seq
+}
 
 func (p MOLSRelayPolicy) SelectAggregate(states []RelayState) []RelayState {
 	out := make([]RelayState, 0, len(states))
@@ -225,76 +253,53 @@ func (p MOLSRelayPolicy) rankRelayPool(autoPool []RelayState, localAddress strin
 		m1, m2 = molsVariantM1, molsVariantM2
 	}
 
-	active := make([]RelayState, 0, len(autoPool))
-	fallbacks := make([]RelayState, 0)
-	for _, state := range autoPool {
-		if isRelayFallback(state) {
-			fallbacks = append(fallbacks, state)
-		} else {
-			active = append(active, state)
-		}
-	}
-
-	if len(active) < molsMinActiveNodes && len(fallbacks) > 0 {
-		promote := min(molsMinActiveNodes-len(active), len(fallbacks))
-		active = append(active, fallbacks[:promote]...)
-		fallbacks = fallbacks[promote:]
-	}
-
+	order := gridOrderForSize(len(autoPool))
 	scoreFor := func(state RelayState) int {
 		candidateIdx := hashToGF64(state.Descriptor.APIHTTPSAddr)
+		idx := int(candidateIdx) % order
 		if congested {
-			return molsCongestionScore(ingressIdx, candidateIdx, m1, m2)
+			return molsCongestionScore(int(ingressIdx)%order, idx, int(m1), int(m2), order)
 		}
-		return molsScore(ingressIdx, candidateIdx, m1, m2)
+		return molsScore(int(ingressIdx)%order, idx, int(m1), int(m2), order)
 	}
 
-	rank := func(pool []RelayState) []string {
-		type item struct {
-			url   string
-			conf  bool
-			rtt   time.Duration
-			score int
+	var candidates [molsCandidateDepth]molsCandidate
+	candidateCount := 0
+	for i, state := range autoPool {
+		state.EvaluateSaturation()
+		candidate := molsCandidate{
+			state: state,
+			score: scoreFor(state),
+			seq:   i,
 		}
-		items := make([]item, len(pool))
-		for i, st := range pool {
-			items[i] = item{
-				url:   st.Descriptor.APIHTTPSAddr,
-				conf:  st.Confirmed,
-				rtt:   st.DiscoveryRTT,
-				score: scoreFor(st),
+		insertAt := candidateCount
+		for insertAt > 0 && betterMOLSCandidate(candidate, candidates[insertAt-1]) {
+			if insertAt < molsCandidateDepth {
+				candidates[insertAt] = candidates[insertAt-1]
 			}
+			insertAt--
 		}
-		sort.Slice(items, func(i, j int) bool {
-			if items[i].score != items[j].score {
-				return items[i].score > items[j].score
-			}
-			if items[i].conf != items[j].conf {
-				return items[i].conf
-			}
-			if items[i].rtt != items[j].rtt {
-				if items[i].rtt == 0 {
-					return false
-				}
-				if items[j].rtt == 0 {
-					return true
-				}
-				return items[i].rtt < items[j].rtt
-			}
-			return items[i].url < items[j].url
-		})
-		res := make([]string, len(items))
-		for i, v := range items {
-			res[i] = v.url
+		if insertAt >= molsCandidateDepth {
+			continue
 		}
-		return res
+		candidates[insertAt] = candidate
+		if candidateCount < molsCandidateDepth {
+			candidateCount++
+		}
 	}
 
-	autoURLs := append(rank(active), rank(fallbacks)...)
-	if len(autoURLs) == 0 {
-		return nil
+	out := make([]string, 0, candidateCount)
+	for i := 0; i < candidateCount; i++ {
+		if !candidates[i].state.IsSaturated {
+			out = append(out, candidates[i].state.Descriptor.APIHTTPSAddr)
+		}
 	}
-	return autoURLs
+	for i := 0; i < candidateCount; i++ {
+		if candidates[i].state.IsSaturated {
+			out = append(out, candidates[i].state.Descriptor.APIHTTPSAddr)
+		}
+	}
+	return out
 }
 
 // SelectPriorityWithTrace is the telemetry-instrumented sibling of
@@ -308,11 +313,11 @@ func (p MOLSRelayPolicy) rankRelayPool(autoPool []RelayState, localAddress strin
 // processing. Explicit relays are not included in Ranked (they bypass MOLS
 // scoring entirely). PoolFallback reflects the fallback count before the
 // minimum-active-node promotion step.
-func (p MOLSRelayPolicy) SelectPriorityWithTrace(states []RelayState, cs ClientState) ([]string, SelectionTrace) {
+func (p MOLSRelayPolicy) SelectPriorityWithTrace(states []RelayState, cs ClientState) ([]string, telemetry.SelectionTrace) {
 	start := time.Now()
 	now := start.UTC()
 
-	trace := SelectionTrace{
+	trace := telemetry.SelectionTrace{
 		Timestamp:  start,
 		ClientHash: hashToGF64(cs.LocalAddress),
 		Mode:       "priority",
@@ -353,6 +358,9 @@ func (p MOLSRelayPolicy) SelectPriorityWithTrace(states []RelayState, cs ClientS
 				}
 			}
 			explicit = append(explicit, relayURL)
+			continue
+		}
+		if slices.Contains(cs.SuppressedRelayURLs, relayURL) {
 			continue
 		}
 
@@ -425,15 +433,16 @@ func (p MOLSRelayPolicy) SelectPriorityWithTrace(states []RelayState, cs ClientS
 
 	// Build Ranked entries for all candidates in the auto pool.
 	ingressIdx := hashToGF64(cs.LocalAddress)
+	order := gridOrderForSize(len(autoPool))
 	for _, state := range autoPool {
 		candidateIdx := hashToGF64(state.Descriptor.APIHTTPSAddr)
 		var score int
 		if congested {
-			score = molsCongestionScore(ingressIdx, candidateIdx, m1, m2)
+			score = molsCongestionScore(int(ingressIdx), int(candidateIdx), int(m1), int(m2), order)
 		} else {
-			score = molsScore(ingressIdx, candidateIdx, m1, m2)
+			score = molsScore(int(ingressIdx), int(candidateIdx), int(m1), int(m2), order)
 		}
-		trace.Ranked = append(trace.Ranked, TraceEntry{
+		trace.Ranked = append(trace.Ranked, telemetry.TraceEntry{
 			URL:       state.Descriptor.APIHTTPSAddr,
 			Score:     score,
 			Confirmed: state.Confirmed,
@@ -472,11 +481,11 @@ func (p MOLSRelayPolicy) SelectPriority(states []RelayState, clientState ClientS
 // peer, UDP/TCP mismatch, suppressed, banned) are recorded in
 // SelectionTrace.Suppressed / Reasons. PoolFallback reflects the fallback count
 // before the minimum-active-node promotion step.
-func (p MOLSRelayPolicy) SelectMultiHopWithTrace(states []RelayState, cs ClientState) ([]string, SelectionTrace) {
+func (p MOLSRelayPolicy) SelectMultiHopWithTrace(states []RelayState, cs ClientState) ([]string, telemetry.SelectionTrace) {
 	start := time.Now()
 	now := start.UTC()
 
-	trace := SelectionTrace{
+	trace := telemetry.SelectionTrace{
 		Timestamp:  start,
 		ClientHash: hashToGF64(cs.LocalAddress),
 		Mode:       "multihop",
@@ -584,15 +593,16 @@ func (p MOLSRelayPolicy) SelectMultiHopWithTrace(states []RelayState, cs ClientS
 
 	// Build Ranked entries for all candidates in the auto pool.
 	ingressIdx := hashToGF64(cs.LocalAddress)
+	order := gridOrderForSize(len(autoPool))
 	for _, state := range autoPool {
 		candidateIdx := hashToGF64(state.Descriptor.APIHTTPSAddr)
 		var score int
 		if congested {
-			score = molsCongestionScore(ingressIdx, candidateIdx, m1, m2)
+			score = molsCongestionScore(int(ingressIdx), int(candidateIdx), int(m1), int(m2), order)
 		} else {
-			score = molsScore(ingressIdx, candidateIdx, m1, m2)
+			score = molsScore(int(ingressIdx), int(candidateIdx), int(m1), int(m2), order)
 		}
-		trace.Ranked = append(trace.Ranked, TraceEntry{
+		trace.Ranked = append(trace.Ranked, telemetry.TraceEntry{
 			URL:       state.Descriptor.APIHTTPSAddr,
 			Score:     score,
 			Confirmed: state.Confirmed,
