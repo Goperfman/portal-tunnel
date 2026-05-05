@@ -129,15 +129,6 @@ func molsRTTStats(states []RelayState) (mean time.Duration, cv float64) {
 	return time.Duration(avg), cv
 }
 
-func isRelayFallbackByURL(url string, states []RelayState) bool {
-	for _, s := range states {
-		if s.Descriptor.APIHTTPSAddr == url {
-			return isRelayFallback(s)
-		}
-	}
-	return false
-}
-
 func isRelayFallback(state RelayState) bool {
 	return !state.DiscoveryRTTAt.IsZero() && state.DiscoveryRTT > molsFallbackRTTThreshold
 }
