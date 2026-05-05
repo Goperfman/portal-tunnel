@@ -148,7 +148,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	}
 	var relaySet *discovery.RelaySet
 	if cfg.DiscoveryEnabled {
-		cfg.Bootstraps, err = utils.ResolvePortalRelayURLs(context.Background(), cfg.Bootstraps, true)
+		cfg.Bootstraps, err = utils.ResolvePortalRelayURLs(cfg.Bootstraps, true)
 		if err != nil {
 			return nil, fmt.Errorf("resolve discovery bootstraps: %w", err)
 		}

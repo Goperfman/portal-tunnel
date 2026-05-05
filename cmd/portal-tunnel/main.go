@@ -77,7 +77,7 @@ func runExposeCommand(args []string) error {
 
 	utils.StringFlag(fs, &flags.relayCSV, "relays", "", "Additional Portal relay server API URLs (comma-separated; scheme omitted defaults to https)")
 	utils.StringFlagEnv(fs, &flags.multiHopCSV, "multi-hop", "", "Ordered multi-hop relay API URLs, comma-separated", "MULTI_HOP")
-	utils.BoolFlag(fs, &flags.discovery, "discovery", true, "Include public registry relays and discover additional relay bootstraps")
+	utils.BoolFlag(fs, &flags.discovery, "discovery", true, "Include bootstrap relays and discover additional relays")
 	utils.BoolFlagEnv(fs, &flags.banMITM, "ban-mitm", true, "Ban relay when the MITM self-probe detects TLS termination", "BAN_MITM")
 	utils.StringFlagEnv(fs, &flags.identityPath, "identity-path", "identity.json", "identity json file path", "IDENTITY_PATH")
 	utils.StringFlagEnv(fs, &flags.identityJSON, "identity-json", "", "identity json payload; overrides --identity-path contents and is persisted there when both are set", "IDENTITY_JSON")
@@ -219,7 +219,7 @@ func runListCommand(args []string) error {
 	fs := utils.NewFlagSet("list", printListUsage)
 
 	utils.StringFlag(fs, &flags.relayCSV, "relays", "", "Additional Portal relay server API URLs (comma-separated; scheme omitted defaults to https)")
-	utils.BoolFlag(fs, &flags.defaultRelays, "default-relays", true, "Include public registry relays")
+	utils.BoolFlag(fs, &flags.defaultRelays, "default-relays", true, "Include bootstrap relays")
 
 	if err := utils.ParseFlagSet(fs, args, printListUsage); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -237,7 +237,7 @@ func runListCommand(args []string) error {
 
 	relayInputs := utils.SplitCSV(flags.relayCSV)
 
-	relayURLs, err := utils.ResolvePortalRelayURLs(ctx, relayInputs, flags.defaultRelays)
+	relayURLs, err := utils.ResolvePortalRelayURLs(relayInputs, flags.defaultRelays)
 	if err != nil {
 		return fmt.Errorf("resolve relay urls: %w", err)
 	}

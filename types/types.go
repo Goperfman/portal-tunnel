@@ -9,8 +9,6 @@ import (
 )
 
 const (
-	PortalRelayRegistryURL = "https://raw.githubusercontent.com/gosuda/portal-tunnel/main/registry.json"
-
 	HeaderAccessToken = "X-Portal-Access-Token"
 	MarkerKeepalive   = byte(0x00)
 	MarkerRawStart    = byte(0x01)
@@ -22,6 +20,7 @@ var (
 	SDKVersion             string
 	DiscoveryVersion       string
 	OfficialReleaseBaseURL string
+	BootstrapRelays        []string
 )
 
 func init() {
@@ -34,6 +33,9 @@ func init() {
 			Tunnel    string `toml:"tunnel"`
 			Discovery string `toml:"discovery"`
 		} `toml:"protocol"`
+		Bootstrap struct {
+			Relays []string `toml:"relays"`
+		} `toml:"bootstrap"`
 	}
 	if err := toml.Unmarshal(portaltunnel.ConfigTOML, &m); err != nil {
 		panic(fmt.Errorf("unmarshal config TOML: %w", err))
@@ -42,4 +44,5 @@ func init() {
 	OfficialReleaseBaseURL = m.Release.BaseURL
 	SDKVersion = m.Protocol.Tunnel
 	DiscoveryVersion = m.Protocol.Discovery
+	BootstrapRelays = m.Bootstrap.Relays
 }

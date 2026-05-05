@@ -109,12 +109,12 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 		listenerRelayURLs = []string{multiHop[len(multiHop)-1]}
 		relaySetURLs = append([]string(nil), multiHop...)
 	} else if cfg.MultiHopDepth > 1 {
-		relaySetURLs, err = utils.ResolvePortalRelayURLs(ctx, explicitRelayURLs, cfg.Discovery)
+		relaySetURLs, err = utils.ResolvePortalRelayURLs(explicitRelayURLs, cfg.Discovery)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		relaySetURLs, err = utils.ResolvePortalRelayURLs(ctx, explicitRelayURLs, cfg.Discovery)
+		relaySetURLs, err = utils.ResolvePortalRelayURLs(explicitRelayURLs, cfg.Discovery)
 		if err != nil {
 			return nil, err
 		}
