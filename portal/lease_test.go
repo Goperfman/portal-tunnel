@@ -97,9 +97,9 @@ func TestLeaseRegistryAutomaticECHRouteFallsBackToPlainSNI(t *testing.T) {
 	routeHostname := "ech-auto-ech.example.com"
 	publicHostname := "auto-ech.example.com"
 	record, registered, err := registry.Register(types.RegisterChallengeRequest{
-		Identity:             newTestLeaseIdentity(t, "auto-ech"),
-		RouteHostname:        routeHostname,
-		FallbackHostnameHash: utils.HostnameHash(publicHostname),
+		Identity:      newTestLeaseIdentity(t, "auto-ech"),
+		RouteHostname: routeHostname,
+		HostnameHash:  utils.HostnameHash(publicHostname),
 	}, "203.0.113.10", "")
 	if err != nil {
 		t.Fatalf("Register() error = %v", err)
@@ -135,8 +135,8 @@ func TestLeaseRegistryAutomaticECHRouteFallsBackToPlainSNI(t *testing.T) {
 	}
 
 	if _, _, err := registry.Register(types.RegisterChallengeRequest{
-		Identity:             newTestLeaseIdentity(t, "hash-only"),
-		FallbackHostnameHash: utils.HostnameHash("hash-only.example.com"),
+		Identity:     newTestLeaseIdentity(t, "hash-only"),
+		HostnameHash: utils.HostnameHash("hash-only.example.com"),
 	}, "203.0.113.10", ""); err == nil {
 		t.Fatal("Register(fallback hash only) error = nil, want error")
 	}
@@ -168,14 +168,14 @@ func TestLeaseRegistryHopRouteCanExposeECHAndPlainSNIFallback(t *testing.T) {
 	}
 	route := baseRoute
 	route.RouteHostname = "ech-demo.example.com"
-	route.MatchHostnameHash = utils.HostnameHash("demo.example.com")
+	route.HostnameHash = utils.HostnameHash("demo.example.com")
 	route.Metadata.Hide = true
 
 	if _, err := registry.RegisterHopRoute(&route, now); err != nil {
 		t.Fatalf("RegisterHopRoute() error = %v", err)
 	}
 	hashOnlyRoute := baseRoute
-	hashOnlyRoute.MatchHostnameHash = utils.HostnameHash("hash-only.example.com")
+	hashOnlyRoute.HostnameHash = utils.HostnameHash("hash-only.example.com")
 	if _, err := registry.RegisterHopRoute(&hashOnlyRoute, now); err == nil {
 		t.Fatal("RegisterHopRoute(hash only) error = nil, want error")
 	}

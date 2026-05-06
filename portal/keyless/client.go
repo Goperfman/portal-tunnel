@@ -50,15 +50,11 @@ func BuildClientTLSConfig(relayURL, hostname string, echKeys []tls.EncryptedClie
 		return nil, nil, fmt.Errorf("create keyless remote signer: %w", err)
 	}
 
-	minVersion := uint16(tls.VersionTLS12)
-	if len(echKeys) > 0 {
-		minVersion = tls.VersionTLS13
-	}
 	tlsConfig, err := keylesstls.NewServerTLSConfig(keylesstls.ServerTLSConfig{
 		CertPEM:                  certPEM,
 		Signer:                   remoteSigner,
 		NextProtos:               []string{"http/1.1"},
-		MinVersion:               minVersion,
+		MinVersion:               MinTLSVersion(len(echKeys) > 0),
 		EncryptedClientHelloKeys: echKeys,
 	})
 	if err != nil {

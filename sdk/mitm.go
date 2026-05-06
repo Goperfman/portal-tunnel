@@ -17,6 +17,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 
+	"github.com/gosuda/portal-tunnel/v2/portal/keyless"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
@@ -112,21 +113,10 @@ func (m *mitmManager) probeTLSPassthrough(ctx context.Context) (MITMProbeReport,
 	}
 
 	probeTLSConf := &tls.Config{
-		ServerName:         lease.hostname,
-		InsecureSkipVerify: true,
-	}
-	if len(lease.echConfigList) > 0 {
-		probeTLSConf.MinVersion = tls.VersionTLS13
-		probeTLSConf.EncryptedClientHelloConfigList = append([]byte(nil), lease.echConfigList...)
-	}
-	if lease.tlsConfig != nil {
-		if probeTLSConf.MinVersion == 0 || lease.tlsConfig.MinVersion > probeTLSConf.MinVersion {
-			probeTLSConf.MinVersion = lease.tlsConfig.MinVersion
-		}
-		probeTLSConf.MaxVersion = lease.tlsConfig.MaxVersion
-		if len(lease.tlsConfig.NextProtos) > 0 {
-			probeTLSConf.NextProtos = append([]string(nil), lease.tlsConfig.NextProtos...)
-		}
+		ServerName:                     lease.hostname,
+		InsecureSkipVerify:             true,
+		MinVersion:                     keyless.MinTLSVersion(len(lease.echConfigList) > 0),
+		EncryptedClientHelloConfigList: append([]byte(nil), lease.echConfigList...),
 	}
 
 	dialer := &tls.Dialer{

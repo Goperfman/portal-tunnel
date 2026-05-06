@@ -102,7 +102,7 @@ func (r *leaseRegistry) Lookup(host string) (*leaseRecord, bool) {
 		if record == nil || !record.isPublicEntry() || record.isExpired(now) {
 			continue
 		}
-		if record.FallbackHostnameHash != "" && record.FallbackHostnameHash == hostHash {
+		if record.HostnameHash != "" && record.HostnameHash == hostHash {
 			return record, true
 		}
 	}
@@ -161,34 +161,25 @@ func (r *leaseRegistry) Register(req types.RegisterChallengeRequest, clientIP, r
 	identityKey := identity.Key()
 	hopToken := strings.TrimSpace(req.HopToken)
 	routeHostname := utils.NormalizeHostname(req.RouteHostname)
-	fallbackHostnameHash := strings.TrimSpace(req.FallbackHostnameHash)
+	hostnameHash := strings.TrimSpace(req.HostnameHash)
 	if hopToken != "" && (req.UDPEnabled || req.TCPEnabled) {
 		return nil, types.RegisterResponse{}, errTransportMismatch
 	}
-	if (routeHostname != "" || fallbackHostnameHash != "") && (hopToken != "" || req.UDPEnabled || req.TCPEnabled) {
+	if (routeHostname != "" || hostnameHash != "") && (hopToken != "" || req.UDPEnabled || req.TCPEnabled) {
 		return nil, types.RegisterResponse{}, errTransportMismatch
 	}
-	if fallbackHostnameHash != "" && routeHostname == "" {
-		return nil, types.RegisterResponse{}, errors.New("fallback hostname hash requires route hostname")
+	if hostnameHash != "" && routeHostname == "" {
+		return nil, types.RegisterResponse{}, errors.New("hostname hash requires route hostname")
 	}
 	if routeHostname != "" {
 		routeLabel, routeBase, ok := strings.Cut(routeHostname, ".")
 		normalizedRouteLabel, labelErr := utils.NormalizeDNSLabel(routeLabel)
-		if !ok || labelErr != nil || normalizedRouteLabel != routeLabel || routeBase != utils.NormalizeHostname(r.rootHostname) {
+		if !ok || labelErr != nil || normalizedRouteLabel != routeLabel || routeBase != r.rootHostname {
 			return nil, types.RegisterResponse{}, errors.New("route hostname must be a child of relay root hostname")
 		}
 	}
-	hostname := routeHostname
-	if hostname == "" && hopToken == "" {
-		hostname, err = utils.LeaseHostname(identity.Name, r.rootHostname)
-		if err != nil {
-			return nil, types.RegisterResponse{}, err
-		}
-	}
-	if req.UDPEnabled {
-		if !r.policy.IsUDPEnabled() {
-			return nil, types.RegisterResponse{}, errUDPDisabled
-		}
+	if req.UDPEnabled && !r.policy.IsUDPEnabled() {
+		return nil, types.RegisterResponse{}, errUDPDisabled
 	}
 	if req.TCPEnabled {
 		if !r.policy.IsTCPPortEnabled() {
@@ -196,6 +187,14 @@ func (r *leaseRegistry) Register(req types.RegisterChallengeRequest, clientIP, r
 		}
 		if r.proxy == nil {
 			return nil, types.RegisterResponse{}, errors.New("tcp proxy is not available")
+		}
+	}
+
+	hostname := routeHostname
+	if hostname == "" && hopToken == "" {
+		hostname, err = utils.LeaseHostname(identity.Name, r.rootHostname)
+		if err != nil {
+			return nil, types.RegisterResponse{}, err
 		}
 	}
 
@@ -208,17 +207,17 @@ func (r *leaseRegistry) Register(req types.RegisterChallengeRequest, clientIP, r
 
 	stream := transport.NewRelayStream(identityKey, defaultIdleKeepalive, defaultReadyQueueLimit)
 	record := &leaseRecord{
-		Identity:             identity,
-		Hostname:             hostname,
-		FallbackHostnameHash: fallbackHostnameHash,
-		Metadata:             req.Metadata,
-		ExpiresAt:            expiresAt,
-		FirstSeenAt:          issuedAt,
-		LastSeenAt:           issuedAt,
-		ClientIP:             clientIP,
-		ReportedIP:           utils.SanitizeReportedIP(reportedIP),
-		hopToken:             hopToken,
-		stream:               stream,
+		Identity:     identity,
+		Hostname:     hostname,
+		HostnameHash: hostnameHash,
+		Metadata:     req.Metadata.Copy(),
+		ExpiresAt:    expiresAt,
+		FirstSeenAt:  issuedAt,
+		LastSeenAt:   issuedAt,
+		ClientIP:     clientIP,
+		ReportedIP:   utils.SanitizeReportedIP(reportedIP),
+		hopToken:     hopToken,
+		stream:       stream,
 	}
 
 	if req.UDPEnabled {
@@ -456,18 +455,13 @@ func (r *leaseRegistry) RegisterHopRoute(route *types.HopRoute, now time.Time) (
 	if err != nil {
 		return nil, err
 	}
-	matchHostname := utils.NormalizeHostname(route.MatchHostname)
-	routeHostname := utils.NormalizeHostname(route.RouteHostname)
-	matchHostnameHash := strings.TrimSpace(route.MatchHostnameHash)
-	matchToken := strings.TrimSpace(route.MatchToken)
+	routeHostname := route.RouteHostname
+	hostnameHash := route.HostnameHash
+	matchToken := route.MatchToken
 	overlayIPv4, overlayErr := utils.DeriveWireGuardOverlayIPv4(route.ForwardRelay.WireGuardPublicKey)
-	forwardToken := strings.TrimSpace(route.ForwardToken)
+	forwardToken := route.ForwardToken
 	expiresAt := route.ExpiresAt.UTC()
-	hostname := routeHostname
-	if hostname == "" {
-		hostname = matchHostname
-	}
-	hasPublicMatcher := hostname != "" || matchHostnameHash != ""
+	hasPublicMatcher := routeHostname != "" || hostnameHash != ""
 
 	switch {
 	case r == nil:
@@ -476,10 +470,8 @@ func (r *leaseRegistry) RegisterHopRoute(route *types.HopRoute, now time.Time) (
 		return nil, errors.New("route expiry must be in the future")
 	case matchToken != "" && hasPublicMatcher:
 		return nil, errors.New("hostname and token matchers are mutually exclusive")
-	case matchToken == "" && hostname == "":
-		return nil, errors.New("route hostname or hostname matcher is required")
-	case routeHostname != "" && matchHostname != "":
-		return nil, errors.New("route hostname and hostname matcher are mutually exclusive")
+	case matchToken == "" && routeHostname == "":
+		return nil, errors.New("route hostname or token matcher is required")
 	case overlayErr != nil:
 		return nil, fmt.Errorf("forward relay overlay ipv4: %w", overlayErr)
 	case forwardToken == "":
@@ -488,11 +480,11 @@ func (r *leaseRegistry) RegisterHopRoute(route *types.HopRoute, now time.Time) (
 	if routeHostname != "" {
 		routeLabel, routeBase, ok := strings.Cut(routeHostname, ".")
 		normalizedRouteLabel, labelErr := utils.NormalizeDNSLabel(routeLabel)
-		if !ok || labelErr != nil || normalizedRouteLabel != routeLabel || routeBase != utils.NormalizeHostname(r.rootHostname) {
+		if !ok || labelErr != nil || normalizedRouteLabel != routeLabel || routeBase != r.rootHostname {
 			return nil, errors.New("route hostname must be a child of relay root hostname")
 		}
 	}
-	name := hostname
+	name := routeHostname
 	if label, _, ok := strings.Cut(name, "."); ok {
 		name = label
 	}
@@ -505,14 +497,14 @@ func (r *leaseRegistry) RegisterHopRoute(route *types.HopRoute, now time.Time) (
 			Name:    name,
 			Address: ownerKey,
 		},
-		Hostname:             hostname,
-		FallbackHostnameHash: matchHostnameHash,
-		Metadata:             route.Metadata.Copy(),
-		FirstSeenAt:          route.FirstSeenAt.UTC(),
-		ExpiresAt:            expiresAt,
-		hopToken:             matchToken,
-		hopNextOverlayIPv4:   overlayIPv4,
-		hopNextToken:         forwardToken,
+		Hostname:           routeHostname,
+		HostnameHash:       hostnameHash,
+		Metadata:           route.Metadata.Copy(),
+		FirstSeenAt:        route.FirstSeenAt.UTC(),
+		ExpiresAt:          expiresAt,
+		hopToken:           matchToken,
+		hopNextOverlayIPv4: overlayIPv4,
+		hopNextToken:       forwardToken,
 	}
 	switch {
 	case record.isPublicEntry():
@@ -567,14 +559,9 @@ func (r *leaseRegistry) DeleteHopRoute(route *types.HopRoute) *leaseRecord {
 	if err != nil {
 		return nil
 	}
-	hostname := utils.NormalizeHostname(route.MatchHostname)
-	routeHostname := utils.NormalizeHostname(route.RouteHostname)
-	hostnameHash := strings.TrimSpace(route.MatchHostnameHash)
-	token := strings.TrimSpace(route.MatchToken)
-	routeKey := routeHostname
-	if routeKey == "" {
-		routeKey = hostname
-	}
+	routeHostname := route.RouteHostname
+	hostnameHash := route.HostnameHash
+	token := route.MatchToken
 
 	var deleted *leaseRecord
 	r.mu.Lock()
@@ -584,13 +571,13 @@ func (r *leaseRegistry) DeleteHopRoute(route *types.HopRoute) *leaseRecord {
 			continue
 		}
 		deleteRecord := false
-		if routeKey != "" || hostnameHash != "" {
+		if routeHostname != "" || hostnameHash != "" {
 			deleteRecord = record.isPublicEntry() && strings.EqualFold(record.Address, ownerKey)
-			if routeKey != "" {
-				deleteRecord = deleteRecord && record.Hostname == routeKey
+			if routeHostname != "" {
+				deleteRecord = deleteRecord && record.Hostname == routeHostname
 			}
 			if hostnameHash != "" {
-				deleteRecord = deleteRecord && record.FallbackHostnameHash == hostnameHash
+				deleteRecord = deleteRecord && record.HostnameHash == hostnameHash
 			}
 		}
 		if token != "" {
@@ -610,34 +597,8 @@ func (r *leaseRegistry) DeleteHopRoute(route *types.HopRoute) *leaseRecord {
 }
 
 func (r *leaseRegistry) issueRegisterChallenge(req types.RegisterChallengeRequest, domain, uri, clientIP string) (types.RegisterChallengeResponse, error) {
-	hopToken := strings.TrimSpace(req.HopToken)
-	routeHostname := utils.NormalizeHostname(req.RouteHostname)
-	fallbackHostnameHash := strings.TrimSpace(req.FallbackHostnameHash)
-	if hopToken != "" && (req.UDPEnabled || req.TCPEnabled) {
-		return types.RegisterChallengeResponse{}, errTransportMismatch
-	}
-	if (routeHostname != "" || fallbackHostnameHash != "") && (hopToken != "" || req.UDPEnabled || req.TCPEnabled) {
-		return types.RegisterChallengeResponse{}, errTransportMismatch
-	}
-	if fallbackHostnameHash != "" && routeHostname == "" {
-		return types.RegisterChallengeResponse{}, errors.New("fallback hostname hash requires route hostname")
-	}
-	if routeHostname != "" {
-		routeLabel, routeBase, ok := strings.Cut(routeHostname, ".")
-		normalizedRouteLabel, labelErr := utils.NormalizeDNSLabel(routeLabel)
-		if !ok || labelErr != nil || normalizedRouteLabel != routeLabel || routeBase != utils.NormalizeHostname(r.rootHostname) {
-			return types.RegisterChallengeResponse{}, errors.New("route hostname must be a child of relay root hostname")
-		}
-	}
-	if req.UDPEnabled {
-		if !r.policy.IsUDPEnabled() {
-			return types.RegisterChallengeResponse{}, errUDPDisabled
-		}
-	}
-	if req.TCPEnabled {
-		if !r.policy.IsTCPPortEnabled() {
-			return types.RegisterChallengeResponse{}, errTCPPortDisabled
-		}
+	if r == nil {
+		return types.RegisterChallengeResponse{}, errFeatureUnavailable
 	}
 
 	now := time.Now().UTC()
@@ -818,7 +779,7 @@ func (r *leaseRegistry) deleteRecord(i int) {
 func (r *leaseRegistry) publicLease(record *leaseRecord) types.Lease {
 	name := record.Name
 	hostname := record.Hostname
-	if record.FallbackHostnameHash != "" && record.Hostname != "" {
+	if record.HostnameHash != "" && record.Hostname != "" {
 		label, _, _ := strings.Cut(record.Hostname, ".")
 		name = label
 	}
@@ -849,14 +810,14 @@ func (r *leaseRegistry) publicLease(record *leaseRecord) types.Lease {
 
 type leaseRecord struct {
 	types.Identity
-	ExpiresAt            time.Time
-	FirstSeenAt          time.Time
-	LastSeenAt           time.Time
-	ClientIP             string
-	ReportedIP           string
-	Hostname             string
-	FallbackHostnameHash string
-	Metadata             types.LeaseMetadata
+	ExpiresAt    time.Time
+	FirstSeenAt  time.Time
+	LastSeenAt   time.Time
+	ClientIP     string
+	ReportedIP   string
+	Hostname     string
+	HostnameHash string
+	Metadata     types.LeaseMetadata
 
 	hopToken           string
 	hopNextOverlayIPv4 string
@@ -891,13 +852,13 @@ func (r *leaseRecord) routesOverlap(other *leaseRecord) bool {
 	if r.Hostname != "" && other.Hostname != "" && r.Hostname == other.Hostname {
 		return true
 	}
-	if r.FallbackHostnameHash != "" && other.FallbackHostnameHash != "" && r.FallbackHostnameHash == other.FallbackHostnameHash {
+	if r.HostnameHash != "" && other.HostnameHash != "" && r.HostnameHash == other.HostnameHash {
 		return true
 	}
-	if r.Hostname != "" && other.FallbackHostnameHash != "" && utils.HostnameHash(r.Hostname) == other.FallbackHostnameHash {
+	if r.Hostname != "" && other.HostnameHash != "" && utils.HostnameHash(r.Hostname) == other.HostnameHash {
 		return true
 	}
-	return other.Hostname != "" && r.FallbackHostnameHash != "" && utils.HostnameHash(other.Hostname) == r.FallbackHostnameHash
+	return other.Hostname != "" && r.HostnameHash != "" && utils.HostnameHash(other.Hostname) == r.HostnameHash
 }
 
 func (r *leaseRecord) nextHop() (string, string, bool) {

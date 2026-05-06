@@ -90,13 +90,13 @@ func (l *listener) initHTTPTransport(ctx context.Context) error {
 func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnabled, tcpEnabled bool) (types.RegisterResponse, []types.HopRoute, string, error) {
 	var exitHopToken string
 	var publicHostname string
-	var keylessURL string
 	var routeHostname string
-	var registerRouteHostname string
-	var registerFallbackHostnameHash string
+	var rootHostname string
 	var hopRoutes []types.HopRoute
+	var hopPath []types.RelayDescriptor
+	streamLease := !udpEnabled && !tcpEnabled
 	registerIdentity := l.identity
-	if !udpEnabled && !tcpEnabled {
+	if streamLease {
 		token, err := l.identity.DeriveToken("opaque-lease-name", l.identity.Name)
 		if err != nil {
 			return types.RegisterResponse{}, nil, "", fmt.Errorf("derive opaque lease name: %w", err)
@@ -109,6 +109,9 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 		}
 	}
 	if len(l.multiHop) > 0 {
+		if !streamLease {
+			return types.RegisterResponse{}, nil, "", errors.New("multi-hop requires stream lease")
+		}
 		if len(l.multiHop) < 2 {
 			return types.RegisterResponse{}, nil, "", errors.New("multi-hop requires at least entry and exit relay urls")
 		}
@@ -117,7 +120,7 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 		}
 
 		now := time.Now().UTC()
-		hopPath := make([]types.RelayDescriptor, 0, len(l.multiHop))
+		hopPath = make([]types.RelayDescriptor, 0, len(l.multiHop))
 		for i, relayURL := range l.multiHop {
 			desc, ok := l.relaySet.OverlayRelayDescriptor(relayURL, now)
 			if !ok {
@@ -126,24 +129,30 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 			hopPath = append(hopPath, desc)
 		}
 
+		rootHostname = utils.PortalRootHost(hopPath[0].APIHTTPSAddr)
+	} else if streamLease {
+		rootHostname = utils.PortalRootHost(l.relayURL.String())
+	}
+
+	if streamLease {
 		var err error
-		entryRootHostname := utils.PortalRootHost(hopPath[0].APIHTTPSAddr)
-		publicHostname, err = utils.LeaseHostname(l.identity.Name, entryRootHostname)
+		publicHostname, err = utils.LeaseHostname(l.identity.Name, rootHostname)
 		if err != nil {
 			return types.RegisterResponse{}, nil, "", err
 		}
-		routeToken, err := l.identity.DeriveToken("ech-route", publicHostname, entryRootHostname)
+		routeToken, err := l.identity.DeriveToken("ech-route", publicHostname, rootHostname)
 		if err != nil {
 			return types.RegisterResponse{}, nil, "", err
 		}
 		routeSum := sha256.Sum256([]byte(routeToken))
 		routeLabel := "ech-" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(routeSum[:20]))
-		routeHostname, err = utils.LeaseHostname(routeLabel, entryRootHostname)
+		routeHostname, err = utils.LeaseHostname(routeLabel, rootHostname)
 		if err != nil {
 			return types.RegisterResponse{}, nil, "", err
 		}
-		keylessURL = hopPath[0].APIHTTPSAddr
+	}
 
+	if len(l.multiHop) > 0 {
 		hopRoutes = make([]types.HopRoute, 0, len(hopPath)-1)
 		var previousHopToken string
 		for i := 0; i < len(hopPath)-1; i++ {
@@ -165,7 +174,7 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 			}
 			if i == 0 {
 				route.RouteHostname = routeHostname
-				route.MatchHostnameHash = utils.HostnameHash(publicHostname)
+				route.HostnameHash = utils.HostnameHash(publicHostname)
 				route.Metadata.Hide = true
 				hopRoutes = append(hopRoutes, route)
 			} else {
@@ -175,38 +184,23 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 			previousHopToken = forwardToken
 		}
 		exitHopToken = previousHopToken
-	} else if !udpEnabled && !tcpEnabled {
-		rootHostname := utils.PortalRootHost(l.relayURL.String())
-		var err error
-		publicHostname, err = utils.LeaseHostname(l.identity.Name, rootHostname)
-		if err != nil {
-			return types.RegisterResponse{}, nil, "", err
-		}
-		routeToken, err := l.identity.DeriveToken("ech-route", publicHostname, rootHostname)
-		if err != nil {
-			return types.RegisterResponse{}, nil, "", err
-		}
-		routeSum := sha256.Sum256([]byte(routeToken))
-		routeLabel := "ech-" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(routeSum[:20]))
-		routeHostname, err = utils.LeaseHostname(routeLabel, rootHostname)
-		if err != nil {
-			return types.RegisterResponse{}, nil, "", err
-		}
-		registerRouteHostname = routeHostname
-		registerFallbackHostnameHash = utils.HostnameHash(publicHostname)
+	}
+
+	registerReq := types.RegisterChallengeRequest{
+		Identity:   registerIdentity,
+		Metadata:   l.metadata,
+		TTL:        int(ttl / time.Second),
+		UDPEnabled: udpEnabled,
+		TCPEnabled: tcpEnabled,
+		HopToken:   exitHopToken,
+	}
+	if streamLease && len(l.multiHop) == 0 {
+		registerReq.RouteHostname = routeHostname
+		registerReq.HostnameHash = utils.HostnameHash(publicHostname)
 	}
 
 	var challenge types.RegisterChallengeResponse
-	if err := utils.HTTPDoAPIPath(ctx, l.httpClient, l.relayURL, http.MethodPost, types.PathSDKRegisterChallenge, types.RegisterChallengeRequest{
-		Identity:             registerIdentity,
-		Metadata:             l.metadata,
-		TTL:                  int(ttl / time.Second),
-		UDPEnabled:           udpEnabled,
-		TCPEnabled:           tcpEnabled,
-		HopToken:             exitHopToken,
-		RouteHostname:        registerRouteHostname,
-		FallbackHostnameHash: registerFallbackHostnameHash,
-	}, nil, &challenge); err != nil {
+	if err := utils.HTTPDoAPIPath(ctx, l.httpClient, l.relayURL, http.MethodPost, types.PathSDKRegisterChallenge, registerReq, nil, &challenge); err != nil {
 		return types.RegisterResponse{}, nil, "", err
 	}
 
@@ -238,7 +232,6 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 			_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
 			return types.RegisterResponse{}, nil, "", err
 		}
-		resp.KeylessURL = keylessURL
 	}
 	if publicHostname != "" {
 		resp.Hostname = publicHostname

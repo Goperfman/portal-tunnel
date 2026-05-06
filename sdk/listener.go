@@ -171,21 +171,10 @@ func (l *listener) run(ctx context.Context) {
 
 		retries = 0
 		publicURL := ""
-		routeHostname := ""
-		echConfigList := ""
 		if lease, ok := l.leaseSnapshot(); ok {
 			publicURL = l.publicURLForLease(lease)
-			routeHostname = lease.routeHostname
-			if len(lease.echConfigList) > 0 {
-				echConfigList = base64.StdEncoding.EncodeToString(lease.echConfigList)
-			}
 		}
 		event := log.Info().Str("address", l.identity.Address)
-		if echConfigList != "" {
-			event = event.
-				Str("route_hostname", routeHostname).
-				Str("ech_config_list_base64", echConfigList)
-		}
 		if publicURL != "" {
 			event.Msg("service ready at " + publicURL)
 		} else {
@@ -254,7 +243,6 @@ func (l *listener) Close() error {
 
 type listenerLease struct {
 	hostname      string
-	routeHostname string
 	echConfigList []byte
 	udpAddr       string
 	tcpAddr       string
@@ -728,9 +716,9 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 		_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
 		return errors.New("relay did not return sni port for udp transport")
 	}
-	keylessURL := strings.TrimSpace(resp.KeylessURL)
-	if keylessURL == "" {
-		keylessURL = l.relayURL.String()
+	keylessURL := l.relayURL.String()
+	if len(l.multiHop) > 0 {
+		keylessURL = l.multiHop[0]
 	}
 	publicURLBase := l.relayURL
 	if normalizedKeylessURL, err := utils.NormalizeRelayURL(keylessURL); err == nil {
@@ -740,7 +728,6 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 	}
 	var echKeys []tls.EncryptedClientHelloKey
 	var echConfigList []byte
-	routeHostname = utils.NormalizeHostname(routeHostname)
 	if routeHostname != "" {
 		echSeed, err := l.identity.DeriveToken("tenant-ech", resp.Hostname, routeHostname)
 		if err != nil {
@@ -773,7 +760,6 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 	}
 	next := &listenerLease{
 		hostname:      resp.Hostname,
-		routeHostname: routeHostname,
 		echConfigList: echConfigList,
 		udpAddr:       resp.UDPAddr,
 		tcpAddr:       resp.TCPAddr,
@@ -800,6 +786,13 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 	relayURL := l.relayURL.String()
 	if l.relaySet != nil && relayURL != "" {
 		l.relaySet.ConfirmRelayURL(relayURL)
+	}
+	if len(echConfigList) > 0 {
+		log.Info().
+			Str("address", l.identity.Address).
+			Str("route_hostname", routeHostname).
+			Str("ech_config_list_base64", base64.StdEncoding.EncodeToString(echConfigList)).
+			Msg("tenant ech config ready")
 	}
 	return nil
 }
