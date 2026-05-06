@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gosuda/portal-tunnel/v2/portal/auth"
+	"github.com/gosuda/portal-tunnel/v2/portal/keyless"
 	"github.com/gosuda/portal-tunnel/v2/portal/policy"
 	"github.com/gosuda/portal-tunnel/v2/portal/transport"
 	"github.com/gosuda/portal-tunnel/v2/types"
@@ -162,6 +163,7 @@ func (r *leaseRegistry) Register(req types.RegisterChallengeRequest, clientIP, r
 	hopToken := strings.TrimSpace(req.HopToken)
 	routeHostname := utils.NormalizeHostname(req.RouteHostname)
 	hostnameHash := strings.TrimSpace(req.HostnameHash)
+	echConfigList := append([]byte(nil), req.ECHConfigList...)
 	if hopToken != "" && (req.UDPEnabled || req.TCPEnabled) {
 		return nil, types.RegisterResponse{}, errTransportMismatch
 	}
@@ -171,12 +173,32 @@ func (r *leaseRegistry) Register(req types.RegisterChallengeRequest, clientIP, r
 	if hostnameHash != "" && routeHostname == "" {
 		return nil, types.RegisterResponse{}, errors.New("hostname hash requires route hostname")
 	}
+	if len(echConfigList) > 0 && (routeHostname == "" || hostnameHash == "") {
+		return nil, types.RegisterResponse{}, errors.New("ech config list requires route hostname and hostname hash")
+	}
 	if routeHostname != "" {
 		routeLabel, routeBase, ok := strings.Cut(routeHostname, ".")
 		normalizedRouteLabel, labelErr := utils.NormalizeDNSLabel(routeLabel)
 		if !ok || labelErr != nil || normalizedRouteLabel != routeLabel || routeBase != r.rootHostname {
 			return nil, types.RegisterResponse{}, errors.New("route hostname must be a child of relay root hostname")
 		}
+	}
+	if len(echConfigList) > 0 {
+		echConfigList, err = keyless.NormalizeEncryptedClientHelloConfigList(echConfigList)
+		if err != nil {
+			return nil, types.RegisterResponse{}, err
+		}
+	}
+	echDNSHostname := ""
+	if len(echConfigList) > 0 {
+		publicHostname, err := utils.LeaseHostname(identity.Name, r.rootHostname)
+		if err != nil {
+			return nil, types.RegisterResponse{}, err
+		}
+		if utils.HostnameHash(publicHostname) != hostnameHash {
+			return nil, types.RegisterResponse{}, errors.New("hostname hash does not match ech dns hostname")
+		}
+		echDNSHostname = publicHostname
 	}
 	if req.UDPEnabled && !r.policy.IsUDPEnabled() {
 		return nil, types.RegisterResponse{}, errUDPDisabled
@@ -207,17 +229,19 @@ func (r *leaseRegistry) Register(req types.RegisterChallengeRequest, clientIP, r
 
 	stream := transport.NewRelayStream(identityKey, defaultIdleKeepalive, defaultReadyQueueLimit)
 	record := &leaseRecord{
-		Identity:     identity,
-		Hostname:     hostname,
-		HostnameHash: hostnameHash,
-		Metadata:     req.Metadata.Copy(),
-		ExpiresAt:    expiresAt,
-		FirstSeenAt:  issuedAt,
-		LastSeenAt:   issuedAt,
-		ClientIP:     clientIP,
-		ReportedIP:   utils.SanitizeReportedIP(reportedIP),
-		hopToken:     hopToken,
-		stream:       stream,
+		Identity:       identity,
+		Hostname:       hostname,
+		HostnameHash:   hostnameHash,
+		ECHConfigList:  echConfigList,
+		ECHDNSHostname: echDNSHostname,
+		Metadata:       req.Metadata.Copy(),
+		ExpiresAt:      expiresAt,
+		FirstSeenAt:    issuedAt,
+		LastSeenAt:     issuedAt,
+		ClientIP:       clientIP,
+		ReportedIP:     utils.SanitizeReportedIP(reportedIP),
+		hopToken:       hopToken,
+		stream:         stream,
 	}
 
 	if req.UDPEnabled {
@@ -456,6 +480,8 @@ func (r *leaseRegistry) RegisterHopRoute(route *types.HopRoute, now time.Time) (
 	}
 	routeHostname := route.RouteHostname
 	hostnameHash := route.HostnameHash
+	echConfigList := append([]byte(nil), route.ECHConfigList...)
+	publicHostname := utils.NormalizeHostname(route.PublicHostname)
 	matchToken := route.MatchToken
 	overlayIPv4, overlayErr := utils.DeriveWireGuardOverlayIPv4(route.ForwardRelay.WireGuardPublicKey)
 	forwardToken := route.ForwardToken
@@ -483,6 +509,21 @@ func (r *leaseRegistry) RegisterHopRoute(route *types.HopRoute, now time.Time) (
 			return nil, errors.New("route hostname must be a child of relay root hostname")
 		}
 	}
+	if len(echConfigList) > 0 {
+		if publicHostname == "" || routeHostname == "" || hostnameHash == "" {
+			return nil, errors.New("ech config list requires public hostname, route hostname, and hostname hash")
+		}
+		if !utils.HostnameMatchesBaseDomain(publicHostname, r.rootHostname) {
+			return nil, errors.New("public hostname must be a child of relay root hostname")
+		}
+		if utils.HostnameHash(publicHostname) != hostnameHash {
+			return nil, errors.New("hostname hash does not match ech dns hostname")
+		}
+		echConfigList, err = keyless.NormalizeEncryptedClientHelloConfigList(echConfigList)
+		if err != nil {
+			return nil, err
+		}
+	}
 	name := routeHostname
 	if label, _, ok := strings.Cut(name, "."); ok {
 		name = label
@@ -498,6 +539,8 @@ func (r *leaseRegistry) RegisterHopRoute(route *types.HopRoute, now time.Time) (
 		},
 		Hostname:           routeHostname,
 		HostnameHash:       hostnameHash,
+		ECHConfigList:      echConfigList,
+		ECHDNSHostname:     publicHostname,
 		Metadata:           route.Metadata.Copy(),
 		FirstSeenAt:        route.FirstSeenAt.UTC(),
 		ExpiresAt:          expiresAt,
@@ -813,14 +856,16 @@ func (r *leaseRegistry) publicLease(record *leaseRecord) types.Lease {
 
 type leaseRecord struct {
 	types.Identity
-	ExpiresAt    time.Time
-	FirstSeenAt  time.Time
-	LastSeenAt   time.Time
-	ClientIP     string
-	ReportedIP   string
-	Hostname     string
-	HostnameHash string
-	Metadata     types.LeaseMetadata
+	ExpiresAt      time.Time
+	FirstSeenAt    time.Time
+	LastSeenAt     time.Time
+	ClientIP       string
+	ReportedIP     string
+	Hostname       string
+	HostnameHash   string
+	ECHConfigList  []byte
+	ECHDNSHostname string
+	Metadata       types.LeaseMetadata
 
 	hopToken           string
 	hopNextOverlayIPv4 string
@@ -836,6 +881,14 @@ type leaseRecord struct {
 
 func (r *leaseRecord) isPublicEntry() bool {
 	return r != nil && r.hopToken == "" && r.Hostname != ""
+}
+
+func (r *leaseRecord) hasENSGaslessDNSRecord() bool {
+	return r.isPublicEntry() && r.HostnameHash == ""
+}
+
+func (r *leaseRecord) hasECHDNSRecord() bool {
+	return r.isPublicEntry() && len(r.ECHConfigList) > 0 && r.ECHDNSHostname != ""
 }
 
 func (r *leaseRecord) isHopMiddle() bool {

@@ -33,11 +33,11 @@ Relay API TLS is separate from tenant TLS:
 
 ## Tunnel ECH
 
-For default stream leases, the SDK derives an opaque lease identity and an opaque route hostname from the tunnel identity private key. The relay stores the route hostname for ECH routing and a hash of the public fallback hostname for plaintext-SNI fallback. It does not need the real lease hostname in the new SDK registration path.
+For default stream leases, the SDK derives an opaque lease identity and an opaque route hostname from the tunnel identity private key. The relay stores the route hostname for ECH routing and a hash of the public fallback hostname for plaintext-SNI fallback. When DNS automation is enabled, the relay also keeps the public hostname needed to publish and delete its HTTPS `ech` record.
 
 ECH-capable clients can use the opaque route hostname as the outer SNI while the real tenant SNI stays inside the ECH-protected ClientHello handled by the SDK. For multi-hop stream routes, the entry relay gets both matchers: a hostname hash for plaintext-SNI fallback and a hidden opaque route hostname for ECH. After the entry relay chooses the route, the remaining hops continue to use hop tokens and passthrough forwarding.
 
-This protects the packet-level tunnel SNI only for clients that actually offer ECH using the logged ECHConfigList. Operators must distribute that ECHConfigList through DNS HTTPS/SVCB or another ECH-capable bootstrap. Without that distribution, ordinary clients keep using the public hostname SNI and the relay routes them through the existing plaintext-SNI fallback.
+When `ACME_DNS_PROVIDER` is configured, Portal publishes DNS HTTPS records with the `ech` parameter for the relay root and stream lease public hostnames. Without a DNS provider, operators must distribute the logged ECHConfigList through DNS HTTPS/SVCB or another ECH-capable bootstrap. Without that distribution, ordinary clients keep using the public hostname SNI and the relay routes them through the existing plaintext-SNI fallback.
 
 Legacy clients and raw TCP/UDP transports still use the legacy hostname registration path. On those paths the relay control plane receives the lease hostname and can expose it to admin views.
 

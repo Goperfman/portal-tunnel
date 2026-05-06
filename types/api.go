@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -72,6 +73,7 @@ type RegisterChallengeRequest struct {
 	HopToken      string        `json:"hop_token,omitempty"`
 	RouteHostname string        `json:"route_hostname,omitempty"`
 	HostnameHash  string        `json:"hostname_hash,omitempty"`
+	ECHConfigList []byte        `json:"ech_config_list,omitempty"`
 }
 
 type RegisterChallengeResponse struct {
@@ -125,8 +127,10 @@ type UnregisterRequest struct {
 type HopRoute struct {
 	OwnerPublicKey string          `json:"owner_public_key,omitempty"`
 	RelayURL       string          `json:"relay_url"`
+	PublicHostname string          `json:"public_hostname,omitempty"`
 	RouteHostname  string          `json:"route_hostname,omitempty"`
 	HostnameHash   string          `json:"hostname_hash,omitempty"`
+	ECHConfigList  []byte          `json:"ech_config_list,omitempty"`
 	MatchToken     string          `json:"match_token,omitempty"`
 	Metadata       LeaseMetadata   `json:"metadata,omitempty"`
 	ForwardRelay   RelayDescriptor `json:"forward_relay"`
@@ -146,8 +150,10 @@ func HopRouteBytes(method string, route HopRoute) ([]byte, error) {
 		Method              string          `json:"method"`
 		OwnerPublicKey      string          `json:"owner_public_key"`
 		RelayURL            string          `json:"relay_url"`
+		PublicHostname      string          `json:"public_hostname"`
 		RouteHostname       string          `json:"route_hostname"`
 		HostnameHash        string          `json:"hostname_hash"`
+		ECHConfigList       string          `json:"ech_config_list"`
 		MatchToken          string          `json:"match_token"`
 		ForwardRelay        json.RawMessage `json:"forward_relay"`
 		ForwardToken        string          `json:"forward_token"`
@@ -158,8 +164,10 @@ func HopRouteBytes(method string, route HopRoute) ([]byte, error) {
 		Method:              strings.ToUpper(strings.TrimSpace(method)),
 		OwnerPublicKey:      strings.TrimSpace(route.OwnerPublicKey),
 		RelayURL:            strings.TrimSpace(route.RelayURL),
+		PublicHostname:      strings.TrimSpace(route.PublicHostname),
 		RouteHostname:       strings.TrimSpace(route.RouteHostname),
 		HostnameHash:        strings.TrimSpace(route.HostnameHash),
+		ECHConfigList:       base64.StdEncoding.EncodeToString(route.ECHConfigList),
 		MatchToken:          strings.TrimSpace(route.MatchToken),
 		ForwardRelay:        json.RawMessage(forwardRelay),
 		ForwardToken:        strings.TrimSpace(route.ForwardToken),

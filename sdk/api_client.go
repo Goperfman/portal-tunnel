@@ -139,6 +139,13 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 			return types.RegisterResponse{}, nil, "", "", err
 		}
 	}
+	var echConfigList []byte
+	if streamLease {
+		_, echConfigList, err = l.tenantECHMaterials(publicHostname, routeHostname)
+		if err != nil {
+			return types.RegisterResponse{}, nil, "", "", err
+		}
+	}
 
 	if len(l.multiHop) > 0 {
 		hopRoutes = make([]types.HopRoute, 0, len(hopPath)-1)
@@ -161,8 +168,10 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 				ForwardToken: forwardToken,
 			}
 			if i == 0 {
+				route.PublicHostname = publicHostname
 				route.RouteHostname = routeHostname
 				route.HostnameHash = utils.HostnameHash(publicHostname)
+				route.ECHConfigList = append([]byte(nil), echConfigList...)
 				route.Metadata.Hide = true
 				hopRoutes = append(hopRoutes, route)
 			} else {
@@ -185,6 +194,7 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 	if streamLease && len(l.multiHop) == 0 {
 		registerReq.RouteHostname = routeHostname
 		registerReq.HostnameHash = utils.HostnameHash(publicHostname)
+		registerReq.ECHConfigList = append([]byte(nil), echConfigList...)
 	}
 
 	var challenge types.RegisterChallengeResponse

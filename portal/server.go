@@ -387,8 +387,31 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			s.cancel()
 		}
 
-		for _, lease := range s.registry.CloseAll() {
-			s.deleteENSGaslessHostname(ctx, lease, "delete lease ens gasless hostname during shutdown")
+		leases := s.registry.CloseAll()
+		if manager := s.acmeManager; manager != nil {
+			for _, lease := range leases {
+				if lease.hasENSGaslessDNSRecord() {
+					err := manager.DeleteENSGaslessHostname(ctx, lease.Hostname)
+					if err != nil {
+						log.Warn().
+							Err(err).
+							Str("hostname", lease.Hostname).
+							Str("address", lease.Address).
+							Msg("delete lease ens gasless hostname during shutdown")
+					}
+				}
+				if lease.hasECHDNSRecord() {
+					err := manager.DeleteECHConfig(ctx, lease.ECHDNSHostname)
+					if err != nil {
+						log.Warn().
+							Err(err).
+							Str("hostname", lease.ECHDNSHostname).
+							Str("route_hostname", lease.Hostname).
+							Str("address", lease.Address).
+							Msg("delete lease ech dns record during shutdown")
+					}
+				}
+			}
 		}
 
 		if s.quicBackhaul != nil {
@@ -454,17 +477,28 @@ func (s *Server) prepareAPITLS(ctx context.Context) (keyless.TLSMaterialConfig, 
 		CertPEM: certPEM,
 		KeyPEM:  keyPEM,
 	}
-	echKeys, err := keyless.EncryptedClientHelloKeys(
-		s.identity.PrivateKey,
+	echSeed, err := s.identity.DeriveToken(
+		"relay-ech",
 		s.identity.EncryptedClientHelloSeed,
 		s.identity.Name,
 	)
 	if err != nil {
 		manager.Stop()
-		return keyless.TLSMaterialConfig{}, nil, fmt.Errorf("prepare ech keys: %w", err)
+		return keyless.TLSMaterialConfig{}, nil, fmt.Errorf("derive relay ech seed: %w", err)
+	}
+	echKeys, echConfigList, err := keyless.EncryptedClientHelloMaterials(echSeed, s.identity.Name)
+	if err != nil {
+		manager.Stop()
+		return keyless.TLSMaterialConfig{}, nil, fmt.Errorf("prepare ech materials: %w", err)
 	}
 	if len(echKeys) > 0 {
 		apiTLS.EncryptedClientHelloKeys = echKeys
+		if err := manager.SyncECHConfig(ctx, s.identity.Name, echConfigList, s.cfg.SNIPort); err != nil {
+			log.Warn().
+				Err(err).
+				Str("hostname", s.identity.Name).
+				Msg("publish relay ech dns record")
+		}
 	}
 
 	return apiTLS, manager, nil
@@ -644,8 +678,31 @@ func (s *Server) runRegistryJanitor(ctx context.Context, interval time.Duration)
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			for _, lease := range s.registry.cleanupExpired(time.Now()) {
-				s.deleteENSGaslessHostname(context.Background(), lease, "delete expired lease ens gasless hostname")
+			leases := s.registry.cleanupExpired(time.Now())
+			if manager := s.acmeManager; manager != nil {
+				for _, lease := range leases {
+					if lease.hasENSGaslessDNSRecord() {
+						err := manager.DeleteENSGaslessHostname(ctx, lease.Hostname)
+						if err != nil {
+							log.Warn().
+								Err(err).
+								Str("hostname", lease.Hostname).
+								Str("address", lease.Address).
+								Msg("delete expired lease ens gasless hostname")
+						}
+					}
+					if lease.hasECHDNSRecord() {
+						err := manager.DeleteECHConfig(ctx, lease.ECHDNSHostname)
+						if err != nil {
+							log.Warn().
+								Err(err).
+								Str("hostname", lease.ECHDNSHostname).
+								Str("route_hostname", lease.Hostname).
+								Str("address", lease.Address).
+								Msg("delete expired lease ech dns record")
+						}
+					}
+				}
 			}
 		}
 	}
@@ -804,29 +861,4 @@ func (s *Server) newSelfDescriptor(now time.Time) (types.RelayDescriptor, error)
 		ActiveConnections:  s.proxy.activeConnectionCount(),
 		TCPBPS:             s.proxy.currentTCPBPS(now),
 	}, s.identity.PrivateKey)
-}
-
-func (s *Server) syncENSGaslessHostname(ctx context.Context, record *leaseRecord) error {
-	if record == nil || !record.isPublicEntry() || record.HostnameHash != "" || s.acmeManager == nil {
-		return nil
-	}
-	syncCtx, cancel := context.WithTimeout(ctx, defaultClaimTimeout)
-	defer cancel()
-	return s.acmeManager.SyncENSGaslessHostname(syncCtx, record.Hostname, record.Address)
-}
-
-func (s *Server) deleteENSGaslessHostname(ctx context.Context, record *leaseRecord, logMessage string) {
-	if record == nil || !record.isPublicEntry() || record.HostnameHash != "" || s.acmeManager == nil {
-		return
-	}
-	deleteCtx, cancel := context.WithTimeout(ctx, defaultClaimTimeout)
-	err := s.acmeManager.DeleteENSGaslessHostname(deleteCtx, record.Hostname)
-	cancel()
-	if err != nil {
-		log.Warn().
-			Err(err).
-			Str("hostname", record.Hostname).
-			Str("address", record.Address).
-			Msg(logMessage)
-	}
 }

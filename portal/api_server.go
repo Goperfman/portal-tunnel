@@ -1,7 +1,6 @@
 package portal
 
 import (
-	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -279,15 +278,40 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorResponse(w, err)
 		return
 	}
-	if err := s.syncENSGaslessHostname(context.Background(), record); err != nil {
-		removed, _ := s.registry.Unregister(types.UnregisterRequest{AccessToken: resp.AccessToken})
-		if removed == nil {
-			record.Close()
-			removed = record
+	if manager := s.acmeManager; manager != nil {
+		if record.hasENSGaslessDNSRecord() {
+			err := manager.SyncENSGaslessHostname(r.Context(), record.Hostname, record.Address)
+			if err != nil {
+				removed, _ := s.registry.Unregister(types.UnregisterRequest{AccessToken: resp.AccessToken})
+				if removed == nil {
+					record.Close()
+					removed = record
+				}
+				if removed.hasENSGaslessDNSRecord() {
+					deleteErr := manager.DeleteENSGaslessHostname(r.Context(), removed.Hostname)
+					if deleteErr != nil {
+						log.Warn().
+							Err(deleteErr).
+							Str("hostname", removed.Hostname).
+							Str("address", removed.Address).
+							Msg("delete lease ens gasless hostname after sync failure")
+					}
+				}
+				writeAPIErrorResponse(w, err)
+				return
+			}
 		}
-		s.deleteENSGaslessHostname(context.Background(), removed, "delete lease ens gasless hostname after sync failure")
-		writeAPIErrorResponse(w, err)
-		return
+		if record.hasECHDNSRecord() {
+			err := manager.SyncECHConfig(r.Context(), record.ECHDNSHostname, record.ECHConfigList, s.cfg.SNIPort)
+			if err != nil {
+				log.Warn().
+					Err(err).
+					Str("hostname", record.ECHDNSHostname).
+					Str("route_hostname", record.Hostname).
+					Str("address", record.Address).
+					Msg("publish lease ech dns record")
+			}
+		}
 	}
 
 	utils.WriteAPIData(w, http.StatusCreated, resp)
@@ -382,7 +406,29 @@ func (s *Server) handleUnregister(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorResponse(w, err)
 		return
 	}
-	s.deleteENSGaslessHostname(context.Background(), record, "delete lease ens gasless hostname")
+	if manager := s.acmeManager; manager != nil {
+		if record.hasENSGaslessDNSRecord() {
+			err := manager.DeleteENSGaslessHostname(r.Context(), record.Hostname)
+			if err != nil {
+				log.Warn().
+					Err(err).
+					Str("hostname", record.Hostname).
+					Str("address", record.Address).
+					Msg("delete lease ens gasless hostname")
+			}
+		}
+		if record.hasECHDNSRecord() {
+			err := manager.DeleteECHConfig(r.Context(), record.ECHDNSHostname)
+			if err != nil {
+				log.Warn().
+					Err(err).
+					Str("hostname", record.ECHDNSHostname).
+					Str("route_hostname", record.Hostname).
+					Str("address", record.Address).
+					Msg("delete lease ech dns record")
+			}
+		}
+	}
 
 	utils.WriteAPIData(w, http.StatusOK, map[string]any{})
 }
@@ -421,7 +467,29 @@ func (s *Server) handleHop(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodDelete {
 		record := s.registry.DeleteHopRoute(&route)
-		s.deleteENSGaslessHostname(context.Background(), record, "delete hop route ens gasless hostname")
+		if manager := s.acmeManager; manager != nil {
+			if record.hasENSGaslessDNSRecord() {
+				err := manager.DeleteENSGaslessHostname(r.Context(), record.Hostname)
+				if err != nil {
+					log.Warn().
+						Err(err).
+						Str("hostname", record.Hostname).
+						Str("address", record.Address).
+						Msg("delete hop route ens gasless hostname")
+				}
+			}
+			if record.hasECHDNSRecord() {
+				err := manager.DeleteECHConfig(r.Context(), record.ECHDNSHostname)
+				if err != nil {
+					log.Warn().
+						Err(err).
+						Str("hostname", record.ECHDNSHostname).
+						Str("route_hostname", record.Hostname).
+						Str("address", record.Address).
+						Msg("delete hop route ech dns record")
+				}
+			}
+		}
 		utils.WriteAPIData(w, http.StatusOK, map[string]any{})
 		return
 	}
@@ -454,14 +522,39 @@ func (s *Server) handleHop(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorResponse(w, err)
 		return
 	}
-	if err := s.syncENSGaslessHostname(context.Background(), record); err != nil {
-		removed := s.registry.DeleteHopRoute(&route)
-		if removed == nil {
-			removed = record
+	if manager := s.acmeManager; manager != nil {
+		if record.hasENSGaslessDNSRecord() {
+			err := manager.SyncENSGaslessHostname(r.Context(), record.Hostname, record.Address)
+			if err != nil {
+				removed := s.registry.DeleteHopRoute(&route)
+				if removed == nil {
+					removed = record
+				}
+				if removed.hasENSGaslessDNSRecord() {
+					deleteErr := manager.DeleteENSGaslessHostname(r.Context(), removed.Hostname)
+					if deleteErr != nil {
+						log.Warn().
+							Err(deleteErr).
+							Str("hostname", removed.Hostname).
+							Str("address", removed.Address).
+							Msg("delete hop route ens gasless hostname after sync failure")
+					}
+				}
+				writeAPIErrorResponse(w, err)
+				return
+			}
 		}
-		s.deleteENSGaslessHostname(context.Background(), removed, "delete hop route ens gasless hostname after sync failure")
-		writeAPIErrorResponse(w, err)
-		return
+		if record.hasECHDNSRecord() {
+			err := manager.SyncECHConfig(r.Context(), record.ECHDNSHostname, record.ECHConfigList, s.cfg.SNIPort)
+			if err != nil {
+				log.Warn().
+					Err(err).
+					Str("hostname", record.ECHDNSHostname).
+					Str("route_hostname", record.Hostname).
+					Str("address", record.Address).
+					Msg("publish hop route ech dns record")
+			}
+		}
 	}
 	utils.WriteAPIData(w, http.StatusOK, map[string]any{})
 }

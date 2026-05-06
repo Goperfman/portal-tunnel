@@ -731,20 +731,10 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 			publicURLBase = parsedKeylessURL
 		}
 	}
-	var echKeys []tls.EncryptedClientHelloKey
-	var echConfigList []byte
-	if routeHostname != "" {
-		echSeed, err := l.identity.DeriveToken("tenant-ech", publicHostname, routeHostname)
-		if err != nil {
-			_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
-			return fmt.Errorf("derive tenant ech seed: %w", err)
-		}
-		echKeys, err = keyless.EncryptedClientHelloKeys(l.identity.PrivateKey, echSeed, routeHostname)
-		if err != nil {
-			_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
-			return fmt.Errorf("prepare tenant ech keys: %w", err)
-		}
-		echConfigList = keyless.EncryptedClientHelloConfigList(echKeys)
+	echKeys, echConfigList, err := l.tenantECHMaterials(publicHostname, routeHostname)
+	if err != nil {
+		_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
+		return err
 	}
 
 	tlsConf, tenantTLSCloser, err := keyless.BuildClientTLSConfig(keylessURL, publicHostname, echKeys)
@@ -798,6 +788,21 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 			Msg("tenant ech config ready")
 	}
 	return nil
+}
+
+func (l *listener) tenantECHMaterials(publicHostname, routeHostname string) ([]tls.EncryptedClientHelloKey, []byte, error) {
+	if routeHostname == "" {
+		return nil, nil, nil
+	}
+	echSeed, err := l.identity.DeriveToken("tenant-ech", publicHostname, routeHostname)
+	if err != nil {
+		return nil, nil, fmt.Errorf("derive tenant ech seed: %w", err)
+	}
+	echKeys, echConfigList, err := keyless.EncryptedClientHelloMaterials(echSeed, routeHostname)
+	if err != nil {
+		return nil, nil, fmt.Errorf("prepare tenant ech materials: %w", err)
+	}
+	return echKeys, echConfigList, nil
 }
 
 func (l *listener) waitRetry(ctx context.Context, operation string, err error, retries, reverseSessionSlot int) bool {

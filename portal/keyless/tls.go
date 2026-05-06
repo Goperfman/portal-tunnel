@@ -26,14 +26,6 @@ type RemoteSignerConfig struct {
 	RootCAPEM     []byte
 }
 
-// MinTLSVersion returns the minimum TLS version required by the keyless TLS mode.
-func MinTLSVersion(echEnabled bool) uint16 {
-	if echEnabled {
-		return tls.VersionTLS13
-	}
-	return tls.VersionTLS12
-}
-
 func AttachToHTTPServer(server *http.Server, cfg TLSMaterialConfig) (io.Closer, error) {
 	if server == nil {
 		return nil, errors.New("http server is required")
