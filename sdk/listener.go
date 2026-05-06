@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -170,10 +171,21 @@ func (l *listener) run(ctx context.Context) {
 
 		retries = 0
 		publicURL := ""
+		routeHostname := ""
+		echConfigList := ""
 		if lease, ok := l.leaseSnapshot(); ok {
 			publicURL = l.publicURLForLease(lease)
+			routeHostname = lease.routeHostname
+			if len(lease.echConfigList) > 0 {
+				echConfigList = base64.StdEncoding.EncodeToString(lease.echConfigList)
+			}
 		}
 		event := log.Info().Str("address", l.identity.Address)
+		if echConfigList != "" {
+			event = event.
+				Str("route_hostname", routeHostname).
+				Str("ech_config_list_base64", echConfigList)
+		}
 		if publicURL != "" {
 			event.Msg("service ready at " + publicURL)
 		} else {
@@ -242,6 +254,8 @@ func (l *listener) Close() error {
 
 type listenerLease struct {
 	hostname      string
+	routeHostname string
+	echConfigList []byte
 	udpAddr       string
 	tcpAddr       string
 	accessToken   string
@@ -695,22 +709,13 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 		return err
 	}
 
-	resp, hopRoutes, err := l.registerLease(ctx, l.leaseTTL, l.udpEnabled, l.tcpEnabled)
+	resp, hopRoutes, routeHostname, err := l.registerLease(ctx, l.leaseTTL, l.udpEnabled, l.tcpEnabled)
 	if err != nil {
 		return err
 	}
 	resp.AccessToken = strings.TrimSpace(resp.AccessToken)
 	if resp.AccessToken == "" {
 		return errors.New("relay did not return access token")
-	}
-	registeredIdentity, err := utils.NormalizeIdentity(resp.Identity)
-	if err != nil {
-		_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
-		return err
-	}
-	if registeredIdentity.Key() != l.identity.Key() {
-		_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
-		return errors.New("relay returned mismatched lease identity")
 	}
 	if l.udpEnabled && !resp.UDPEnabled {
 		_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
@@ -733,7 +738,24 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 			publicURLBase = parsedKeylessURL
 		}
 	}
-	tlsConf, tenantTLSCloser, err := keyless.BuildClientTLSConfig(keylessURL, []string{resp.Hostname})
+	var echKeys []tls.EncryptedClientHelloKey
+	var echConfigList []byte
+	routeHostname = utils.NormalizeHostname(routeHostname)
+	if routeHostname != "" {
+		echSeed, err := l.identity.DeriveToken("tenant-ech", resp.Hostname, routeHostname)
+		if err != nil {
+			_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
+			return fmt.Errorf("derive tenant ech seed: %w", err)
+		}
+		echKeys, err = keyless.EncryptedClientHelloKeys(l.identity.PrivateKey, echSeed, routeHostname)
+		if err != nil {
+			_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
+			return fmt.Errorf("prepare tenant ech keys: %w", err)
+		}
+		echConfigList = keyless.EncryptedClientHelloConfigList(echKeys)
+	}
+
+	tlsConf, tenantTLSCloser, err := keyless.BuildClientTLSConfig(keylessURL, []string{resp.Hostname}, echKeys)
 	if err != nil {
 		_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
 		if tenantTLSCloser != nil {
@@ -751,6 +773,8 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 	}
 	next := &listenerLease{
 		hostname:      resp.Hostname,
+		routeHostname: routeHostname,
+		echConfigList: echConfigList,
 		udpAddr:       resp.UDPAddr,
 		tcpAddr:       resp.TCPAddr,
 		accessToken:   resp.AccessToken,

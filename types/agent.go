@@ -16,14 +16,16 @@ type AgentTunnelStatus struct {
 }
 
 type AgentRelayStatus struct {
-	RelayURL        string `json:"relay_url"`
-	PublicURL       string `json:"public_url,omitempty"`
-	Connecting      bool   `json:"connecting"`
-	Bootstrap       bool   `json:"bootstrap"`
-	Banned          bool   `json:"banned"`
-	SupportsOverlay bool   `json:"supports_overlay"`
-	SupportsUDP     bool   `json:"supports_udp"`
-	SupportsTCP     bool   `json:"supports_tcp"`
+	RelayURL            string `json:"relay_url"`
+	PublicURL           string `json:"public_url,omitempty"`
+	RouteHostname       string `json:"route_hostname,omitempty"`
+	ECHConfigListBase64 string `json:"ech_config_list_base64,omitempty"`
+	Connecting          bool   `json:"connecting"`
+	Bootstrap           bool   `json:"bootstrap"`
+	Banned              bool   `json:"banned"`
+	SupportsOverlay     bool   `json:"supports_overlay"`
+	SupportsUDP         bool   `json:"supports_udp"`
+	SupportsTCP         bool   `json:"supports_tcp"`
 }
 
 type AgentTunnelRequest struct {

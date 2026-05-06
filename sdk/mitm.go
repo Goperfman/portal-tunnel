@@ -115,8 +115,14 @@ func (m *mitmManager) probeTLSPassthrough(ctx context.Context) (MITMProbeReport,
 		ServerName:         lease.hostname,
 		InsecureSkipVerify: true,
 	}
+	if len(lease.echConfigList) > 0 {
+		probeTLSConf.MinVersion = tls.VersionTLS13
+		probeTLSConf.EncryptedClientHelloConfigList = append([]byte(nil), lease.echConfigList...)
+	}
 	if lease.tlsConfig != nil {
-		probeTLSConf.MinVersion = lease.tlsConfig.MinVersion
+		if probeTLSConf.MinVersion == 0 || lease.tlsConfig.MinVersion > probeTLSConf.MinVersion {
+			probeTLSConf.MinVersion = lease.tlsConfig.MinVersion
+		}
 		probeTLSConf.MaxVersion = lease.tlsConfig.MaxVersion
 		if len(lease.tlsConfig.NextProtos) > 0 {
 			probeTLSConf.NextProtos = append([]string(nil), lease.tlsConfig.NextProtos...)

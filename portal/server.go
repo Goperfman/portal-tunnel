@@ -321,7 +321,7 @@ func (s *Server) Start(ctx context.Context, apiMux *http.ServeMux) error {
 		Bool("multihop_enabled", s.hopMux != nil).
 		Bool("udp_enabled", s.quicBackhaul != nil).
 		Bool("tcp_enabled", s.cfg.TCPEnabled).
-		Bool("ech_enabled", len(apiTLS.EncryptedClientHelloKeys) > 0).
+		Bool("api_ech_enabled", len(apiTLS.EncryptedClientHelloKeys) > 0).
 		Bool("pprof_enabled", s.pprofServer != nil)
 	if s.pprofListener != nil {
 		logEvent = logEvent.Str("pprof_addr", utils.HostPortOrLoopback(s.pprofListener.Addr().String()))
@@ -529,7 +529,7 @@ func (s *Server) runPublicIngress(ctx context.Context) error {
 					return
 				}
 				if err := s.bridgeLeaseConn(ctx, wrappedConn, record); err != nil {
-					log.Warn().Err(err).Str("server_name", serverName).Msg("bridge public ingress")
+					log.Warn().Err(err).Msg("bridge public ingress")
 					_ = wrappedConn.Close()
 					return
 				}
@@ -807,7 +807,7 @@ func (s *Server) newSelfDescriptor(now time.Time) (types.RelayDescriptor, error)
 }
 
 func (s *Server) syncENSGaslessHostname(ctx context.Context, record *leaseRecord) error {
-	if record == nil || !record.isPublicEntry() || s.acmeManager == nil {
+	if record == nil || !record.isPublicEntry() || record.Hostname == "" || record.FallbackHostnameHash != "" || s.acmeManager == nil {
 		return nil
 	}
 	syncCtx, cancel := context.WithTimeout(ctx, defaultClaimTimeout)
@@ -816,7 +816,7 @@ func (s *Server) syncENSGaslessHostname(ctx context.Context, record *leaseRecord
 }
 
 func (s *Server) deleteENSGaslessHostname(ctx context.Context, record *leaseRecord, logMessage string) {
-	if record == nil || !record.isPublicEntry() || s.acmeManager == nil {
+	if record == nil || !record.isPublicEntry() || record.Hostname == "" || record.FallbackHostnameHash != "" || s.acmeManager == nil {
 		return
 	}
 	deleteCtx, cancel := context.WithTimeout(ctx, defaultClaimTimeout)

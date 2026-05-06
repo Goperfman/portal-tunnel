@@ -64,12 +64,14 @@ type RegisterRequest struct {
 }
 
 type RegisterChallengeRequest struct {
-	Identity   Identity      `json:"identity"`
-	Metadata   LeaseMetadata `json:"metadata"`
-	TTL        int           `json:"ttl,omitempty"`
-	UDPEnabled bool          `json:"udp_enabled,omitempty"`
-	TCPEnabled bool          `json:"tcp_enabled,omitempty"`
-	HopToken   string        `json:"hop_token,omitempty"`
+	Identity             Identity      `json:"identity"`
+	Metadata             LeaseMetadata `json:"metadata"`
+	TTL                  int           `json:"ttl,omitempty"`
+	UDPEnabled           bool          `json:"udp_enabled,omitempty"`
+	TCPEnabled           bool          `json:"tcp_enabled,omitempty"`
+	HopToken             string        `json:"hop_token,omitempty"`
+	RouteHostname        string        `json:"route_hostname,omitempty"`
+	FallbackHostnameHash string        `json:"fallback_hostname_hash,omitempty"`
 }
 
 type RegisterChallengeResponse struct {
@@ -123,16 +125,18 @@ type UnregisterRequest struct {
 }
 
 type HopRoute struct {
-	OwnerPublicKey string          `json:"owner_public_key,omitempty"`
-	RelayURL       string          `json:"relay_url"`
-	MatchHostname  string          `json:"match_hostname,omitempty"`
-	MatchToken     string          `json:"match_token,omitempty"`
-	Metadata       LeaseMetadata   `json:"metadata,omitempty"`
-	ForwardRelay   RelayDescriptor `json:"forward_relay"`
-	ForwardToken   string          `json:"forward_token"`
-	FirstSeenAt    time.Time       `json:"first_seen_at,omitempty"`
-	ExpiresAt      time.Time       `json:"expires_at,omitempty"`
-	Signature      string          `json:"signature,omitempty"`
+	OwnerPublicKey    string          `json:"owner_public_key,omitempty"`
+	RelayURL          string          `json:"relay_url"`
+	RouteHostname     string          `json:"route_hostname,omitempty"`
+	MatchHostname     string          `json:"match_hostname,omitempty"`
+	MatchHostnameHash string          `json:"match_hostname_hash,omitempty"`
+	MatchToken        string          `json:"match_token,omitempty"`
+	Metadata          LeaseMetadata   `json:"metadata,omitempty"`
+	ForwardRelay      RelayDescriptor `json:"forward_relay"`
+	ForwardToken      string          `json:"forward_token"`
+	FirstSeenAt       time.Time       `json:"first_seen_at,omitempty"`
+	ExpiresAt         time.Time       `json:"expires_at,omitempty"`
+	Signature         string          `json:"signature,omitempty"`
 }
 
 func HopRouteBytes(method string, route HopRoute) ([]byte, error) {
@@ -145,7 +149,9 @@ func HopRouteBytes(method string, route HopRoute) ([]byte, error) {
 		Method              string          `json:"method"`
 		OwnerPublicKey      string          `json:"owner_public_key"`
 		RelayURL            string          `json:"relay_url"`
+		RouteHostname       string          `json:"route_hostname"`
 		MatchHostname       string          `json:"match_hostname"`
+		MatchHostnameHash   string          `json:"match_hostname_hash"`
 		MatchToken          string          `json:"match_token"`
 		ForwardRelay        json.RawMessage `json:"forward_relay"`
 		ForwardToken        string          `json:"forward_token"`
@@ -156,7 +162,9 @@ func HopRouteBytes(method string, route HopRoute) ([]byte, error) {
 		Method:              strings.ToUpper(strings.TrimSpace(method)),
 		OwnerPublicKey:      strings.TrimSpace(route.OwnerPublicKey),
 		RelayURL:            strings.TrimSpace(route.RelayURL),
+		RouteHostname:       strings.TrimSpace(route.RouteHostname),
 		MatchHostname:       strings.TrimSpace(route.MatchHostname),
+		MatchHostnameHash:   strings.TrimSpace(route.MatchHostnameHash),
 		MatchToken:          strings.TrimSpace(route.MatchToken),
 		ForwardRelay:        json.RawMessage(forwardRelay),
 		ForwardToken:        strings.TrimSpace(route.ForwardToken),

@@ -49,12 +49,14 @@ func NewRegisterChallenge(req types.RegisterChallengeRequest, domain, uri string
 	}
 
 	normalizedRequest := types.RegisterChallengeRequest{
-		Identity:   normalizedIdentity,
-		Metadata:   req.Metadata.Copy(),
-		TTL:        req.TTL,
-		UDPEnabled: req.UDPEnabled,
-		TCPEnabled: req.TCPEnabled,
-		HopToken:   strings.TrimSpace(req.HopToken),
+		Identity:             normalizedIdentity,
+		Metadata:             req.Metadata.Copy(),
+		TTL:                  req.TTL,
+		UDPEnabled:           req.UDPEnabled,
+		TCPEnabled:           req.TCPEnabled,
+		HopToken:             strings.TrimSpace(req.HopToken),
+		RouteHostname:        utils.NormalizeHostname(req.RouteHostname),
+		FallbackHostnameHash: strings.TrimSpace(req.FallbackHostnameHash),
 	}
 
 	return &RegisterChallenge{

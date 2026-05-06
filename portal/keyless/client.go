@@ -13,7 +13,7 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
-func BuildClientTLSConfig(relayURL string, domains []string) (*tls.Config, ioCloser, error) {
+func BuildClientTLSConfig(relayURL string, domains []string, echKeys []tls.EncryptedClientHelloKey) (*tls.Config, ioCloser, error) {
 	normalizedRelayURL, err := utils.NormalizeRelayURL(relayURL)
 	if err != nil {
 		return nil, nil, err
@@ -53,11 +53,16 @@ func BuildClientTLSConfig(relayURL string, domains []string) (*tls.Config, ioClo
 		return nil, nil, fmt.Errorf("create keyless remote signer: %w", err)
 	}
 
+	minVersion := uint16(tls.VersionTLS12)
+	if len(echKeys) > 0 {
+		minVersion = tls.VersionTLS13
+	}
 	tlsConfig, err := keylesstls.NewServerTLSConfig(keylesstls.ServerTLSConfig{
-		CertPEM:    certPEM,
-		Signer:     remoteSigner,
-		NextProtos: []string{"http/1.1"},
-		MinVersion: tls.VersionTLS12,
+		CertPEM:                  certPEM,
+		Signer:                   remoteSigner,
+		NextProtos:               []string{"http/1.1"},
+		MinVersion:               minVersion,
+		EncryptedClientHelloKeys: echKeys,
 	})
 	if err != nil {
 		_ = remoteSigner.Close()

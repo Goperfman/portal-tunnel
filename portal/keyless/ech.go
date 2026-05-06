@@ -92,3 +92,20 @@ func EncryptedClientHelloKeys(siwePrivateKey, seed, publicName string) ([]tls.En
 		SendAsRetry: true,
 	}}, nil
 }
+
+func EncryptedClientHelloConfigList(keys []tls.EncryptedClientHelloKey) []byte {
+	var configs bytes.Buffer
+	for _, key := range keys {
+		configs.Write(key.Config)
+	}
+
+	var out bytes.Buffer
+	writeUint16 := func(buf *bytes.Buffer, value uint16) {
+		var encoded [2]byte
+		binary.BigEndian.PutUint16(encoded[:], value)
+		buf.Write(encoded[:])
+	}
+	writeUint16(&out, uint16(configs.Len()))
+	out.Write(configs.Bytes())
+	return out.Bytes()
+}
