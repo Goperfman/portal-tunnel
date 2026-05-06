@@ -807,7 +807,7 @@ func (s *Server) newSelfDescriptor(now time.Time) (types.RelayDescriptor, error)
 }
 
 func (s *Server) syncENSGaslessHostname(ctx context.Context, record *leaseRecord) error {
-	if record == nil || !record.isPublicEntry() || record.Hostname == "" || record.FallbackHostnameHash != "" || s.acmeManager == nil {
+	if record == nil || !record.isPublicEntry() || record.FallbackHostnameHash != "" || s.acmeManager == nil {
 		return nil
 	}
 	syncCtx, cancel := context.WithTimeout(ctx, defaultClaimTimeout)
@@ -816,7 +816,7 @@ func (s *Server) syncENSGaslessHostname(ctx context.Context, record *leaseRecord
 }
 
 func (s *Server) deleteENSGaslessHostname(ctx context.Context, record *leaseRecord, logMessage string) {
-	if record == nil || !record.isPublicEntry() || record.Hostname == "" || record.FallbackHostnameHash != "" || s.acmeManager == nil {
+	if record == nil || !record.isPublicEntry() || record.FallbackHostnameHash != "" || s.acmeManager == nil {
 		return
 	}
 	deleteCtx, cancel := context.WithTimeout(ctx, defaultClaimTimeout)

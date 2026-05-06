@@ -755,7 +755,7 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 		echConfigList = keyless.EncryptedClientHelloConfigList(echKeys)
 	}
 
-	tlsConf, tenantTLSCloser, err := keyless.BuildClientTLSConfig(keylessURL, []string{resp.Hostname}, echKeys)
+	tlsConf, tenantTLSCloser, err := keyless.BuildClientTLSConfig(keylessURL, resp.Hostname, echKeys)
 	if err != nil {
 		_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
 		if tenantTLSCloser != nil {

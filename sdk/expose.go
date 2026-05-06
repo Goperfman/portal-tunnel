@@ -2,7 +2,6 @@ package sdk
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -432,10 +431,6 @@ func (e *Exposure) Snapshot() types.AgentTunnelStatus {
 		}
 		if lease, ok := listener.leaseSnapshot(); ok {
 			snap.PublicURL = listener.publicURLForLease(lease)
-			snap.RouteHostname = lease.routeHostname
-			if len(lease.echConfigList) > 0 {
-				snap.ECHConfigListBase64 = base64.StdEncoding.EncodeToString(lease.echConfigList)
-			}
 		}
 		if relayURL != "" {
 			relayByURL[relayURL] = snap

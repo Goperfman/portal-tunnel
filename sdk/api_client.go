@@ -144,7 +144,7 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 		}
 		keylessURL = hopPath[0].APIHTTPSAddr
 
-		hopRoutes = make([]types.HopRoute, 0, len(hopPath))
+		hopRoutes = make([]types.HopRoute, 0, len(hopPath)-1)
 		var previousHopToken string
 		for i := 0; i < len(hopPath)-1; i++ {
 			token, err := l.identity.DeriveToken(
@@ -164,13 +164,10 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 				ForwardToken: forwardToken,
 			}
 			if i == 0 {
+				route.RouteHostname = routeHostname
 				route.MatchHostnameHash = utils.HostnameHash(publicHostname)
+				route.Metadata.Hide = true
 				hopRoutes = append(hopRoutes, route)
-				echRoute := route
-				echRoute.MatchHostnameHash = ""
-				echRoute.RouteHostname = routeHostname
-				echRoute.Metadata.Hide = true
-				hopRoutes = append(hopRoutes, echRoute)
 			} else {
 				route.MatchToken = previousHopToken
 				hopRoutes = append(hopRoutes, route)

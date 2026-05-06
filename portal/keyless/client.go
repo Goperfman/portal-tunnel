@@ -13,7 +13,7 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
-func BuildClientTLSConfig(relayURL string, domains []string, echKeys []tls.EncryptedClientHelloKey) (*tls.Config, ioCloser, error) {
+func BuildClientTLSConfig(relayURL, hostname string, echKeys []tls.EncryptedClientHelloKey) (*tls.Config, ioCloser, error) {
 	normalizedRelayURL, err := utils.NormalizeRelayURL(relayURL)
 	if err != nil {
 		return nil, nil, err
@@ -32,15 +32,12 @@ func BuildClientTLSConfig(relayURL string, domains []string, echKeys []tls.Encry
 	if err != nil {
 		return nil, nil, fmt.Errorf("prepare keyless materials: %w", err)
 	}
-	for _, domain := range domains {
-		domain = strings.TrimSpace(domain)
-		if domain == "" {
-			continue
-		}
-		verifyErr := VerifyCertificateHostname(certPEM, domain)
-		if verifyErr != nil {
-			return nil, nil, fmt.Errorf("keyless certificate does not cover %s: %w", domain, verifyErr)
-		}
+	hostname = strings.TrimSpace(hostname)
+	if hostname == "" {
+		return nil, nil, errors.New("keyless hostname is required")
+	}
+	if verifyErr := VerifyCertificateHostname(certPEM, hostname); verifyErr != nil {
+		return nil, nil, fmt.Errorf("keyless certificate does not cover %s: %w", hostname, verifyErr)
 	}
 
 	remoteSigner, err := keylesstls.NewRemoteSigner(keylesstls.RemoteSignerConfig{

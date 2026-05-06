@@ -133,6 +133,13 @@ func TestLeaseRegistryAutomaticECHRouteFallsBackToPlainSNI(t *testing.T) {
 	if adminLeases[0].Hostname != registered.Hostname {
 		t.Fatalf("AdminLeases()[0] hostname = %q, want %q", adminLeases[0].Hostname, registered.Hostname)
 	}
+
+	if _, _, err := registry.Register(types.RegisterChallengeRequest{
+		Identity:             newTestLeaseIdentity(t, "hash-only"),
+		FallbackHostnameHash: utils.HostnameHash("hash-only.example.com"),
+	}, "203.0.113.10", ""); err == nil {
+		t.Fatal("Register(fallback hash only) error = nil, want error")
+	}
 }
 
 func TestLeaseRegistryHopRouteCanExposeECHAndPlainSNIFallback(t *testing.T) {
@@ -159,22 +166,23 @@ func TestLeaseRegistryHopRouteCanExposeECHAndPlainSNIFallback(t *testing.T) {
 		FirstSeenAt:  now,
 		ExpiresAt:    now.Add(time.Minute),
 	}
-	plainRoute := baseRoute
-	plainRoute.MatchHostnameHash = utils.HostnameHash("demo.example.com")
-	echRoute := baseRoute
-	echRoute.RouteHostname = "ech-demo.example.com"
-	echRoute.Metadata.Hide = true
+	route := baseRoute
+	route.RouteHostname = "ech-demo.example.com"
+	route.MatchHostnameHash = utils.HostnameHash("demo.example.com")
+	route.Metadata.Hide = true
 
-	if _, err := registry.RegisterHopRoute(&plainRoute, now); err != nil {
-		t.Fatalf("RegisterHopRoute(plain) error = %v", err)
+	if _, err := registry.RegisterHopRoute(&route, now); err != nil {
+		t.Fatalf("RegisterHopRoute() error = %v", err)
 	}
-	if _, err := registry.RegisterHopRoute(&echRoute, now); err != nil {
-		t.Fatalf("RegisterHopRoute(ech) error = %v", err)
+	hashOnlyRoute := baseRoute
+	hashOnlyRoute.MatchHostnameHash = utils.HostnameHash("hash-only.example.com")
+	if _, err := registry.RegisterHopRoute(&hashOnlyRoute, now); err == nil {
+		t.Fatal("RegisterHopRoute(hash only) error = nil, want error")
 	}
 	if _, ok := registry.Lookup("demo.example.com"); !ok {
 		t.Fatal("Lookup(plain route) = false, want true")
 	}
-	if _, ok := registry.Lookup(echRoute.RouteHostname); !ok {
+	if _, ok := registry.Lookup(route.RouteHostname); !ok {
 		t.Fatal("Lookup(ech route) = false, want true")
 	}
 	leases := registry.PublicLeases(now)
