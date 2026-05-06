@@ -379,8 +379,13 @@ func (l *listener) publicURLForLease(lease listenerLease) string {
 	}
 
 	host := lease.hostname
-	if port := baseURL.Port(); port != "" {
-		host = net.JoinHostPort(lease.hostname, port)
+	sniPort := lease.sniPort
+	scheme := strings.ToLower(strings.TrimSpace(baseURL.Scheme))
+	if (scheme == "https" && sniPort == 443) || (scheme == "http" && sniPort == 80) {
+		sniPort = 0
+	}
+	if sniPort > 0 {
+		host = net.JoinHostPort(lease.hostname, fmt.Sprintf("%d", sniPort))
 	}
 
 	return (&url.URL{
@@ -697,7 +702,7 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 		return err
 	}
 
-	resp, hopRoutes, routeHostname, err := l.registerLease(ctx, l.leaseTTL, l.udpEnabled, l.tcpEnabled)
+	resp, hopRoutes, publicHostname, routeHostname, err := l.registerLease(ctx, l.leaseTTL, l.udpEnabled, l.tcpEnabled)
 	if err != nil {
 		return err
 	}
@@ -729,7 +734,7 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 	var echKeys []tls.EncryptedClientHelloKey
 	var echConfigList []byte
 	if routeHostname != "" {
-		echSeed, err := l.identity.DeriveToken("tenant-ech", resp.Hostname, routeHostname)
+		echSeed, err := l.identity.DeriveToken("tenant-ech", publicHostname, routeHostname)
 		if err != nil {
 			_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
 			return fmt.Errorf("derive tenant ech seed: %w", err)
@@ -742,7 +747,7 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 		echConfigList = keyless.EncryptedClientHelloConfigList(echKeys)
 	}
 
-	tlsConf, tenantTLSCloser, err := keyless.BuildClientTLSConfig(keylessURL, resp.Hostname, echKeys)
+	tlsConf, tenantTLSCloser, err := keyless.BuildClientTLSConfig(keylessURL, publicHostname, echKeys)
 	if err != nil {
 		_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
 		if tenantTLSCloser != nil {
@@ -759,19 +764,17 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 		return ctx.Err()
 	}
 	next := &listenerLease{
-		hostname:      resp.Hostname,
+		hostname:      publicHostname,
 		echConfigList: echConfigList,
 		udpAddr:       resp.UDPAddr,
 		tcpAddr:       resp.TCPAddr,
 		accessToken:   resp.AccessToken,
 		expiresAt:     resp.ExpiresAt,
+		sniPort:       resp.SNIPort,
 		publicURLBase: publicURLBase,
 		tlsConfig:     tlsConf,
 		tlsCloser:     tenantTLSCloser,
 		hopRoutes:     hopRoutes,
-	}
-	if l.udpEnabled {
-		next.sniPort = resp.SNIPort
 	}
 	l.leaseMu.Lock()
 	oldLease := l.lease

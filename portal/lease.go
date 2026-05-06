@@ -335,14 +335,13 @@ func (r *leaseRegistry) Register(req types.RegisterChallengeRequest, clientIP, r
 
 	resp := types.RegisterResponse{
 		Identity:    record.Identity,
-		Hostname:    record.Hostname,
 		ExpiresAt:   record.ExpiresAt,
 		AccessToken: accessToken,
+		SNIPort:     r.sniPort,
 		UDPEnabled:  record.datagram != nil,
 		TCPEnabled:  record.tcpPort != nil,
 	}
 	if record.datagram != nil {
-		resp.SNIPort = r.sniPort
 		resp.UDPAddr = fmt.Sprintf("%s:%d", r.rootHostname, record.datagram.UDPPort())
 	}
 	if record.tcpPort != nil {
@@ -469,7 +468,7 @@ func (r *leaseRegistry) RegisterHopRoute(route *types.HopRoute, now time.Time) (
 	case !expiresAt.After(now):
 		return nil, errors.New("route expiry must be in the future")
 	case matchToken != "" && hasPublicMatcher:
-		return nil, errors.New("hostname and token matchers are mutually exclusive")
+		return nil, errors.New("route and token matchers are mutually exclusive")
 	case matchToken == "" && routeHostname == "":
 		return nil, errors.New("route hostname or token matcher is required")
 	case overlayErr != nil:
@@ -779,7 +778,11 @@ func (r *leaseRegistry) deleteRecord(i int) {
 func (r *leaseRegistry) publicLease(record *leaseRecord) types.Lease {
 	name := record.Name
 	hostname := record.Hostname
-	if record.HostnameHash != "" && record.Hostname != "" {
+	if record.stream != nil && record.HostnameHash != "" {
+		if publicHostname, err := utils.LeaseHostname(record.Name, r.rootHostname); err == nil && utils.HostnameHash(publicHostname) == record.HostnameHash {
+			hostname = publicHostname
+		}
+	} else if record.HostnameHash != "" && record.Hostname != "" {
 		label, _, _ := strings.Cut(record.Hostname, ".")
 		name = label
 	}

@@ -87,7 +87,7 @@ func (l *listener) initHTTPTransport(ctx context.Context) error {
 	return nil
 }
 
-func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnabled, tcpEnabled bool) (types.RegisterResponse, []types.HopRoute, string, error) {
+func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnabled, tcpEnabled bool) (types.RegisterResponse, []types.HopRoute, string, string, error) {
 	var exitHopToken string
 	var publicHostname string
 	var routeHostname string
@@ -96,27 +96,15 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 	var hopPath []types.RelayDescriptor
 	streamLease := !udpEnabled && !tcpEnabled
 	registerIdentity := l.identity
-	if streamLease {
-		token, err := l.identity.DeriveToken("opaque-lease-name", l.identity.Name)
-		if err != nil {
-			return types.RegisterResponse{}, nil, "", fmt.Errorf("derive opaque lease name: %w", err)
-		}
-		sum := sha256.Sum256([]byte(token))
-		label := "lid-" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:20]))
-		registerIdentity.Name, err = utils.NormalizeDNSLabel(label)
-		if err != nil {
-			return types.RegisterResponse{}, nil, "", fmt.Errorf("derive opaque lease name: %w", err)
-		}
-	}
 	if len(l.multiHop) > 0 {
 		if !streamLease {
-			return types.RegisterResponse{}, nil, "", errors.New("multi-hop requires stream lease")
+			return types.RegisterResponse{}, nil, "", "", errors.New("multi-hop requires stream lease")
 		}
 		if len(l.multiHop) < 2 {
-			return types.RegisterResponse{}, nil, "", errors.New("multi-hop requires at least entry and exit relay urls")
+			return types.RegisterResponse{}, nil, "", "", errors.New("multi-hop requires at least entry and exit relay urls")
 		}
 		if l.relaySet == nil {
-			return types.RegisterResponse{}, nil, "", errors.New("multi-hop relay set is unavailable")
+			return types.RegisterResponse{}, nil, "", "", errors.New("multi-hop relay set is unavailable")
 		}
 
 		now := time.Now().UTC()
@@ -124,31 +112,31 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 		for i, relayURL := range l.multiHop {
 			desc, ok := l.relaySet.OverlayRelayDescriptor(relayURL, now)
 			if !ok {
-				return types.RegisterResponse{}, nil, "", fmt.Errorf("multi-hop relay %d descriptor is unavailable", i)
+				return types.RegisterResponse{}, nil, "", "", fmt.Errorf("multi-hop relay %d descriptor is unavailable", i)
 			}
 			hopPath = append(hopPath, desc)
 		}
 
 		rootHostname = utils.PortalRootHost(hopPath[0].APIHTTPSAddr)
-	} else if streamLease {
+	} else {
 		rootHostname = utils.PortalRootHost(l.relayURL.String())
 	}
 
+	var err error
+	publicHostname, err = utils.LeaseHostname(l.identity.Name, rootHostname)
+	if err != nil {
+		return types.RegisterResponse{}, nil, "", "", err
+	}
 	if streamLease {
-		var err error
-		publicHostname, err = utils.LeaseHostname(l.identity.Name, rootHostname)
-		if err != nil {
-			return types.RegisterResponse{}, nil, "", err
-		}
 		routeToken, err := l.identity.DeriveToken("ech-route", publicHostname, rootHostname)
 		if err != nil {
-			return types.RegisterResponse{}, nil, "", err
+			return types.RegisterResponse{}, nil, "", "", err
 		}
 		routeSum := sha256.Sum256([]byte(routeToken))
 		routeLabel := "ech-" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(routeSum[:20]))
 		routeHostname, err = utils.LeaseHostname(routeLabel, rootHostname)
 		if err != nil {
-			return types.RegisterResponse{}, nil, "", err
+			return types.RegisterResponse{}, nil, "", "", err
 		}
 	}
 
@@ -164,7 +152,7 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 				hopPath[i+1].APIHTTPSAddr,
 			)
 			if err != nil {
-				return types.RegisterResponse{}, nil, "", err
+				return types.RegisterResponse{}, nil, "", "", err
 			}
 			forwardToken := "hpt_" + token
 			route := types.HopRoute{
@@ -201,12 +189,12 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 
 	var challenge types.RegisterChallengeResponse
 	if err := utils.HTTPDoAPIPath(ctx, l.httpClient, l.relayURL, http.MethodPost, types.PathSDKRegisterChallenge, registerReq, nil, &challenge); err != nil {
-		return types.RegisterResponse{}, nil, "", err
+		return types.RegisterResponse{}, nil, "", "", err
 	}
 
 	signature, err := utils.SignEthereumPersonalMessage(challenge.SIWEMessage, l.identity.PrivateKey)
 	if err != nil {
-		return types.RegisterResponse{}, nil, "", err
+		return types.RegisterResponse{}, nil, "", "", err
 	}
 
 	var resp types.RegisterResponse
@@ -216,27 +204,24 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 		SIWESignature: signature,
 		ReportedIP:    utils.ResolvePublicIP(ctx),
 	}, nil, &resp); err != nil {
-		return types.RegisterResponse{}, nil, "", err
+		return types.RegisterResponse{}, nil, "", "", err
 	}
 	registeredIdentity, err := utils.NormalizeIdentity(resp.Identity)
 	if err != nil {
 		_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
-		return types.RegisterResponse{}, nil, "", err
+		return types.RegisterResponse{}, nil, "", "", err
 	}
 	if registeredIdentity.Key() != registerIdentity.Key() {
 		_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
-		return types.RegisterResponse{}, nil, "", errors.New("relay returned mismatched lease identity")
+		return types.RegisterResponse{}, nil, "", "", errors.New("relay returned mismatched lease identity")
 	}
 	if len(hopRoutes) > 0 {
 		if err := l.syncHopRoutes(ctx, http.MethodPost, resp.ExpiresAt, hopRoutes); err != nil {
 			_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
-			return types.RegisterResponse{}, nil, "", err
+			return types.RegisterResponse{}, nil, "", "", err
 		}
 	}
-	if publicHostname != "" {
-		resp.Hostname = publicHostname
-	}
-	return resp, hopRoutes, routeHostname, nil
+	return resp, hopRoutes, publicHostname, routeHostname, nil
 }
 
 func (l *listener) renewRegisteredLease(ctx context.Context, ttl time.Duration, accessToken string, hopRoutes []types.HopRoute) (types.RenewResponse, error) {

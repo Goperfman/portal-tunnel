@@ -83,7 +83,6 @@ type RegisterChallengeResponse struct {
 type RegisterResponse struct {
 	Identity    Identity  `json:"identity"`
 	ExpiresAt   time.Time `json:"expires_at"`
-	Hostname    string    `json:"hostname"`
 	AccessToken string    `json:"access_token"`
 	SNIPort     int       `json:"sni_port,omitempty"`
 	UDPAddr     string    `json:"udp_addr,omitempty"`

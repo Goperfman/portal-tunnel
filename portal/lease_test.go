@@ -96,7 +96,7 @@ func TestLeaseRegistryAutomaticECHRouteFallsBackToPlainSNI(t *testing.T) {
 	registry := newTestRegistry(t)
 	routeHostname := "ech-auto-ech.example.com"
 	publicHostname := "auto-ech.example.com"
-	record, registered, err := registry.Register(types.RegisterChallengeRequest{
+	record, _, err := registry.Register(types.RegisterChallengeRequest{
 		Identity:      newTestLeaseIdentity(t, "auto-ech"),
 		RouteHostname: routeHostname,
 		HostnameHash:  utils.HostnameHash(publicHostname),
@@ -104,34 +104,33 @@ func TestLeaseRegistryAutomaticECHRouteFallsBackToPlainSNI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
-	if registered.Hostname != routeHostname {
-		t.Fatalf("Register() hostname = %q, want route hostname %q", registered.Hostname, routeHostname)
+	if record.Hostname != routeHostname {
+		t.Fatalf("Register() route hostname = %q, want %q", record.Hostname, routeHostname)
 	}
-	if registered.Hostname == publicHostname {
-		t.Fatalf("Register() hostname = public hostname = %q", registered.Hostname)
+	if record.Hostname == publicHostname {
+		t.Fatalf("Register() route hostname = public hostname = %q", record.Hostname)
 	}
 	if lookedUp, ok := registry.Lookup(publicHostname); !ok || lookedUp != record {
 		t.Fatalf("Lookup(public hostname) = %v, %v, want fallback lease", lookedUp, ok)
 	}
-	lookedUp, ok := registry.Lookup(registered.Hostname)
+	lookedUp, ok := registry.Lookup(record.Hostname)
 	if !ok || lookedUp != record {
 		t.Fatalf("Lookup(route hostname) = %v, %v, want registered lease", lookedUp, ok)
 	}
 	leases := registry.PublicLeases(time.Now())
-	publicHostnameFromLease := ""
-	if len(leases) == 1 {
-		publicHostnameFromLease = leases[0].Hostname
+	if len(leases) != 1 {
+		t.Fatalf("PublicLeases() length = %d, want 1", len(leases))
 	}
-	if len(leases) != 1 || publicHostnameFromLease != registered.Hostname {
-		t.Fatalf("PublicLeases() hostname = len %d, host %q, want len 1, host %q", len(leases), publicHostnameFromLease, registered.Hostname)
+	if leases[0].Hostname != publicHostname {
+		t.Fatalf("PublicLeases()[0].Hostname = %q, want %q", leases[0].Hostname, publicHostname)
 	}
 
 	adminLeases := registry.AdminLeases(time.Now())
 	if len(adminLeases) != 1 {
 		t.Fatalf("AdminLeases() length = %d, want 1", len(adminLeases))
 	}
-	if adminLeases[0].Hostname != registered.Hostname {
-		t.Fatalf("AdminLeases()[0] hostname = %q, want %q", adminLeases[0].Hostname, registered.Hostname)
+	if adminLeases[0].Hostname != publicHostname {
+		t.Fatalf("AdminLeases()[0] hostname = %q, want %q", adminLeases[0].Hostname, publicHostname)
 	}
 
 	if _, _, err := registry.Register(types.RegisterChallengeRequest{
