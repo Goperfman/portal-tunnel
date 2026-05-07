@@ -227,16 +227,10 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 		_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
 		return types.RegisterResponse{}, nil, "", "", errors.New("relay returned mismatched lease identity")
 	}
-	if len(hopRoutes) > 0 {
-		if err := l.syncHopRoutes(ctx, http.MethodPost, resp.ExpiresAt, hopRoutes); err != nil {
-			_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
-			return types.RegisterResponse{}, nil, "", "", err
-		}
-	}
 	return resp, hopRoutes, publicHostname, routeHostname, nil
 }
 
-func (l *listener) renewRegisteredLease(ctx context.Context, ttl time.Duration, accessToken string, hopRoutes []types.HopRoute) (types.RenewResponse, error) {
+func (l *listener) renewRegisteredLease(ctx context.Context, ttl time.Duration, accessToken string) (types.RenewResponse, error) {
 	var resp types.RenewResponse
 	if err := utils.HTTPDoAPIPath(ctx, l.httpClient, l.relayURL, http.MethodPost, types.PathSDKRenew, types.RenewRequest{
 		AccessToken: accessToken,
@@ -245,15 +239,12 @@ func (l *listener) renewRegisteredLease(ctx context.Context, ttl time.Duration, 
 	}, nil, &resp); err != nil {
 		return types.RenewResponse{}, err
 	}
-	if err := l.syncHopRoutes(ctx, http.MethodPost, resp.ExpiresAt, hopRoutes); err != nil {
-		return types.RenewResponse{}, err
-	}
 	return resp, nil
 }
 
 func (l *listener) unregisterLease(ctx context.Context, accessToken string, hopRoutes []types.HopRoute) error {
 	var unregisterErr error
-	if err := l.syncHopRoutes(ctx, http.MethodDelete, time.Time{}, hopRoutes); err != nil {
+	if err := l.unregisterHopRoutes(ctx, hopRoutes); err != nil {
 		unregisterErr = errors.Join(unregisterErr, err)
 	}
 	err := utils.HTTPDoAPIPath(ctx, l.httpClient, l.relayURL, http.MethodPost, types.PathSDKUnregister, types.UnregisterRequest{
@@ -262,70 +253,97 @@ func (l *listener) unregisterLease(ctx context.Context, accessToken string, hopR
 	return errors.Join(unregisterErr, err)
 }
 
-func (l *listener) syncHopRoutes(ctx context.Context, method string, expiresAt time.Time, routes []types.HopRoute) error {
+func (l *listener) registerHopRoutes(ctx context.Context, expiresAt time.Time, routes []types.HopRoute) (multihopAccessToken string, err error) {
 	if len(routes) == 0 {
-		return nil
+		return "", nil
+	}
+	if l.relaySet == nil {
+		return "", errors.New("multi-hop relay set is unavailable")
 	}
 
-	orderedRoutes := routes
-	if method == http.MethodPost {
-		if l.relaySet == nil {
-			return errors.New("multi-hop relay set is unavailable")
+	orderedRoutes := append([]types.HopRoute(nil), routes...)
+	now := time.Now().UTC()
+	for i := range orderedRoutes {
+		desc, ok := l.relaySet.OverlayRelayDescriptor(orderedRoutes[i].ForwardRelay.APIHTTPSAddr, now)
+		if !ok {
+			return "", fmt.Errorf("multi-hop forward relay %d descriptor is unavailable", i)
 		}
-		orderedRoutes = append([]types.HopRoute(nil), routes...)
-		now := time.Now().UTC()
-		for i := range orderedRoutes {
-			desc, ok := l.relaySet.OverlayRelayDescriptor(orderedRoutes[i].ForwardRelay.APIHTTPSAddr, now)
-			if !ok {
-				return fmt.Errorf("multi-hop forward relay %d descriptor is unavailable", i)
-			}
-			orderedRoutes[i].ForwardRelay = desc
-		}
-		slices.Reverse(orderedRoutes)
+		orderedRoutes[i].ForwardRelay = desc
 	}
+	slices.Reverse(orderedRoutes)
 
-	var syncErr error
 	for _, unsignedRoute := range orderedRoutes {
 		unsignedRoute.FirstSeenAt = expiresAt.Add(-30 * time.Second)
-		route, err := auth.SignHopRoute(method, unsignedRoute, l.identity, expiresAt)
+		route, err := auth.SignHopRoute(http.MethodPost, unsignedRoute, l.identity, expiresAt)
 		if err != nil {
-			if method == http.MethodDelete {
-				syncErr = errors.Join(syncErr, err)
-				continue
-			}
-			return err
+			return "", err
 		}
 		relayURL, err := url.Parse(route.RelayURL)
 		if err != nil {
-			err = fmt.Errorf("parse hop route relay url: %w", err)
-			if method == http.MethodDelete {
-				syncErr = errors.Join(syncErr, err)
-				continue
-			}
-			return err
+			return "", fmt.Errorf("parse hop route relay url: %w", err)
 		}
 
 		bootstrapCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout+defaultHandshakeTimeout)
 		_, client, err := utils.NewHTTPTLSClient(bootstrapCtx, relayURL, l.requestTimeout)
 		cancel()
 		if err != nil {
-			if method == http.MethodDelete {
-				syncErr = errors.Join(syncErr, err)
-				continue
-			}
-			return err
+			return "", err
 		}
 		transport, _ := client.Transport.(*http.Transport)
-		err = utils.HTTPDoAPIPath(ctx, client, relayURL, method, types.PathSDKHop, route, nil, nil)
+		entryRoute := route.MatchToken == "" && route.RouteHostname != ""
+		var hopResp types.HopRouteResponse
+		var out any
+		if entryRoute {
+			out = &hopResp
+		}
+		err = utils.HTTPDoAPIPath(ctx, client, relayURL, http.MethodPost, types.PathSDKHop, route, nil, out)
 		if transport != nil {
 			transport.CloseIdleConnections()
 		}
 		if err != nil {
-			if method == http.MethodDelete {
-				syncErr = errors.Join(syncErr, err)
-				continue
-			}
-			return err
+			return "", err
+		}
+		if !entryRoute {
+			continue
+		}
+		if hopResp.AccessToken == "" {
+			return "", errors.New("entry relay did not return access token")
+		}
+		multihopAccessToken = hopResp.AccessToken
+		return multihopAccessToken, nil
+	}
+	return "", errors.New("entry hop route did not return access token")
+}
+
+func (l *listener) unregisterHopRoutes(ctx context.Context, routes []types.HopRoute) error {
+	var syncErr error
+	for _, unsignedRoute := range routes {
+		route, err := auth.SignHopRoute(http.MethodDelete, unsignedRoute, l.identity, time.Time{})
+		if err != nil {
+			syncErr = errors.Join(syncErr, err)
+			continue
+		}
+		relayURL, err := url.Parse(route.RelayURL)
+		if err != nil {
+			syncErr = errors.Join(syncErr, fmt.Errorf("parse hop route relay url: %w", err))
+			continue
+		}
+
+		bootstrapCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout+defaultHandshakeTimeout)
+		_, client, err := utils.NewHTTPTLSClient(bootstrapCtx, relayURL, l.requestTimeout)
+		cancel()
+		if err != nil {
+			syncErr = errors.Join(syncErr, err)
+			continue
+		}
+		transport, _ := client.Transport.(*http.Transport)
+		err = utils.HTTPDoAPIPath(ctx, client, relayURL, http.MethodDelete, types.PathSDKHop, route, nil, nil)
+		if transport != nil {
+			transport.CloseIdleConnections()
+		}
+		if err != nil {
+			syncErr = errors.Join(syncErr, err)
+			continue
 		}
 	}
 	return syncErr

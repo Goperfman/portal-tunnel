@@ -725,6 +725,39 @@ func (r *leaseRegistry) consumeVerifiedRegisterChallenge(req types.RegisterReque
 	return nil, auth.ErrRegisterChallengeNotFound
 }
 
+func (r *leaseRegistry) issueLeaseAccessToken(record *leaseRecord, now time.Time) (string, error) {
+	token, _, err := auth.IssueLeaseAccessToken(r.tokenPrivateKey, r.tokenKeyID, r.tokenIssuer, record.Identity, record.ExpiresAt.Sub(now))
+	return token, err
+}
+
+func (r *leaseRegistry) verifySigningAccessToken(token string) error {
+	now := time.Now().UTC()
+	claims, err := auth.VerifyLeaseAccessToken(token, r.tokenPublicKey, r.tokenIssuer, time.Now().UTC())
+	if err != nil {
+		return errUnauthorized
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, record := range r.records {
+		if record == nil || record.isExpired(now) || record.Key() != claims.Identity.Key() {
+			continue
+		}
+		if record.stream != nil && record.isPublicEntry() {
+			if !r.policy.IsIdentityRoutable(record.Key()) {
+				return errLeaseRejected
+			}
+			return nil
+		}
+		_, _, hasNextHop := record.nextHop()
+		if record.stream == nil && record.isPublicEntry() && hasNextHop {
+			return nil
+		}
+	}
+	return errUnauthorized
+}
+
 func (r *leaseRegistry) Touch(key, clientIP string, now time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

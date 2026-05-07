@@ -165,8 +165,8 @@ func TestServerStartInitializesLocalACMEAndSigner(t *testing.T) {
 	}
 	defer signResp.Body.Close()
 
-	if signResp.StatusCode != http.StatusMethodNotAllowed {
-		t.Fatalf("GET /v1/sign status = %d, want %d", signResp.StatusCode, http.StatusMethodNotAllowed)
+	if signResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("GET /v1/sign status = %d, want %d", signResp.StatusCode, http.StatusForbidden)
 	}
 }
 

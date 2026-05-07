@@ -140,6 +140,10 @@ type HopRoute struct {
 	Signature      string          `json:"signature,omitempty"`
 }
 
+type HopRouteResponse struct {
+	AccessToken string `json:"access_token,omitempty"`
+}
+
 func HopRouteBytes(method string, route HopRoute) ([]byte, error) {
 	forwardRelay, err := CanonicalBytes(route.ForwardRelay)
 	if err != nil {

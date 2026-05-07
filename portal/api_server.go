@@ -118,6 +118,10 @@ func (s *Server) apiHandler(base *http.ServeMux, keylessSignerHandler http.Handl
 				http.NotFound(w, r)
 				return
 			}
+			if err := s.registry.verifySigningAccessToken(r.Header.Get(types.HeaderAccessToken)); err != nil {
+				writeAPIErrorResponse(w, err)
+				return
+			}
 			keylessSignerHandler.ServeHTTP(w, r)
 		default:
 			base.ServeHTTP(w, r)
@@ -599,7 +603,17 @@ func (s *Server) handleHop(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	utils.WriteAPIData(w, http.StatusOK, map[string]any{})
+	var accessToken string
+	if record.isPublicEntry() {
+		accessToken, err = s.registry.issueLeaseAccessToken(record, now)
+		if err != nil {
+			writeAPIErrorResponse(w, &apiError{types.APIErrorCodeInternal, err.Error(), http.StatusInternalServerError})
+			return
+		}
+	}
+	utils.WriteAPIData(w, http.StatusOK, types.HopRouteResponse{
+		AccessToken: accessToken,
+	})
 }
 
 func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {

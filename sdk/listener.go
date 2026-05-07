@@ -74,7 +74,7 @@ type listener struct {
 	tlsConfig  *tls.Config
 
 	leaseMu sync.RWMutex
-	lease   *listenerLease
+	lease   *listenerSnapshot
 }
 
 // newListener creates one relay listener and its dedicated relay transport for one relay URL.
@@ -241,21 +241,22 @@ func (l *listener) Close() error {
 	return closeErr
 }
 
-type listenerLease struct {
-	hostname      string
-	echConfigList []byte
-	udpAddr       string
-	tcpAddr       string
-	accessToken   string
-	expiresAt     time.Time
-	sniPort       int
-	publicURLBase *url.URL
-	tlsConfig     *tls.Config
-	tlsCloser     io.Closer
-	hopRoutes     []types.HopRoute
+type listenerSnapshot struct {
+	hostname            string
+	echConfigList       []byte
+	udpAddr             string
+	tcpAddr             string
+	accessToken         string
+	multihopAccessToken string
+	expiresAt           time.Time
+	sniPort             int
+	publicURLBase       *url.URL
+	tlsConfig           *tls.Config
+	tlsCloser           io.Closer
+	hopRoutes           []types.HopRoute
 }
 
-func (l *listener) clearLease(reason string) *listenerLease {
+func (l *listener) clearLease(reason string) *listenerSnapshot {
 	l.leaseMu.Lock()
 	lease := l.lease
 	l.lease = nil
@@ -270,12 +271,12 @@ func (l *listener) clearLease(reason string) *listenerLease {
 	return lease
 }
 
-func (l *listener) leaseSnapshot() (listenerLease, bool) {
+func (l *listener) leaseSnapshot() (listenerSnapshot, bool) {
 	l.leaseMu.RLock()
 	defer l.leaseMu.RUnlock()
 
 	if l.lease == nil {
-		return listenerLease{}, false
+		return listenerSnapshot{}, false
 	}
 	return *l.lease, true
 }
@@ -362,7 +363,7 @@ func (l *listener) datagramReady() (string, bool, bool) {
 	return udpAddr, ready, pending
 }
 
-func (l *listener) publicURLForLease(lease listenerLease) string {
+func (l *listener) publicURLForLease(lease listenerSnapshot) string {
 	baseURL := lease.publicURLBase
 	if baseURL == nil {
 		baseURL = l.relayURL
@@ -671,8 +672,9 @@ func (l *listener) renewLease(ctx context.Context) error {
 	}
 
 	requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	resp, err := l.renewRegisteredLease(requestCtx, l.leaseTTL, lease.accessToken, lease.hopRoutes)
-	cancel()
+	defer cancel()
+
+	resp, err := l.renewRegisteredLease(requestCtx, l.leaseTTL, lease.accessToken)
 	if err != nil {
 		if errors.Is(err, &types.APIRequestError{Code: types.APIErrorCodeLeaseNotFound}) {
 			return errLeaseRefreshRequired
@@ -684,6 +686,13 @@ func (l *listener) renewLease(ctx context.Context) error {
 	if resp.AccessToken == "" {
 		return errors.New("relay did not return renewed access token")
 	}
+	multihopAccessToken := resp.AccessToken
+	if len(lease.hopRoutes) > 0 {
+		multihopAccessToken, err = l.registerHopRoutes(requestCtx, resp.ExpiresAt, lease.hopRoutes)
+		if err != nil {
+			return err
+		}
+	}
 	l.leaseMu.Lock()
 	if l.lease == nil || l.lease.accessToken != lease.accessToken {
 		l.leaseMu.Unlock()
@@ -692,6 +701,7 @@ func (l *listener) renewLease(ctx context.Context) error {
 	next := *l.lease
 	next.accessToken = resp.AccessToken
 	next.expiresAt = resp.ExpiresAt
+	next.multihopAccessToken = multihopAccessToken
 	l.lease = &next
 	l.leaseMu.Unlock()
 	return nil
@@ -721,6 +731,14 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 		_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
 		return errors.New("relay did not return sni port for udp transport")
 	}
+	multihopAccessToken := resp.AccessToken
+	if len(hopRoutes) > 0 {
+		multihopAccessToken, err = l.registerHopRoutes(ctx, resp.ExpiresAt, hopRoutes)
+		if err != nil {
+			_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
+			return err
+		}
+	}
 	keylessURL := l.relayURL.String()
 	if len(l.multiHop) > 0 {
 		keylessURL = l.multiHop[0]
@@ -737,7 +755,15 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 		return err
 	}
 
-	tlsConf, tenantTLSCloser, err := keyless.BuildClientTLSConfig(keylessURL, publicHostname, echKeys)
+	tlsConf, tenantTLSCloser, err := keyless.BuildClientTLSConfig(keylessURL, publicHostname, echKeys, func() http.Header {
+		headers := http.Header{}
+		accessToken := multihopAccessToken
+		if snapshot, ok := l.leaseSnapshot(); ok && snapshot.multihopAccessToken != "" {
+			accessToken = snapshot.multihopAccessToken
+		}
+		headers.Set(types.HeaderAccessToken, accessToken)
+		return headers
+	})
 	if err != nil {
 		_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
 		if tenantTLSCloser != nil {
@@ -753,18 +779,19 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 		}
 		return ctx.Err()
 	}
-	next := &listenerLease{
-		hostname:      publicHostname,
-		echConfigList: echConfigList,
-		udpAddr:       resp.UDPAddr,
-		tcpAddr:       resp.TCPAddr,
-		accessToken:   resp.AccessToken,
-		expiresAt:     resp.ExpiresAt,
-		sniPort:       resp.SNIPort,
-		publicURLBase: publicURLBase,
-		tlsConfig:     tlsConf,
-		tlsCloser:     tenantTLSCloser,
-		hopRoutes:     hopRoutes,
+	next := &listenerSnapshot{
+		hostname:            publicHostname,
+		echConfigList:       echConfigList,
+		udpAddr:             resp.UDPAddr,
+		tcpAddr:             resp.TCPAddr,
+		accessToken:         resp.AccessToken,
+		expiresAt:           resp.ExpiresAt,
+		sniPort:             resp.SNIPort,
+		publicURLBase:       publicURLBase,
+		tlsConfig:           tlsConf,
+		tlsCloser:           tenantTLSCloser,
+		multihopAccessToken: multihopAccessToken,
+		hopRoutes:           hopRoutes,
 	}
 	l.leaseMu.Lock()
 	oldLease := l.lease

@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -14,7 +15,7 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
-func BuildClientTLSConfig(relayURL, hostname string, echKeys []tls.EncryptedClientHelloKey) (*tls.Config, ioCloser, error) {
+func BuildClientTLSConfig(relayURL, hostname string, echKeys []tls.EncryptedClientHelloKey, headers func() http.Header) (*tls.Config, ioCloser, error) {
 	normalizedRelayURL, err := utils.NormalizeRelayURL(relayURL)
 	if err != nil {
 		return nil, nil, err
@@ -46,6 +47,7 @@ func BuildClientTLSConfig(relayURL, hostname string, echKeys []tls.EncryptedClie
 		ServerName: serverName,
 		KeyID:      RelayKeyID,
 		RootCAPEM:  rootCAPEM,
+		Headers:    headers,
 	}, certPEM)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create keyless remote signer: %w", err)
