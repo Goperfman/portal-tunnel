@@ -483,6 +483,14 @@ func (m *Manager) SyncECHConfig(ctx context.Context, hostname string, echConfigL
 	m.echRecords[hostname] = record
 	m.echMu.Unlock()
 
+	publicIP, err := utils.ResolvePublicIPv4(ctx)
+	if err != nil {
+		return fmt.Errorf("detect public ip for ECH hostname %s: %w", hostname, err)
+	}
+	if err := m.dns.EnsureARecord(ctx, hostname, publicIP); err != nil {
+		return fmt.Errorf("ensure ECH A record for %s: %w", hostname, err)
+	}
+
 	if err := m.dns.EnsureHTTPSRecord(ctx, hostname, record.Priority, record.Target, svcParams, content); err != nil {
 		return err
 	}
@@ -511,6 +519,11 @@ func (m *Manager) DeleteECHConfig(ctx context.Context, hostname string) error {
 	if err := m.dns.DeleteHTTPSRecord(ctx, hostname); err != nil {
 		return err
 	}
+	if hostname != m.cfg.BaseDomain {
+		if err := m.dns.DeleteARecord(ctx, hostname); err != nil {
+			return fmt.Errorf("delete ECH A record for %s: %w", hostname, err)
+		}
+	}
 	return nil
 }
 
@@ -527,7 +540,19 @@ func (m *Manager) syncECHRecords(ctx context.Context) error {
 	m.echMu.Unlock()
 
 	var syncErr error
+	publicIP := ""
+	if len(records) > 0 {
+		var err error
+		publicIP, err = utils.ResolvePublicIPv4(ctx)
+		if err != nil {
+			return fmt.Errorf("detect public ip for ECH records: %w", err)
+		}
+	}
 	for hostname, record := range records {
+		if err := m.dns.EnsureARecord(ctx, hostname, publicIP); err != nil {
+			syncErr = errors.Join(syncErr, fmt.Errorf("ensure ECH A record for %s: %w", hostname, err))
+			continue
+		}
 		content, err := record.Content()
 		if err != nil {
 			syncErr = errors.Join(syncErr, fmt.Errorf("build ECH HTTPS record for %s: %w", hostname, err))
