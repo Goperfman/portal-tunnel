@@ -53,8 +53,8 @@ type demoConfig struct {
 // registerConnectivityFlags registers the relay, discovery, identity, and
 // owner flags that are shared across TCP and UDP demo commands.
 func registerConnectivityFlags(fs *flag.FlagSet, cfg *demoConfig, defaultRelays string) {
-	utils.StringFlagEnv(fs, &cfg.relayURLs, "relays", defaultRelays, "additional relay API URLs (comma-separated; scheme omitted defaults to https; merged with public registry relays when discovery is enabled)", "RELAYS")
-	utils.BoolFlagEnv(fs, &cfg.discovery, "discovery", true, "include public registry relays and enable discovery", "DISCOVERY")
+	utils.StringFlagEnv(fs, &cfg.relayURLs, "relays", defaultRelays, "additional relay API URLs (comma-separated; scheme omitted defaults to https; merged with bootstrap relays when discovery is enabled)", "RELAYS")
+	utils.BoolFlagEnv(fs, &cfg.discovery, "discovery", true, "include bootstrap relays and enable discovery", "DISCOVERY")
 	utils.BoolFlagEnv(fs, &cfg.banMITM, "ban-mitm", false, "ban relay when the MITM self-probe detects TLS termination", "BAN_MITM")
 	utils.StringFlagEnv(fs, &cfg.identityPath, "identity-path", "identity.json", "identity json file path", "IDENTITY_PATH")
 	utils.StringFlagEnv(fs, &cfg.identityJSON, "identity-json", "", "identity json payload; overrides --identity-path contents and is persisted there when both are set", "IDENTITY_JSON")
