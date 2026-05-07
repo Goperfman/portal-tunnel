@@ -387,31 +387,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			s.cancel()
 		}
 
-		leases := s.registry.CloseAll()
-		if manager := s.acmeManager; manager != nil {
-			for _, lease := range leases {
-				if lease.hasENSGaslessDNSRecord() {
-					err := manager.DeleteENSGaslessHostname(ctx, lease.Hostname)
-					if err != nil {
-						log.Warn().
-							Err(err).
-							Str("hostname", lease.Hostname).
-							Str("address", lease.Address).
-							Msg("delete lease ens gasless hostname during shutdown")
-					}
-				}
-				if lease.hasECHDNSRecord() {
-					err := manager.DeleteECHConfig(ctx, lease.ECHDNSHostname)
-					if err != nil {
-						log.Warn().
-							Err(err).
-							Str("hostname", lease.ECHDNSHostname).
-							Str("route_hostname", lease.Hostname).
-							Str("address", lease.Address).
-							Msg("delete lease ech dns record during shutdown")
-					}
-				}
-			}
+		records := s.registry.CloseAll()
+		for _, record := range records {
+			record.deleteDNS(ctx, s.acmeManager, true)
 		}
 
 		if s.quicBackhaul != nil {
@@ -678,31 +656,9 @@ func (s *Server) runRegistryJanitor(ctx context.Context, interval time.Duration)
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			leases := s.registry.cleanupExpired(time.Now())
-			if manager := s.acmeManager; manager != nil {
-				for _, lease := range leases {
-					if lease.hasENSGaslessDNSRecord() {
-						err := manager.DeleteENSGaslessHostname(ctx, lease.Hostname)
-						if err != nil {
-							log.Warn().
-								Err(err).
-								Str("hostname", lease.Hostname).
-								Str("address", lease.Address).
-								Msg("delete expired lease ens gasless hostname")
-						}
-					}
-					if lease.hasECHDNSRecord() {
-						err := manager.DeleteECHConfig(ctx, lease.ECHDNSHostname)
-						if err != nil {
-							log.Warn().
-								Err(err).
-								Str("hostname", lease.ECHDNSHostname).
-								Str("route_hostname", lease.Hostname).
-								Str("address", lease.Address).
-								Msg("delete expired lease ech dns record")
-						}
-					}
-				}
+			records := s.registry.cleanupExpired(time.Now())
+			for _, record := range records {
+				record.deleteDNS(ctx, s.acmeManager, true)
 			}
 		}
 	}

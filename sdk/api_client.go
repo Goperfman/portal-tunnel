@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -37,12 +36,11 @@ var errRelayIncompatible = errors.New("relay is incompatible")
 // API call creates fresh TCP connections. Call this after detecting a system
 // sleep/wake cycle where pooled connections are almost certainly dead.
 func (l *listener) resetTransport() {
-	if l.httpClient != nil {
-		if transport, ok := l.httpClient.Transport.(*http.Transport); ok {
-			transport.CloseIdleConnections()
-		}
+	if l.httpTransport != nil {
+		l.httpTransport.CloseIdleConnections()
 	}
 	l.httpClient = nil
+	l.httpTransport = nil
 	l.tlsConfig = nil
 }
 
@@ -54,16 +52,14 @@ func (l *listener) initHTTPTransport(ctx context.Context) error {
 	bootstrapCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout+defaultHandshakeTimeout)
 	defer cancel()
 
-	tlsConfig, httpClient, err := utils.NewHTTPTLSClient(bootstrapCtx, l.relayURL, l.requestTimeout)
+	tlsConfig, httpClient, httpTransport, err := utils.NewHTTPTLSClient(bootstrapCtx, l.relayURL, l.requestTimeout)
 	if err != nil {
 		return err
 	}
 
 	var domainResp types.DomainResponse
 	if err := utils.HTTPDoAPIPath(ctx, httpClient, l.relayURL, http.MethodGet, types.PathSDKDomain, nil, nil, &domainResp); err != nil {
-		if transport, ok := httpClient.Transport.(*http.Transport); ok {
-			transport.CloseIdleConnections()
-		}
+		httpTransport.CloseIdleConnections()
 		err = fmt.Errorf("check relay compatibility: %w", err)
 		var netErr net.Error
 		var apiErr *types.APIRequestError
@@ -77,13 +73,12 @@ func (l *listener) initHTTPTransport(ctx context.Context) error {
 	}
 	protocolVersion := strings.TrimSpace(domainResp.ProtocolVersion)
 	if protocolVersion != types.SDKVersion {
-		if transport, ok := httpClient.Transport.(*http.Transport); ok {
-			transport.CloseIdleConnections()
-		}
+		httpTransport.CloseIdleConnections()
 		return fmt.Errorf("%w: relay sdk protocol version mismatch: relay=%q client=%q", errRelayIncompatible, protocolVersion, types.SDKVersion)
 	}
 
 	l.httpClient = httpClient
+	l.httpTransport = httpTransport
 	l.tlsConfig = tlsConfig
 	return nil
 }
@@ -243,108 +238,88 @@ func (l *listener) renewRegisteredLease(ctx context.Context, ttl time.Duration, 
 }
 
 func (l *listener) unregisterLease(ctx context.Context, accessToken string, hopRoutes []types.HopRoute) error {
-	var unregisterErr error
-	if err := l.unregisterHopRoutes(ctx, hopRoutes); err != nil {
-		unregisterErr = errors.Join(unregisterErr, err)
-	}
+	hopErr := l.unregisterHopRoutes(ctx, hopRoutes)
 	err := utils.HTTPDoAPIPath(ctx, l.httpClient, l.relayURL, http.MethodPost, types.PathSDKUnregister, types.UnregisterRequest{
 		AccessToken: accessToken,
 	}, nil, nil)
-	return errors.Join(unregisterErr, err)
+	return errors.Join(hopErr, err)
 }
 
-func (l *listener) registerHopRoutes(ctx context.Context, expiresAt time.Time, routes []types.HopRoute) (multihopAccessToken string, err error) {
-	if len(routes) == 0 {
-		return "", nil
-	}
+func (l *listener) registerHopRoutes(ctx context.Context, expiresAt time.Time, routes []types.HopRoute) (string, int, error) {
 	if l.relaySet == nil {
-		return "", errors.New("multi-hop relay set is unavailable")
+		return "", 0, errors.New("multi-hop relay set is unavailable")
 	}
 
-	orderedRoutes := append([]types.HopRoute(nil), routes...)
 	now := time.Now().UTC()
-	for i := range orderedRoutes {
-		desc, ok := l.relaySet.OverlayRelayDescriptor(orderedRoutes[i].ForwardRelay.APIHTTPSAddr, now)
+	for i := len(routes) - 1; i >= 0; i-- {
+		route := routes[i]
+		desc, ok := l.relaySet.OverlayRelayDescriptor(route.ForwardRelay.APIHTTPSAddr, now)
 		if !ok {
-			return "", fmt.Errorf("multi-hop forward relay %d descriptor is unavailable", i)
+			return "", 0, fmt.Errorf("multi-hop forward relay %d descriptor is unavailable", i)
 		}
-		orderedRoutes[i].ForwardRelay = desc
-	}
-	slices.Reverse(orderedRoutes)
-
-	for _, unsignedRoute := range orderedRoutes {
-		unsignedRoute.FirstSeenAt = expiresAt.Add(-30 * time.Second)
-		route, err := auth.SignHopRoute(http.MethodPost, unsignedRoute, l.identity, expiresAt)
+		route.ForwardRelay = desc
+		route.FirstSeenAt = expiresAt.Add(-30 * time.Second)
+		route, err := auth.SignHopRoute(http.MethodPost, route, l.identity, expiresAt)
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
 		relayURL, err := url.Parse(route.RelayURL)
 		if err != nil {
-			return "", fmt.Errorf("parse hop route relay url: %w", err)
+			return "", 0, fmt.Errorf("parse hop route relay url: %w", err)
 		}
 
 		bootstrapCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout+defaultHandshakeTimeout)
-		_, client, err := utils.NewHTTPTLSClient(bootstrapCtx, relayURL, l.requestTimeout)
+		_, client, transport, err := utils.NewHTTPTLSClient(bootstrapCtx, relayURL, l.requestTimeout)
 		cancel()
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
-		transport, _ := client.Transport.(*http.Transport)
-		entryRoute := route.MatchToken == "" && route.RouteHostname != ""
 		var hopResp types.HopRouteResponse
-		var out any
-		if entryRoute {
-			out = &hopResp
-		}
-		err = utils.HTTPDoAPIPath(ctx, client, relayURL, http.MethodPost, types.PathSDKHop, route, nil, out)
-		if transport != nil {
-			transport.CloseIdleConnections()
-		}
+		err = utils.HTTPDoAPIPath(ctx, client, relayURL, http.MethodPost, types.PathSDKHop, route, nil, &hopResp)
+		transport.CloseIdleConnections()
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
-		if !entryRoute {
+		if route.MatchToken != "" || route.RouteHostname == "" {
 			continue
 		}
 		if hopResp.AccessToken == "" {
-			return "", errors.New("entry relay did not return access token")
+			return "", 0, errors.New("entry relay did not return access token")
 		}
-		multihopAccessToken = hopResp.AccessToken
-		return multihopAccessToken, nil
+		if hopResp.SNIPort <= 0 {
+			return "", 0, errors.New("entry relay did not return sni port")
+		}
+		return hopResp.AccessToken, hopResp.SNIPort, nil
 	}
-	return "", errors.New("entry hop route did not return access token")
+	return "", 0, errors.New("entry hop route did not return access token")
 }
 
 func (l *listener) unregisterHopRoutes(ctx context.Context, routes []types.HopRoute) error {
-	var syncErr error
-	for _, unsignedRoute := range routes {
-		route, err := auth.SignHopRoute(http.MethodDelete, unsignedRoute, l.identity, time.Time{})
+	var unregisterErr error
+	for _, route := range routes {
+		route, err := auth.SignHopRoute(http.MethodDelete, route, l.identity, time.Time{})
 		if err != nil {
-			syncErr = errors.Join(syncErr, err)
+			unregisterErr = errors.Join(unregisterErr, err)
 			continue
 		}
 		relayURL, err := url.Parse(route.RelayURL)
 		if err != nil {
-			syncErr = errors.Join(syncErr, fmt.Errorf("parse hop route relay url: %w", err))
+			unregisterErr = errors.Join(unregisterErr, fmt.Errorf("parse hop route relay url: %w", err))
 			continue
 		}
 
 		bootstrapCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout+defaultHandshakeTimeout)
-		_, client, err := utils.NewHTTPTLSClient(bootstrapCtx, relayURL, l.requestTimeout)
+		_, client, transport, err := utils.NewHTTPTLSClient(bootstrapCtx, relayURL, l.requestTimeout)
 		cancel()
 		if err != nil {
-			syncErr = errors.Join(syncErr, err)
+			unregisterErr = errors.Join(unregisterErr, err)
 			continue
 		}
-		transport, _ := client.Transport.(*http.Transport)
 		err = utils.HTTPDoAPIPath(ctx, client, relayURL, http.MethodDelete, types.PathSDKHop, route, nil, nil)
-		if transport != nil {
-			transport.CloseIdleConnections()
-		}
+		transport.CloseIdleConnections()
 		if err != nil {
-			syncErr = errors.Join(syncErr, err)
-			continue
+			unregisterErr = errors.Join(unregisterErr, err)
 		}
 	}
-	return syncErr
+	return unregisterErr
 }

@@ -513,10 +513,6 @@ func (m *Manager) DeleteECHConfig(ctx context.Context, hostname string) error {
 		return nil
 	}
 
-	m.echMu.Lock()
-	delete(m.echRecords, hostname)
-	m.echMu.Unlock()
-
 	if err := m.dns.DeleteHTTPSRecord(ctx, hostname); err != nil {
 		return err
 	}
@@ -525,6 +521,10 @@ func (m *Manager) DeleteECHConfig(ctx context.Context, hostname string) error {
 			return fmt.Errorf("delete ECH A record for %s: %w", hostname, err)
 		}
 	}
+
+	m.echMu.Lock()
+	delete(m.echRecords, hostname)
+	m.echMu.Unlock()
 	return nil
 }
 

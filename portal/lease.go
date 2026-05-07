@@ -2,7 +2,6 @@ package portal
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -389,18 +388,18 @@ func (r *leaseRegistry) admitLeaseByToken(token string, requireDatagram bool) (*
 		return nil, errUnauthorized
 	}
 	r.mu.RLock()
-	lease := r.recordByKey(claims.Identity.Key(), now)
+	record := r.recordByKey(claims.Identity.Key(), now)
 	r.mu.RUnlock()
-	if lease == nil {
+	if record == nil {
 		return nil, errLeaseNotFound
 	}
-	if !r.policy.IsIdentityRoutable(lease.Key()) {
+	if !r.policy.IsIdentityRoutable(record.Key()) {
 		return nil, errLeaseRejected
 	}
-	if lease.stream == nil || (requireDatagram && lease.datagram == nil) {
+	if record.stream == nil || (requireDatagram && record.datagram == nil) {
 		return nil, errTransportMismatch
 	}
-	return lease, nil
+	return record, nil
 }
 
 func (r *leaseRegistry) Renew(req types.RenewRequest, clientIP string) (types.RenewResponse, error) {
@@ -652,6 +651,13 @@ func (r *leaseRegistry) issueRegisterChallenge(req types.RegisterChallengeReques
 	if r == nil {
 		return types.RegisterChallengeResponse{}, errFeatureUnavailable
 	}
+	if len(req.ECHConfigList) > 0 {
+		echConfigList, err := keyless.NormalizeEncryptedClientHelloConfigList(req.ECHConfigList)
+		if err != nil {
+			return types.RegisterChallengeResponse{}, err
+		}
+		req.ECHConfigList = echConfigList
+	}
 
 	now := time.Now().UTC()
 	challenge, err := auth.NewRegisterChallenge(req, domain, uri, now, defaultRegisterChallengeTTL)
@@ -895,115 +901,4 @@ func (r *leaseRegistry) publicLease(record *leaseRecord) types.Lease {
 		lease.Ready = 1
 	}
 	return lease
-}
-
-type leaseRecord struct {
-	types.Identity
-	ExpiresAt      time.Time
-	FirstSeenAt    time.Time
-	LastSeenAt     time.Time
-	ClientIP       string
-	ReportedIP     string
-	Hostname       string
-	HostnameHash   string
-	ECHConfigList  []byte
-	ECHDNSHostname string
-	Metadata       types.LeaseMetadata
-
-	hopToken           string
-	hopNextOverlayIPv4 string
-	hopNextToken       string
-	registerChallenge  *auth.RegisterChallenge
-
-	datagram *transport.RelayDatagram
-	udpPorts *transport.PortAllocator
-	tcpPort  *transport.RelayTCPPort
-	tcpPorts *transport.PortAllocator
-	stream   *transport.RelayStream
-}
-
-func (r *leaseRecord) isPublicEntry() bool {
-	return r != nil && r.hopToken == "" && r.Hostname != ""
-}
-
-func (r *leaseRecord) hasENSGaslessDNSRecord() bool {
-	return r.isPublicEntry() && r.HostnameHash == ""
-}
-
-func (r *leaseRecord) hasECHDNSRecord() bool {
-	return r.isPublicEntry() && len(r.ECHConfigList) > 0 && r.ECHDNSHostname != ""
-}
-
-func (r *leaseRecord) isHopMiddle() bool {
-	_, _, hasNextHop := r.nextHop()
-	return r != nil && r.Hostname == "" && r.hopToken != "" && hasNextHop
-}
-
-func (r *leaseRecord) isHopExit() bool {
-	_, _, hasNextHop := r.nextHop()
-	return r != nil && r.hopToken != "" && !hasNextHop
-}
-
-func (r *leaseRecord) routesOverlap(other *leaseRecord) bool {
-	if r == nil || other == nil {
-		return false
-	}
-	if r.Hostname != "" && other.Hostname != "" && r.Hostname == other.Hostname {
-		return true
-	}
-	if r.HostnameHash != "" && other.HostnameHash != "" && r.HostnameHash == other.HostnameHash {
-		return true
-	}
-	if r.Hostname != "" && other.HostnameHash != "" && utils.HostnameHash(r.Hostname) == other.HostnameHash {
-		return true
-	}
-	return other.Hostname != "" && r.HostnameHash != "" && utils.HostnameHash(other.Hostname) == r.HostnameHash
-}
-
-func (r *leaseRecord) nextHop() (string, string, bool) {
-	if r == nil {
-		return "", "", false
-	}
-	overlayIPv4 := r.hopNextOverlayIPv4
-	forwardToken := r.hopNextToken
-	return overlayIPv4, forwardToken, overlayIPv4 != "" || forwardToken != ""
-}
-
-func (r *leaseRecord) isExpired(now time.Time) bool {
-	return r != nil && !now.IsZero() && !now.Before(r.ExpiresAt)
-}
-
-func (r *leaseRecord) Start() error {
-	if r.datagram != nil {
-		if err := r.datagram.Start(context.Background()); err != nil {
-			return err
-		}
-	}
-	if r.tcpPort != nil {
-		return r.tcpPort.Start(context.Background())
-	}
-	return nil
-}
-
-func (r *leaseRecord) Close() {
-	if r == nil {
-		return
-	}
-	if r.stream != nil {
-		r.stream.Close()
-	}
-	if r.datagram != nil {
-		port := r.datagram.UDPPort()
-		r.datagram.Close()
-		if port > 0 && r.udpPorts != nil {
-			r.udpPorts.Release(port)
-		}
-	}
-	if r.tcpPort != nil {
-		port := r.tcpPort.TCPPort()
-		r.tcpPort.Close()
-		if port > 0 && r.tcpPorts != nil {
-			r.tcpPorts.Release(port)
-		}
-	}
 }

@@ -142,6 +142,7 @@ type HopRoute struct {
 
 type HopRouteResponse struct {
 	AccessToken string `json:"access_token,omitempty"`
+	SNIPort     int    `json:"sni_port,omitempty"`
 }
 
 func HopRouteBytes(method string, route HopRoute) ([]byte, error) {

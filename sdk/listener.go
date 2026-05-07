@@ -70,8 +70,9 @@ type listener struct {
 	datagram    *transport.ClientDatagram
 	mitmManager *mitmManager
 
-	httpClient *http.Client
-	tlsConfig  *tls.Config
+	httpClient    *http.Client
+	httpTransport *http.Transport
+	tlsConfig     *tls.Config
 
 	leaseMu sync.RWMutex
 	lease   *listenerSnapshot
@@ -687,8 +688,9 @@ func (l *listener) renewLease(ctx context.Context) error {
 		return errors.New("relay did not return renewed access token")
 	}
 	multihopAccessToken := resp.AccessToken
+	var entrySNIPort int
 	if len(lease.hopRoutes) > 0 {
-		multihopAccessToken, err = l.registerHopRoutes(requestCtx, resp.ExpiresAt, lease.hopRoutes)
+		multihopAccessToken, entrySNIPort, err = l.registerHopRoutes(requestCtx, resp.ExpiresAt, lease.hopRoutes)
 		if err != nil {
 			return err
 		}
@@ -702,6 +704,9 @@ func (l *listener) renewLease(ctx context.Context) error {
 	next.accessToken = resp.AccessToken
 	next.expiresAt = resp.ExpiresAt
 	next.multihopAccessToken = multihopAccessToken
+	if entrySNIPort > 0 {
+		next.sniPort = entrySNIPort
+	}
 	l.lease = &next
 	l.leaseMu.Unlock()
 	return nil
@@ -732,8 +737,9 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 		return errors.New("relay did not return sni port for udp transport")
 	}
 	multihopAccessToken := resp.AccessToken
+	sniPort := resp.SNIPort
 	if len(hopRoutes) > 0 {
-		multihopAccessToken, err = l.registerHopRoutes(ctx, resp.ExpiresAt, hopRoutes)
+		multihopAccessToken, sniPort, err = l.registerHopRoutes(ctx, resp.ExpiresAt, hopRoutes)
 		if err != nil {
 			_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
 			return err
@@ -786,7 +792,7 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 		tcpAddr:             resp.TCPAddr,
 		accessToken:         resp.AccessToken,
 		expiresAt:           resp.ExpiresAt,
-		sniPort:             resp.SNIPort,
+		sniPort:             sniPort,
 		publicURLBase:       publicURLBase,
 		tlsConfig:           tlsConf,
 		tlsCloser:           tenantTLSCloser,
