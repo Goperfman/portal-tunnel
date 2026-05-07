@@ -172,6 +172,7 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 				route.RouteHostname = routeHostname
 				route.HostnameHash = utils.HostnameHash(publicHostname)
 				route.ECHConfigList = append([]byte(nil), echConfigList...)
+				route.Metadata = l.metadata.Copy()
 				route.Metadata.Hide = true
 				hopRoutes = append(hopRoutes, route)
 			} else {

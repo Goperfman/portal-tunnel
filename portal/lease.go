@@ -173,15 +173,26 @@ func (r *leaseRegistry) Register(req types.RegisterChallengeRequest, clientIP, r
 	if hostnameHash != "" && routeHostname == "" {
 		return nil, types.RegisterResponse{}, errors.New("hostname hash requires route hostname")
 	}
-	if len(echConfigList) > 0 && (routeHostname == "" || hostnameHash == "") {
-		return nil, types.RegisterResponse{}, errors.New("ech config list requires route hostname and hostname hash")
+	if len(echConfigList) > 0 && routeHostname == "" {
+		return nil, types.RegisterResponse{}, errors.New("ech config list requires route hostname")
 	}
+	publicHostname := ""
 	if routeHostname != "" {
 		routeLabel, routeBase, ok := strings.Cut(routeHostname, ".")
 		normalizedRouteLabel, labelErr := utils.NormalizeDNSLabel(routeLabel)
 		if !ok || labelErr != nil || normalizedRouteLabel != routeLabel || routeBase != r.rootHostname {
 			return nil, types.RegisterResponse{}, errors.New("route hostname must be a child of relay root hostname")
 		}
+
+		publicHostname, err = utils.LeaseHostname(identity.Name, r.rootHostname)
+		if err != nil {
+			return nil, types.RegisterResponse{}, err
+		}
+		expectedHostnameHash := utils.HostnameHash(publicHostname)
+		if hostnameHash != "" && hostnameHash != expectedHostnameHash {
+			return nil, types.RegisterResponse{}, errors.New("hostname hash does not match public hostname")
+		}
+		hostnameHash = expectedHostnameHash
 	}
 	if len(echConfigList) > 0 {
 		echConfigList, err = keyless.NormalizeEncryptedClientHelloConfigList(echConfigList)
@@ -191,13 +202,6 @@ func (r *leaseRegistry) Register(req types.RegisterChallengeRequest, clientIP, r
 	}
 	echDNSHostname := ""
 	if len(echConfigList) > 0 {
-		publicHostname, err := utils.LeaseHostname(identity.Name, r.rootHostname)
-		if err != nil {
-			return nil, types.RegisterResponse{}, err
-		}
-		if utils.HostnameHash(publicHostname) != hostnameHash {
-			return nil, types.RegisterResponse{}, errors.New("hostname hash does not match ech dns hostname")
-		}
 		echDNSHostname = publicHostname
 	}
 	if req.UDPEnabled && !r.policy.IsUDPEnabled() {
@@ -509,15 +513,20 @@ func (r *leaseRegistry) RegisterHopRoute(route *types.HopRoute, now time.Time) (
 			return nil, errors.New("route hostname must be a child of relay root hostname")
 		}
 	}
-	if len(echConfigList) > 0 {
-		if publicHostname == "" || routeHostname == "" || hostnameHash == "" {
-			return nil, errors.New("ech config list requires public hostname, route hostname, and hostname hash")
+	if hostnameHash != "" {
+		if publicHostname == "" {
+			return nil, errors.New("hostname hash requires public hostname")
 		}
 		if !utils.HostnameMatchesBaseDomain(publicHostname, r.rootHostname) {
 			return nil, errors.New("public hostname must be a child of relay root hostname")
 		}
 		if utils.HostnameHash(publicHostname) != hostnameHash {
-			return nil, errors.New("hostname hash does not match ech dns hostname")
+			return nil, errors.New("hostname hash does not match public hostname")
+		}
+	}
+	if len(echConfigList) > 0 {
+		if publicHostname == "" || routeHostname == "" || hostnameHash == "" {
+			return nil, errors.New("ech config list requires public hostname, route hostname, and hostname hash")
 		}
 		echConfigList, err = keyless.NormalizeEncryptedClientHelloConfigList(echConfigList)
 		if err != nil {

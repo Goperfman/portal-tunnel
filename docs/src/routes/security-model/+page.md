@@ -33,9 +33,9 @@ Relay API TLS is separate from tenant TLS:
 
 ## Tunnel ECH
 
-For default stream leases, the SDK derives an opaque lease identity and an opaque route hostname from the tunnel identity private key. The relay stores the route hostname for ECH routing and a hash of the public fallback hostname for plaintext-SNI fallback. When DNS automation is enabled, the relay also keeps the public hostname needed to publish and delete its HTTPS `ech` record.
+For default stream leases, the SDK derives an opaque route hostname from the tunnel identity private key. The relay still receives the lease identity name and can derive the public fallback hostname so it can validate plaintext-SNI fallback routing and manage DNS automation. The relay stores the route hostname for ECH routing and a validated hash of the public fallback hostname. When DNS automation is enabled, the relay also keeps the public hostname needed to publish and delete its HTTPS `ech` record.
 
-ECH-capable clients can use the opaque route hostname as the outer SNI while the real tenant SNI stays inside the ECH-protected ClientHello handled by the SDK. For multi-hop stream routes, the entry relay gets both matchers: a hostname hash for plaintext-SNI fallback and a hidden opaque route hostname for ECH. After the entry relay chooses the route, the remaining hops continue to use hop tokens and passthrough forwarding.
+ECH-capable clients can use the opaque route hostname as the outer SNI while the real tenant SNI stays inside the ECH-protected ClientHello handled by the SDK. For multi-hop stream routes, the entry relay gets the opaque route hostname for ECH and the public hostname needed to validate the plaintext-SNI fallback hash and manage DNS automation. After the entry relay chooses the route, the remaining hops continue to use hop tokens and passthrough forwarding.
 
 When `ACME_DNS_PROVIDER` is configured, Portal publishes DNS HTTPS records with the `ech` parameter for the relay root and stream lease public hostnames. Without a DNS provider, operators must distribute the logged ECHConfigList through DNS HTTPS/SVCB or another ECH-capable bootstrap. Without that distribution, ordinary clients keep using the public hostname SNI and the relay routes them through the existing plaintext-SNI fallback.
 
@@ -52,7 +52,7 @@ Matching exporter values mean the sampled connection preserved passthrough. A mi
 | Relays can see | Relays cannot see |
 |---|---|
 | Source IP and timing metadata | HTTP headers or body |
-| Tunnel hostname/SNI on the plaintext-SNI fallback path | Tenant TLS session keys |
+| Lease identity/public hostname, including SNI on the plaintext-SNI fallback path | Tenant TLS session keys |
 | Opaque route hostnames on the ECH path | ECH-protected inner SNI when clients use the distributed ECHConfigList |
 | Traffic volume and connection duration | Application payload on the stream path |
 | Requested TCP/UDP transport metadata | Local service plaintext on the tenant TLS stream path |

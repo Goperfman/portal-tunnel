@@ -139,6 +139,17 @@ func TestLeaseRegistryAutomaticECHRouteFallsBackToPlainSNI(t *testing.T) {
 	}, "203.0.113.10", ""); err == nil {
 		t.Fatal("Register(fallback hash only) error = nil, want error")
 	}
+
+	if _, _, err := registry.Register(types.RegisterChallengeRequest{
+		Identity:      newTestLeaseIdentity(t, "attacker"),
+		RouteHostname: "ech-attacker.example.com",
+		HostnameHash:  utils.HostnameHash("victim.example.com"),
+	}, "203.0.113.10", ""); err == nil {
+		t.Fatal("Register(mismatched hostname hash) error = nil, want error")
+	}
+	if lookedUp, ok := registry.Lookup("victim.example.com"); ok {
+		t.Fatalf("Lookup(victim hostname) = %v, true; mismatched hash must not route", lookedUp)
+	}
 }
 
 func TestLeaseRegistryHopRouteCanExposeECHAndPlainSNIFallback(t *testing.T) {
@@ -167,6 +178,7 @@ func TestLeaseRegistryHopRouteCanExposeECHAndPlainSNIFallback(t *testing.T) {
 	}
 	route := baseRoute
 	route.RouteHostname = "ech-demo.example.com"
+	route.PublicHostname = "demo.example.com"
 	route.HostnameHash = utils.HostnameHash("demo.example.com")
 	route.Metadata.Hide = true
 
@@ -177,6 +189,22 @@ func TestLeaseRegistryHopRouteCanExposeECHAndPlainSNIFallback(t *testing.T) {
 	hashOnlyRoute.HostnameHash = utils.HostnameHash("hash-only.example.com")
 	if _, err := registry.RegisterHopRoute(&hashOnlyRoute, now); err == nil {
 		t.Fatal("RegisterHopRoute(hash only) error = nil, want error")
+	}
+	missingPublicRoute := baseRoute
+	missingPublicRoute.RouteHostname = "ech-missing-public.example.com"
+	missingPublicRoute.HostnameHash = utils.HostnameHash("missing-public.example.com")
+	if _, err := registry.RegisterHopRoute(&missingPublicRoute, now); err == nil {
+		t.Fatal("RegisterHopRoute(missing public hostname) error = nil, want error")
+	}
+	mismatchedRoute := baseRoute
+	mismatchedRoute.RouteHostname = "ech-attacker.example.com"
+	mismatchedRoute.PublicHostname = "attacker.example.com"
+	mismatchedRoute.HostnameHash = utils.HostnameHash("victim.example.com")
+	if _, err := registry.RegisterHopRoute(&mismatchedRoute, now); err == nil {
+		t.Fatal("RegisterHopRoute(mismatched hostname hash) error = nil, want error")
+	}
+	if lookedUp, ok := registry.Lookup("victim.example.com"); ok {
+		t.Fatalf("Lookup(victim hostname) = %v, true; mismatched hop hash must not route", lookedUp)
 	}
 	if _, ok := registry.Lookup("demo.example.com"); !ok {
 		t.Fatal("Lookup(plain route) = false, want true")
