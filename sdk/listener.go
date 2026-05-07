@@ -315,7 +315,7 @@ func (l *listener) acceptDatagram() (types.DatagramFrame, error) {
 		return types.DatagramFrame{}, err
 	}
 
-	frame.Payload = append([]byte(nil), frame.Payload...)
+	frame.Payload = bytes.Clone(frame.Payload)
 	if lease, ok := l.leaseSnapshot(); ok {
 		frame.UDPAddr = lease.udpAddr
 	}

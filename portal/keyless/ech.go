@@ -120,5 +120,5 @@ func NormalizeEncryptedClientHelloConfigList(raw []byte) ([]byte, error) {
 	if listLength != len(raw)-2 {
 		return nil, errors.New("ech config list length prefix is invalid")
 	}
-	return append([]byte(nil), raw...), nil
+	return bytes.Clone(raw), nil
 }

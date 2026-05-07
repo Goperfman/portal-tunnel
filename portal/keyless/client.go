@@ -1,6 +1,7 @@
 package keyless
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -76,7 +77,7 @@ func ResolveMaterials(ctx context.Context, endpoint, serverName string) ([]byte,
 	if len(chainPEM) == 0 {
 		return nil, nil, errors.New("keyless certificate chain is required")
 	}
-	return append([]byte(nil), chainPEM...), append([]byte(nil), chainPEM...), nil
+	return bytes.Clone(chainPEM), bytes.Clone(chainPEM), nil
 }
 
 func VerifyCertificateHostname(certPEM []byte, hostname string) error {

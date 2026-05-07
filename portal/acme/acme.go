@@ -1,6 +1,7 @@
 package acme
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -107,7 +108,7 @@ func (r HTTPSRecord) Normalized() (HTTPSRecord, error) {
 		Priority:      priority,
 		Target:        target,
 		Port:          r.Port,
-		ECHConfigList: append([]byte(nil), r.ECHConfigList...),
+		ECHConfigList: bytes.Clone(r.ECHConfigList),
 	}, nil
 }
 

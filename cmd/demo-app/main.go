@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -229,7 +230,7 @@ func runUDPEchoLoop(ctx context.Context, exposure *sdk.Exposure) {
 			return
 		}
 
-		payload := append([]byte(nil), frame.Payload...)
+		payload := bytes.Clone(frame.Payload)
 		if len(payload) == 0 {
 			payload = []byte("pong")
 		}

@@ -116,7 +116,7 @@ func (m *mitmManager) probeTLSPassthrough(ctx context.Context) (MITMProbeReport,
 		ServerName:                     lease.hostname,
 		InsecureSkipVerify:             true,
 		MinVersion:                     keyless.MinTLSVersion(len(lease.echConfigList) > 0),
-		EncryptedClientHelloConfigList: append([]byte(nil), lease.echConfigList...),
+		EncryptedClientHelloConfigList: bytes.Clone(lease.echConfigList),
 	}
 
 	dialer := &tls.Dialer{
@@ -332,7 +332,7 @@ func (m *mitmManager) maybeHandleConn(conn net.Conn) (net.Conn, bool, error) {
 func (m *mitmManager) startProbe(nonce string, expected []byte) (<-chan string, func()) {
 	m.mu.Lock()
 	state := &mitmProbePending{
-		expected: append([]byte(nil), expected...),
+		expected: bytes.Clone(expected),
 		resultCh: make(chan string, 1),
 	}
 	m.pending[nonce] = state

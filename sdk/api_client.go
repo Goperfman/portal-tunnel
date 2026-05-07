@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base32"
@@ -171,7 +172,7 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 				route.PublicHostname = publicHostname
 				route.RouteHostname = routeHostname
 				route.HostnameHash = utils.HostnameHash(publicHostname)
-				route.ECHConfigList = append([]byte(nil), echConfigList...)
+				route.ECHConfigList = bytes.Clone(echConfigList)
 				route.Metadata = l.metadata.Copy()
 				route.Metadata.Hide = true
 				hopRoutes = append(hopRoutes, route)
@@ -195,7 +196,7 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 	if streamLease && len(l.multiHop) == 0 {
 		registerReq.RouteHostname = routeHostname
 		registerReq.HostnameHash = utils.HostnameHash(publicHostname)
-		registerReq.ECHConfigList = append([]byte(nil), echConfigList...)
+		registerReq.ECHConfigList = bytes.Clone(echConfigList)
 	}
 
 	var challenge types.RegisterChallengeResponse

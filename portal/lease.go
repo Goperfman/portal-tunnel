@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -163,7 +164,7 @@ func (r *leaseRegistry) Register(req types.RegisterChallengeRequest, clientIP, r
 	hopToken := strings.TrimSpace(req.HopToken)
 	routeHostname := utils.NormalizeHostname(req.RouteHostname)
 	hostnameHash := strings.TrimSpace(req.HostnameHash)
-	echConfigList := append([]byte(nil), req.ECHConfigList...)
+	echConfigList := bytes.Clone(req.ECHConfigList)
 	if hopToken != "" && (req.UDPEnabled || req.TCPEnabled) {
 		return nil, types.RegisterResponse{}, errTransportMismatch
 	}
@@ -484,7 +485,7 @@ func (r *leaseRegistry) RegisterHopRoute(route *types.HopRoute, now time.Time) (
 	}
 	routeHostname := route.RouteHostname
 	hostnameHash := route.HostnameHash
-	echConfigList := append([]byte(nil), route.ECHConfigList...)
+	echConfigList := bytes.Clone(route.ECHConfigList)
 	publicHostname := utils.NormalizeHostname(route.PublicHostname)
 	matchToken := route.MatchToken
 	overlayIPv4, overlayErr := utils.DeriveWireGuardOverlayIPv4(route.ForwardRelay.WireGuardPublicKey)
