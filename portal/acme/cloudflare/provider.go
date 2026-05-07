@@ -33,10 +33,17 @@ type zone struct {
 }
 
 type dnsRecord struct {
-	ID      string `json:"id"`
-	Type    string `json:"type"`
-	Name    string `json:"name"`
-	Content string `json:"content"`
+	ID      string         `json:"id"`
+	Type    string         `json:"type"`
+	Name    string         `json:"name"`
+	Content string         `json:"content"`
+	Data    *dnsRecordData `json:"data,omitempty"`
+}
+
+type dnsRecordData struct {
+	Priority int    `json:"priority,omitempty"`
+	Target   string `json:"target,omitempty"`
+	Value    string `json:"value,omitempty"`
 }
 
 type zonesResult struct {
@@ -243,6 +250,72 @@ func (p *Provider) DeleteTXTRecords(ctx context.Context, name, matchPrefix strin
 	return nil
 }
 
+func (p *Provider) EnsureHTTPSRecord(ctx context.Context, name string, priority uint16, target, svcParams, content string) error {
+	if p == nil {
+		return errors.New("cloudflare provider is nil")
+	}
+	name = utils.NormalizeHostname(name)
+	if name == "" {
+		return errors.New("record name is required")
+	}
+	if p.token == "" {
+		return errors.New("cloudflare token is required")
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return errors.New("https record target is required")
+	}
+	svcParams = strings.TrimSpace(svcParams)
+	if svcParams == "" {
+		return errors.New("https record svc params are required")
+	}
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return errors.New("https record content is required")
+	}
+
+	zoneID, err := findZoneID(ctx, p.token, name)
+	if err != nil {
+		return fmt.Errorf("find cloudflare zone: %w", err)
+	}
+	if err := ensureHTTPSRecord(ctx, p.token, zoneID, name, priority, target, svcParams, content); err != nil {
+		return fmt.Errorf("ensure HTTPS record for %s: %w", name, err)
+	}
+	return nil
+}
+
+func (p *Provider) DeleteHTTPSRecord(ctx context.Context, name string) error {
+	if p == nil {
+		return errors.New("cloudflare provider is nil")
+	}
+	name = utils.NormalizeHostname(name)
+	if name == "" {
+		return errors.New("record name is required")
+	}
+	if p.token == "" {
+		return errors.New("cloudflare token is required")
+	}
+
+	zoneID, err := findZoneID(ctx, p.token, name)
+	if err != nil {
+		return fmt.Errorf("find cloudflare zone: %w", err)
+	}
+
+	records, err := listDNSRecords(ctx, p.token, zoneID, name, "HTTPS")
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		if !strings.EqualFold(record.Name, name) {
+			continue
+		}
+		if err := deleteDNSRecord(ctx, p.token, zoneID, record.ID); err != nil {
+			return fmt.Errorf("delete HTTPS record %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
 func (p *Provider) EnsureDNSSEC(ctx context.Context, baseDomain string) (state, dsRecord, message string, err error) {
 	if p == nil {
 		return "", "", "", errors.New("cloudflare provider is nil")
@@ -337,6 +410,38 @@ func ensureTXTRecord(ctx context.Context, token, zoneID, name, value string) err
 	return createDNSRecord(ctx, token, zoneID, "TXT", name, value)
 }
 
+func ensureHTTPSRecord(ctx context.Context, token, zoneID, name string, priority uint16, target, svcParams, content string) error {
+	records, err := listDNSRecords(ctx, token, zoneID, name, "HTTPS")
+	if err != nil {
+		return err
+	}
+
+	for _, existing := range records {
+		if !strings.EqualFold(existing.Name, name) {
+			continue
+		}
+		if sameHTTPSRecord(existing, priority, target, svcParams, content) {
+			return nil
+		}
+		return updateHTTPSRecord(ctx, token, zoneID, existing.ID, name, priority, target, svcParams, content)
+	}
+
+	return createHTTPSRecord(ctx, token, zoneID, name, priority, target, svcParams, content)
+}
+
+func sameHTTPSRecord(existing dnsRecord, priority uint16, target, svcParams, content string) bool {
+	if existing.Data != nil {
+		existingTarget := strings.TrimSpace(existing.Data.Target)
+		if existingTarget == "" {
+			existingTarget = "."
+		}
+		return existing.Data.Priority == int(priority) &&
+			existingTarget == target &&
+			strings.TrimSpace(existing.Data.Value) == svcParams
+	}
+	return strings.TrimSpace(existing.Content) == content
+}
+
 func listZones(ctx context.Context, token, name string) ([]zone, error) {
 	u, _ := url.Parse(apiBase + "/zones")
 	q := u.Query()
@@ -421,6 +526,20 @@ func createDNSRecord(ctx context.Context, token, zoneID, recordType, name, conte
 	return nil
 }
 
+func createHTTPSRecord(ctx context.Context, token, zoneID, name string, priority uint16, target, svcParams, content string) error {
+	endpoint := fmt.Sprintf("%s/zones/%s/dns_records", apiBase, zoneID)
+	body := httpsRecordBody("HTTPS", name, priority, target, svcParams, content)
+
+	var out recordResult
+	if err := utils.HTTPDoJSON(ctx, nil, http.MethodPost, endpoint, body, cloudflareHeaders(token), &out); err != nil {
+		return err
+	}
+	if !out.Success {
+		return wrapErrors(out.Errors)
+	}
+	return nil
+}
+
 func updateDNSRecord(ctx context.Context, token, zoneID, recordID, recordType, name, content string) error {
 	endpoint := fmt.Sprintf("%s/zones/%s/dns_records/%s", apiBase, zoneID, recordID)
 	body := map[string]any{
@@ -441,6 +560,34 @@ func updateDNSRecord(ctx context.Context, token, zoneID, recordID, recordType, n
 		return wrapErrors(out.Errors)
 	}
 	return nil
+}
+
+func updateHTTPSRecord(ctx context.Context, token, zoneID, recordID, name string, priority uint16, target, svcParams, content string) error {
+	endpoint := fmt.Sprintf("%s/zones/%s/dns_records/%s", apiBase, zoneID, recordID)
+	body := httpsRecordBody("HTTPS", name, priority, target, svcParams, content)
+
+	var out recordResult
+	if err := utils.HTTPDoJSON(ctx, nil, http.MethodPut, endpoint, body, cloudflareHeaders(token), &out); err != nil {
+		return err
+	}
+	if !out.Success {
+		return wrapErrors(out.Errors)
+	}
+	return nil
+}
+
+func httpsRecordBody(recordType, name string, priority uint16, target, svcParams, content string) map[string]any {
+	return map[string]any{
+		"type":    recordType,
+		"name":    name,
+		"content": content,
+		"data": map[string]any{
+			"priority": int(priority),
+			"target":   target,
+			"value":    svcParams,
+		},
+		"ttl": 1,
+	}
 }
 
 func deleteDNSRecord(ctx context.Context, token, zoneID, recordID string) error {
