@@ -51,8 +51,9 @@ type Exposure struct {
 }
 
 type ExposeConfig struct {
-	RelayURLs []string
-	Discovery bool
+	RelayURLs     []string
+	SeedRelayURLs []string
+	Discovery     bool
 
 	IdentityPath string
 	IdentityJSON string
@@ -79,6 +80,11 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 	if err != nil {
 		return nil, err
 	}
+	seedOnlyRelayURLs, err := utils.NormalizeRelayURLs(cfg.SeedRelayURLs...)
+	if err != nil {
+		return nil, err
+	}
+	seedOnlyRelayURLs = utils.FilterRelayURLs(seedOnlyRelayURLs, explicitRelayURLs)
 	var multiHop []string
 	for _, input := range cfg.MultiHop {
 		relayURL, err := utils.NormalizeRelayURL(input)
@@ -107,14 +113,17 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 	var relaySetURLs []string
 	if len(multiHop) > 0 {
 		listenerRelayURLs = []string{multiHop[len(multiHop)-1]}
-		relaySetURLs = append([]string(nil), multiHop...)
+		relaySetURLs, err = utils.MergeRelayURLs(multiHop, nil, seedOnlyRelayURLs)
+		if err != nil {
+			return nil, err
+		}
 	} else if cfg.MultiHopDepth > 1 {
-		relaySetURLs, err = utils.ResolvePortalRelayURLs(explicitRelayURLs, cfg.Discovery)
+		relaySetURLs, err = utils.ResolvePortalRelayURLs(append(append([]string(nil), explicitRelayURLs...), seedOnlyRelayURLs...), cfg.Discovery)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		relaySetURLs, err = utils.ResolvePortalRelayURLs(explicitRelayURLs, cfg.Discovery)
+		relaySetURLs, err = utils.ResolvePortalRelayURLs(append(append([]string(nil), explicitRelayURLs...), seedOnlyRelayURLs...), cfg.Discovery)
 		if err != nil {
 			return nil, err
 		}
@@ -153,6 +162,7 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 		done:            exposureCtx.Done(),
 		identity:        identity,
 		explicitRelays:  explicitRelayURLs,
+		seedOnlyRelays:  seedOnlyRelayURLs,
 		TargetAddr:      targetAddr,
 		UDPAddr:         udpAddr,
 		udpEnabled:      cfg.UDPEnabled,
@@ -168,7 +178,7 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 		relayListeners:  make(map[string]*listener, initialRouteCapacity(listenerRelayURLs, cfg.MultiHopDepth)),
 	}
 
-	if cfg.Discovery || len(multiHop) > 0 || cfg.MultiHopDepth > 1 {
+	if cfg.Discovery || len(seedOnlyRelayURLs) > 0 || len(multiHop) > 0 || cfg.MultiHopDepth > 1 {
 		refresher := discovery.NewRefresher(exposure.relaySet, nil)
 		if err := refresher.Refresh(ctx, nil); err != nil {
 			_ = exposure.Close()
@@ -176,14 +186,14 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 		}
 	}
 
-	if len(listenerRelayURLs) > 0 || cfg.Discovery || cfg.MultiHopDepth > 1 {
+	if len(listenerRelayURLs) > 0 || cfg.Discovery || len(seedOnlyRelayURLs) > 0 || cfg.MultiHopDepth > 1 {
 		if err := exposure.reconcileRelayListeners(true); err != nil {
 			_ = exposure.Close()
 			return nil, err
 		}
 	}
 
-	if cfg.Discovery || len(multiHop) > 0 || cfg.MultiHopDepth > 1 {
+	if cfg.Discovery || len(seedOnlyRelayURLs) > 0 || len(multiHop) > 0 || cfg.MultiHopDepth > 1 {
 		go exposure.runDiscoveryLoop(exposureCtx)
 	}
 
@@ -319,6 +329,53 @@ func (e *Exposure) SeedRelay(relayURL string) error {
 	e.relaySet.AllowRelayURL(relayURL)
 	e.relaySet.AddBootstrapRelayURL(relayURL)
 	return e.reconcileRelayListeners(false)
+}
+
+func (e *Exposure) SetRelayConfig(relayURLs, seedRelayURLs []string) error {
+	relayURLs, err := utils.NormalizeRelayURLs(relayURLs...)
+	if err != nil {
+		return err
+	}
+	seedRelayURLs, err = utils.NormalizeRelayURLs(seedRelayURLs...)
+	if err != nil {
+		return err
+	}
+	seedRelayURLs = utils.FilterRelayURLs(seedRelayURLs, relayURLs)
+	if e.closed() {
+		return net.ErrClosed
+	}
+	if e.relaySet == nil {
+		return errors.New("exposure relay set is not initialized")
+	}
+
+	e.listenerMu.RLock()
+	currentRelays := append([]string(nil), e.explicitRelays...)
+	currentSeedRelays := append([]string(nil), e.seedOnlyRelays...)
+	e.listenerMu.RUnlock()
+
+	desiredRelayURLs, err := utils.MergeRelayURLs(relayURLs, nil, seedRelayURLs)
+	if err != nil {
+		return err
+	}
+	currentRelayURLs, err := utils.MergeRelayURLs(currentRelays, nil, currentSeedRelays)
+	if err != nil {
+		return err
+	}
+
+	e.listenerMu.Lock()
+	e.explicitRelays = append([]string(nil), relayURLs...)
+	e.seedOnlyRelays = append([]string(nil), seedRelayURLs...)
+	e.listenerMu.Unlock()
+
+	for _, relayURL := range desiredRelayURLs {
+		e.relaySet.AllowRelayURL(relayURL)
+		e.relaySet.AddBootstrapRelayURL(relayURL)
+	}
+	for _, relayURL := range utils.FilterRelayURLs(currentRelayURLs, desiredRelayURLs) {
+		e.relaySet.BanRelayURL(relayURL)
+		e.relaySet.RemoveBootstrapRelayURL(relayURL)
+	}
+	return e.reconcileRelayListeners(len(relayURLs) > 0)
 }
 
 func (e *Exposure) SetMultiHop(relayURLs []string) error {

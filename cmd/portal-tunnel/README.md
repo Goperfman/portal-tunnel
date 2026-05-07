@@ -112,7 +112,7 @@ Flags:
 
 Runs Portal as a managed long-lived tunnel agent.
 
-- `portal agent run` reads the platform default config path, installs or updates the OS service, and opens the dashboard when run from an interactive terminal.
+- `portal agent run` reads the platform default config path, installs or updates the OS service, starts it in the background, and exits after the agent is ready.
 - `portal agent run --config config.toml --foreground` runs the agent in the current terminal and opens the dashboard when the terminal is interactive.
 - `portal agent dashboard` attaches to an already running agent.
 - The service process owns multiple tunnel definitions from one `config.toml`.

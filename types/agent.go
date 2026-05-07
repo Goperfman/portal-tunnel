@@ -1,6 +1,7 @@
 package types
 
 type AgentStatusResponse struct {
+	ConfigPath  string              `json:"config_path,omitempty"`
 	ControlAddr string              `json:"control_addr"`
 	Tunnels     []AgentTunnelStatus `json:"tunnels,omitempty"`
 }

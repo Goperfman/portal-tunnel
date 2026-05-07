@@ -160,8 +160,8 @@ portal agent dashboard
 portal agent stop
 ```
 
-`portal agent run` reads or creates the platform default `config.toml`, installs or updates the OS-managed service, starts it, and opens the dashboard when invoked from an interactive terminal. Use `--foreground` for local debugging without service registration.
-Use `portal agent dashboard` to attach to an already running local agent. When using `--foreground`, keep that process running in one terminal and open the dashboard from another.
+`portal agent run` reads or creates the platform default `config.toml`, installs or updates the OS-managed service, starts it in the background, and exits after the agent is ready. Use `--foreground` for local debugging without service registration.
+Use `portal agent dashboard` to attach to an already running managed agent. With `--foreground` in an interactive terminal, the dashboard attaches in the same process.
 
 **Subcommands:**
 

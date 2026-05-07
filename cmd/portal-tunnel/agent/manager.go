@@ -9,13 +9,16 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"unicode"
+	"time"
 
 	"github.com/rs/zerolog/log"
 
 	"github.com/gosuda/portal-tunnel/v2/sdk"
 	"github.com/gosuda/portal-tunnel/v2/types"
+	"github.com/gosuda/portal-tunnel/v2/utils"
 )
+
+const managedTunnelRetryInterval = 30 * time.Second
 
 type manager struct {
 	controlAddr string
@@ -94,64 +97,88 @@ func (m *manager) Stop(ctx context.Context) error {
 }
 
 func (m *manager) AddRelay(id, relayURL string) error {
-	exposure, err := m.runningExposure(id)
+	relayURL, err := utils.NormalizeRelayURL(relayURL)
 	if err != nil {
 		return err
 	}
-	return exposure.AddRelay(relayURL)
+	return m.updateTunnelConfig(id, func(tunnel *TunnelConfig) error {
+		relayURLs, err := utils.MergeRelayURLs(tunnel.RelayURLs, nil, []string{relayURL})
+		if err != nil {
+			return err
+		}
+		tunnel.RelayURLs = relayURLs
+		tunnel.SeedRelayURLs = utils.RemoveRelayURL(tunnel.SeedRelayURLs, relayURL)
+		return nil
+	})
 }
 
 func (m *manager) RemoveRelay(id, relayURL string) error {
-	exposure, err := m.runningExposure(id)
+	relayURL, err := utils.NormalizeRelayURL(relayURL)
 	if err != nil {
 		return err
 	}
-	return exposure.RemoveRelay(relayURL)
+	return m.updateTunnelConfig(id, func(tunnel *TunnelConfig) error {
+		relayURLs, err := utils.NormalizeRelayURLs(tunnel.RelayURLs...)
+		if err != nil {
+			return err
+		}
+		tunnel.RelayURLs = utils.RemoveRelayURL(relayURLs, relayURL)
+		tunnel.SeedRelayURLs = utils.RemoveRelayURL(tunnel.SeedRelayURLs, relayURL)
+		return removeRelayFromTunnelRoute(tunnel, relayURL)
+	})
 }
 
 func (m *manager) SeedRelay(id, relayURL string) error {
-	exposure, err := m.runningExposure(id)
+	relayURL, err := utils.NormalizeRelayURL(relayURL)
 	if err != nil {
 		return err
 	}
-	return exposure.SeedRelay(relayURL)
+	return m.updateTunnelConfig(id, func(tunnel *TunnelConfig) error {
+		relayURLs, err := utils.NormalizeRelayURLs(tunnel.RelayURLs...)
+		if err != nil {
+			return err
+		}
+		tunnel.RelayURLs = utils.RemoveRelayURL(relayURLs, relayURL)
+		seedRelayURLs, err := utils.MergeRelayURLs(tunnel.SeedRelayURLs, nil, []string{relayURL})
+		if err != nil {
+			return err
+		}
+		tunnel.SeedRelayURLs = seedRelayURLs
+		return removeRelayFromTunnelRoute(tunnel, relayURL)
+	})
 }
 
 func (m *manager) SetMultiHop(id string, relayURLs []string) error {
-	exposure, err := m.runningExposure(id)
+	multiHop, err := utils.NormalizeRelayURLs(relayURLs...)
 	if err != nil {
-		return err
+		return fmt.Errorf("normalize multi-hop relay url: %w", err)
 	}
-	return exposure.SetMultiHop(relayURLs)
-}
-
-func (m *manager) runningExposure(id string) (*sdk.Exposure, error) {
-	id = strings.TrimSpace(id)
-	m.mu.RLock()
-	tunnel := m.tunnels[id]
-	m.mu.RUnlock()
-	if tunnel == nil {
-		return nil, fmt.Errorf("unknown tunnel %q", id)
+	if len(multiHop) != len(relayURLs) {
+		return errors.New("multi-hop relay url repeated")
 	}
-	tunnel.mu.RLock()
-	tunnelID := tunnel.cfg.ID
-	exposure := tunnel.exposure
-	tunnel.mu.RUnlock()
-	if exposure == nil {
-		return nil, fmt.Errorf("tunnel %q is not running", tunnelID)
+	if len(multiHop) == 1 {
+		return errors.New("multi-hop requires at least entry and exit relay urls")
 	}
-	return exposure, nil
+	return m.updateTunnelConfig(id, func(tunnel *TunnelConfig) error {
+		tunnel.MultiHop = append([]string(nil), multiHop...)
+		tunnel.MultiHopDepth = 0
+		return nil
+	})
 }
 
 func (m *manager) AddTunnel(req types.AgentTunnelRequest) error {
 	m.configMu.Lock()
 	defer m.configMu.Unlock()
 
-	cfg, path, mode, err := m.loadConfigDocument()
+	doc, cfg, path, mode, err := m.loadConfigDocument()
 	if err != nil {
 		return err
 	}
-	m.preserveCurrentIdentityPaths(&cfg)
+	if len(doc.Tunnels) == 1 && strings.TrimSpace(doc.Tunnels[0].IdentityPath) == "" {
+		if len(cfg.Tunnels) == 1 {
+			doc.Tunnels[0].IdentityPath = cfg.Tunnels[0].IdentityPath
+		}
+	}
 	id := strings.TrimSpace(req.ID)
 	name := strings.TrimSpace(req.Name)
 	if id == "" {
@@ -160,8 +187,8 @@ func (m *manager) AddTunnel(req types.AgentTunnelRequest) error {
 	if id == "" {
 		return errors.New("tunnel name is required")
 	}
-	if strings.ContainsAny(id, " \t\r\n/") {
-		return errors.New("tunnel id cannot contain whitespace or slash")
+	if err := validateAgentPathComponent("tunnel id", id); err != nil {
+		return err
 	}
 	target := strings.TrimSpace(req.TargetAddr)
 	if target == "" {
@@ -170,21 +197,23 @@ func (m *manager) AddTunnel(req types.AgentTunnelRequest) error {
 	if name == "" {
 		name = id
 	}
+	relayURLs, err := utils.NormalizeRelayURLs(req.RelayURLs...)
+	if err != nil {
+		return err
+	}
 	discovery := true
 	tunnelCfg := TunnelConfig{
 		ID:         id,
 		Name:       name,
 		TargetAddr: target,
-		RelayURLs:  append([]string(nil), req.RelayURLs...),
+		RelayURLs:  relayURLs,
 		Discovery:  &discovery,
 	}
-	for _, tunnel := range cfg.Tunnels {
-		if tunnel.ID == tunnelCfg.ID {
-			return fmt.Errorf("tunnel %q already exists", tunnelCfg.ID)
-		}
+	if slices.ContainsFunc(cfg.Tunnels, func(tunnel TunnelConfig) bool { return tunnel.ID == tunnelCfg.ID }) {
+		return fmt.Errorf("tunnel %q already exists", tunnelCfg.ID)
 	}
-	cfg.Tunnels = append(cfg.Tunnels, tunnelCfg)
-	return m.writeConfigAndApply(path, mode, cfg)
+	doc.Tunnels = append(doc.Tunnels, tunnelCfg)
+	return m.writeConfigAndApply(path, mode, doc)
 }
 
 func agentTunnelID(name string) string {
@@ -192,20 +221,65 @@ func agentTunnelID(name string) string {
 	var out strings.Builder
 	dash := false
 	for _, r := range name {
-		if r == '/' || unicode.IsSpace(r) {
+		if invalidAgentPathComponentRune(r) {
 			if out.Len() > 0 && !dash {
 				out.WriteByte('-')
 				dash = true
 			}
 			continue
 		}
-		if r < 0x20 {
-			continue
-		}
 		out.WriteRune(r)
 		dash = false
 	}
 	return strings.Trim(out.String(), "-")
+}
+
+func (m *manager) updateTunnelConfig(id string, update func(*TunnelConfig) error) error {
+	id = strings.TrimSpace(id)
+	if err := validateAgentPathComponent("tunnel id", id); err != nil {
+		return err
+	}
+
+	m.configMu.Lock()
+	defer m.configMu.Unlock()
+
+	doc, cfg, path, mode, err := m.loadConfigDocument()
+	if err != nil {
+		return err
+	}
+	index := slices.IndexFunc(cfg.Tunnels, func(tunnel TunnelConfig) bool { return tunnel.ID == id })
+	if index < 0 {
+		return fmt.Errorf("tunnel %q not found", id)
+	}
+	before := doc.Tunnels[index]
+	if err := update(&doc.Tunnels[index]); err != nil {
+		return err
+	}
+	if reflect.DeepEqual(before, doc.Tunnels[index]) {
+		return nil
+	}
+	return m.writeConfigAndApply(path, mode, doc)
+}
+
+func removeRelayFromTunnelRoute(tunnel *TunnelConfig, relayURL string) error {
+	if len(tunnel.MultiHop) == 0 {
+		return nil
+	}
+	multiHop, err := utils.NormalizeRelayURLs(tunnel.MultiHop...)
+	if err != nil {
+		return fmt.Errorf("normalize multi-hop relay url: %w", err)
+	}
+	nextMultiHop := utils.RemoveRelayURL(multiHop, relayURL)
+	if len(nextMultiHop) == len(multiHop) {
+		tunnel.MultiHop = nextMultiHop
+		return nil
+	}
+	if len(nextMultiHop) < 2 {
+		nextMultiHop = nil
+	}
+	tunnel.MultiHop = nextMultiHop
+	tunnel.MultiHopDepth = 0
+	return nil
 }
 
 func (m *manager) DeleteTunnel(id string) error {
@@ -216,74 +290,63 @@ func (m *manager) DeleteTunnel(id string) error {
 	if id == "" {
 		return errors.New("tunnel id is required")
 	}
-	cfg, path, mode, err := m.loadConfigDocument()
+	doc, cfg, path, mode, err := m.loadConfigDocument()
 	if err != nil {
 		return err
 	}
-	m.preserveCurrentIdentityPaths(&cfg)
-	if len(cfg.Tunnels) <= 1 {
+	if len(doc.Tunnels) <= 1 {
 		return errors.New("cannot delete the last tunnel")
 	}
 
-	next := cfg.Tunnels[:0]
-	found := false
-	for _, tunnel := range cfg.Tunnels {
-		if tunnel.ID == id {
-			found = true
+	index := slices.IndexFunc(cfg.Tunnels, func(tunnel TunnelConfig) bool { return tunnel.ID == id })
+	if index < 0 {
+		return fmt.Errorf("tunnel %q not found", id)
+	}
+	next := doc.Tunnels[:0]
+	for i, tunnel := range doc.Tunnels {
+		if i == index {
 			continue
 		}
 		next = append(next, tunnel)
 	}
-	if !found {
-		return fmt.Errorf("tunnel %q not found", id)
-	}
-	cfg.Tunnels = next
-	return m.writeConfigAndApply(path, mode, cfg)
+	doc.Tunnels = next
+	return m.writeConfigAndApply(path, mode, doc)
 }
 
-func (m *manager) loadConfigDocument() (Config, string, os.FileMode, error) {
+func (m *manager) loadConfigDocument() (configDocument, Config, string, os.FileMode, error) {
 	m.mu.RLock()
 	configPath := m.cfg.sourcePath
 	m.mu.RUnlock()
-	return loadConfigDocument(configPath)
-}
-
-func (m *manager) preserveCurrentIdentityPaths(cfg *Config) {
-	m.mu.RLock()
-	identityPathByID := make(map[string]string, len(m.cfg.Tunnels))
-	for _, tunnel := range m.cfg.Tunnels {
-		if strings.TrimSpace(tunnel.IdentityPath) != "" {
-			identityPathByID[tunnel.ID] = tunnel.IdentityPath
-		}
-	}
-	m.mu.RUnlock()
-
-	for i := range cfg.Tunnels {
-		tunnel := &cfg.Tunnels[i]
-		if strings.TrimSpace(tunnel.IdentityPath) != "" {
-			continue
-		}
-		if identityPath := identityPathByID[tunnel.ID]; identityPath != "" {
-			tunnel.IdentityPath = identityPath
-		}
-	}
-}
-
-func (m *manager) writeConfigAndApply(path string, mode os.FileMode, cfg Config) error {
-	if err := validateConfigDocument(path, cfg); err != nil {
-		return err
-	}
-	if err := writeConfigDocument(path, mode, cfg); err != nil {
-		return err
-	}
-	next, err := LoadConfig(path)
+	doc, path, mode, err := loadConfigDocument(configPath)
 	if err != nil {
+		return configDocument{}, Config{}, "", 0, err
+	}
+	cfg, err := resolveConfigDocument(path, doc)
+	if err != nil {
+		return configDocument{}, Config{}, "", 0, err
+	}
+	return doc, cfg, path, mode, nil
+}
+
+func (m *manager) writeConfigAndApply(path string, mode os.FileMode, doc configDocument) error {
+	next, err := resolveConfigDocument(path, doc)
+	if err != nil {
+		return err
+	}
+	if err := writeConfigDocument(path, mode, doc); err != nil {
 		return err
 	}
 	return m.ApplyConfig(next)
 }
 
 func (m *manager) ApplyConfig(cfg Config) error {
+	type liveUpdate struct {
+		tunnel          *managedTunnel
+		cfg             TunnelConfig
+		relayChanged    bool
+		multiHopChanged bool
+	}
+
 	m.mu.Lock()
 	m.cfg = cfg
 	rootCtx := m.rootCtx
@@ -294,6 +357,7 @@ func (m *manager) ApplyConfig(cfg Config) error {
 	toStop := make([]*managedTunnel, 0)
 	toStart := make([]*managedTunnel, 0)
 	toUpdate := make([]*managedTunnel, 0)
+	var liveUpdates []liveUpdate
 	for id, tunnel := range m.tunnels {
 		tunnelCfg, ok := next[id]
 		if !ok {
@@ -302,9 +366,28 @@ func (m *manager) ApplyConfig(cfg Config) error {
 			continue
 		}
 		tunnel.mu.Lock()
-		if !reflect.DeepEqual(tunnel.cfg, tunnelCfg) {
-			tunnel.cfg = tunnelCfg
-			toUpdate = append(toUpdate, tunnel)
+		previous := tunnel.cfg
+		if !reflect.DeepEqual(previous, tunnelCfg) {
+			staticPrevious := previous
+			staticNext := tunnelCfg
+			staticPrevious.RelayURLs = nil
+			staticPrevious.SeedRelayURLs = nil
+			staticPrevious.MultiHop = nil
+			staticNext.RelayURLs = nil
+			staticNext.SeedRelayURLs = nil
+			staticNext.MultiHop = nil
+			if reflect.DeepEqual(staticPrevious, staticNext) {
+				tunnel.cfg = tunnelCfg
+				liveUpdates = append(liveUpdates, liveUpdate{
+					tunnel:          tunnel,
+					cfg:             tunnelCfg,
+					relayChanged:    !slices.Equal(previous.RelayURLs, tunnelCfg.RelayURLs) || !slices.Equal(previous.SeedRelayURLs, tunnelCfg.SeedRelayURLs),
+					multiHopChanged: !slices.Equal(previous.MultiHop, tunnelCfg.MultiHop),
+				})
+			} else {
+				tunnel.cfg = tunnelCfg
+				toUpdate = append(toUpdate, tunnel)
+			}
 		}
 		tunnel.mu.Unlock()
 		delete(next, id)
@@ -325,7 +408,12 @@ func (m *manager) ApplyConfig(cfg Config) error {
 	for _, tunnel := range append(toStart, toUpdate...) {
 		tunnel.Start(rootCtx)
 	}
-	return nil
+
+	var liveErr error
+	for _, update := range liveUpdates {
+		liveErr = errors.Join(liveErr, update.tunnel.applyLiveConfig(update.cfg, update.relayChanged, update.multiHopChanged))
+	}
+	return liveErr
 }
 
 func (m *manager) Snapshot() types.AgentStatusResponse {
@@ -345,6 +433,7 @@ func (m *manager) Snapshot() types.AgentStatusResponse {
 	})
 
 	return types.AgentStatusResponse{
+		ConfigPath:  m.cfg.sourcePath,
 		ControlAddr: m.controlAddr,
 		Tunnels:     statuses,
 	}
@@ -362,6 +451,32 @@ type managedTunnel struct {
 
 func newTunnel(cfg TunnelConfig) *managedTunnel {
 	return &managedTunnel{cfg: cfg}
+}
+
+func (t *managedTunnel) applyLiveConfig(cfg TunnelConfig, relayChanged, multiHopChanged bool) error {
+	t.mu.RLock()
+	exposure := t.exposure
+	t.mu.RUnlock()
+	if exposure == nil {
+		return nil
+	}
+
+	var err error
+	if relayChanged {
+		err = errors.Join(err, exposure.SetRelayConfig(cfg.RelayURLs, cfg.SeedRelayURLs))
+	}
+	if multiHopChanged {
+		err = errors.Join(err, exposure.SetMultiHop(cfg.MultiHop))
+	}
+
+	t.mu.Lock()
+	if err == nil {
+		t.lastError = ""
+	} else {
+		t.lastError = err.Error()
+	}
+	t.mu.Unlock()
+	return err
 }
 
 func (t *managedTunnel) Start(parent context.Context) {
@@ -449,16 +564,26 @@ func (t *managedTunnel) Snapshot() types.AgentTunnelStatus {
 }
 
 func (t *managedTunnel) runLoop(ctx context.Context) {
-	err := t.runOnce(ctx)
+	for {
+		err := t.runOnce(ctx)
 
-	t.mu.Lock()
-	t.exposure = nil
-	if ctx.Err() != nil || errors.Is(err, context.Canceled) || err == nil {
-		t.lastError = ""
-	} else {
-		t.lastError = err.Error()
+		t.mu.Lock()
+		t.exposure = nil
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) || err == nil {
+			t.lastError = ""
+		} else {
+			t.lastError = err.Error()
+		}
+		t.mu.Unlock()
+
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) || err == nil {
+			return
+		}
+		log.Warn().Err(err).Msg("managed tunnel stopped with error; retrying")
+		if !utils.SleepOrDone(ctx, managedTunnelRetryInterval) {
+			return
+		}
 	}
-	t.mu.Unlock()
 }
 
 func (t *managedTunnel) runOnce(ctx context.Context) error {
@@ -477,6 +602,7 @@ func (t *managedTunnel) runOnce(ctx context.Context) error {
 	}
 	exposure, err := sdk.Expose(ctx, sdk.ExposeConfig{
 		RelayURLs:       append([]string(nil), cfg.RelayURLs...),
+		SeedRelayURLs:   append([]string(nil), cfg.SeedRelayURLs...),
 		Discovery:       discovery,
 		IdentityPath:    cfg.IdentityPath,
 		IdentityJSON:    cfg.IdentityJSON,

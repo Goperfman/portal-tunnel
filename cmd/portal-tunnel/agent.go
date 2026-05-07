@@ -99,9 +99,6 @@ func runAgentRunCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	if agentCLIInteractive() {
-		return agent.RunDashboard(configPath, cfg.Agent.StateDir)
-	}
 
 	fmt.Fprintf(os.Stdout, "Portal agent running at %s with %d tunnel(s).\n", status.ControlAddr, len(status.Tunnels))
 	return nil
@@ -185,8 +182,13 @@ func runAgentStopCommand(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	_ = agent.Shutdown(ctx, resolvedStateDir)
+	shutdownErr := agent.Shutdown(ctx, resolvedStateDir)
 	if err := service.StopDisable(ctx, cfg.Agent.ServiceName); err != nil {
+		if shutdownErr == nil {
+			fmt.Fprintf(os.Stderr, "Warning: agent stopped, but service manager cleanup failed: %v\n", err)
+			fmt.Fprintln(os.Stdout, "Portal agent stopped.")
+			return nil
+		}
 		return fmt.Errorf("stop portal agent service: %w", err)
 	}
 	fmt.Fprintln(os.Stdout, "Portal agent stopped.")
@@ -280,23 +282,23 @@ func agentCLIInteractive() bool {
 }
 
 func loadAgentCommandConfig(configPath, stateDir string) (agent.Config, string, error) {
+	configPath = strings.TrimSpace(configPath)
+	stateDir = strings.TrimSpace(stateDir)
 	if stateDir != "" && configPath == "" {
 		cfg := agent.Config{Agent: agent.AgentConfig{StateDir: stateDir, ServiceName: agent.DefaultServiceName}}
 		return cfg, stateDir, nil
 	}
-	if configPath != "" {
-		cfg, err := agent.LoadConfig(configPath)
-		if err != nil {
-			return agent.Config{}, "", err
-		}
-		if stateDir != "" {
-			cfg.Agent.StateDir = stateDir
-		}
-		return cfg, cfg.Agent.StateDir, nil
+	if configPath == "" {
+		configPath = service.DefaultConfigPath()
 	}
-	defaultStateDir := service.DefaultDataDir()
-	cfg := agent.Config{Agent: agent.AgentConfig{StateDir: defaultStateDir, ServiceName: agent.DefaultServiceName}}
-	return cfg, defaultStateDir, nil
+	cfg, err := agent.LoadConfig(configPath)
+	if err != nil {
+		return agent.Config{}, "", err
+	}
+	if stateDir != "" {
+		cfg.Agent.StateDir = stateDir
+	}
+	return cfg, cfg.Agent.StateDir, nil
 }
 
 func printAgentUsage(w io.Writer) {

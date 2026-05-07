@@ -139,6 +139,9 @@ func (m agentDashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		if msg.err == nil {
 			m.status = msg.status
+			if strings.TrimSpace(msg.status.ConfigPath) != "" {
+				m.configPath = msg.status.ConfigPath
+			}
 			m.clampSelection()
 		}
 		return m, nil
@@ -629,6 +632,12 @@ func (m agentDashboardModel) layout() agentDashboardView {
 	}
 	if m.mode != agentDashboardNormalMode {
 		layout.addLine(m.input.View())
+	}
+	if strings.TrimSpace(m.status.ConfigPath) != "" {
+		layout.addStyled(width, agentDashboardMutedStyle, agentDashboardFit("Config: "+m.status.ConfigPath, width))
+	}
+	if strings.TrimSpace(m.status.ControlAddr) != "" {
+		layout.addStyled(width, agentDashboardMutedStyle, agentDashboardFit("Control: "+m.status.ControlAddr, width))
 	}
 	layout.addLine("")
 	if m.height > 0 {
