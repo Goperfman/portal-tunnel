@@ -33,11 +33,12 @@ const (
 )
 
 type MITMProbeReport struct {
-	RelayURL  string
-	PublicURL string
-	Address   string
-	Detected  bool
-	Reason    string
+	RelayURL    string
+	PublicURL   string
+	Address     string
+	ECHAccepted bool
+	Detected    bool
+	Reason      string
 }
 
 type mitmProbePending struct {
@@ -135,6 +136,7 @@ func (m *mitmManager) probeTLSPassthrough(ctx context.Context) (MITMProbeReport,
 	}
 
 	clientState := tlsConn.ConnectionState()
+	report.ECHAccepted = clientState.ECHAccepted
 	expected, err := (&clientState).ExportKeyingMaterial(mitmProbeExporterLabel, nil, 32)
 	if err != nil {
 		return report, fmt.Errorf("export client probe keying material: %w", err)
@@ -243,11 +245,13 @@ func (m *mitmManager) logResult(report MITMProbeReport, err error) {
 		}
 		log.Warn().
 			Err(err).
+			Bool("ech_accepted", report.ECHAccepted).
 			Str("relay_url", relayURL).
 			Str("address", l.identity.Address).
 			Msg("tls passthrough self-probe failed")
 	case report.Reason == types.MITMProbeReasonProbeTimeout:
 		log.Warn().
+			Bool("ech_accepted", report.ECHAccepted).
 			Str("relay_url", report.RelayURL).
 			Str("public_url", report.PublicURL).
 			Str("address", report.Address).
@@ -255,6 +259,7 @@ func (m *mitmManager) logResult(report MITMProbeReport, err error) {
 	case report.Detected:
 		event := log.Warn().
 			Bool("ban_mitm", m.ban).
+			Bool("ech_accepted", report.ECHAccepted).
 			Str("reason", report.Reason).
 			Str("relay_url", report.RelayURL).
 			Str("public_url", report.PublicURL).
@@ -271,6 +276,7 @@ func (m *mitmManager) logResult(report MITMProbeReport, err error) {
 		event.Msg("tls termination suspected by self-probe")
 	default:
 		log.Debug().
+			Bool("ech_accepted", report.ECHAccepted).
 			Str("relay_url", report.RelayURL).
 			Str("public_url", report.PublicURL).
 			Str("address", report.Address).
