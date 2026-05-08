@@ -1099,11 +1099,11 @@ func openDashboardURL(rawURL string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL)
+		cmd = exec.CommandContext(ctx, "rundll32", "url.dll,FileProtocolHandler", rawURL)
 	case "darwin":
-		cmd = exec.Command("open", rawURL)
+		cmd = exec.CommandContext(ctx, "open", rawURL)
 	default:
-		cmd = exec.Command("xdg-open", rawURL)
+		cmd = exec.CommandContext(ctx, "xdg-open", rawURL)
 	}
 	if err := cmd.Start(); err != nil {
 		return err
