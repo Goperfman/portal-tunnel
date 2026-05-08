@@ -208,7 +208,6 @@ Tunnel fields mirror `portal expose` flags:
 | `target` | string | Local TCP target, equivalent to the `portal expose <target>` argument |
 | `http_routes` | table array | HTTP route mappings; cannot be combined with `target` or `udp` |
 | `relays` | string array | Explicit relay API URLs |
-| `seed_relays` | string array | Discovery seed relay API URLs that are not attached as active relays |
 | `discovery` | bool | Include registry and relay discovery expansion |
 | `multi_hop` | string array | Ordered multi-hop relay path |
 | `multi_hop_depth` | int | Automatically select one multi-hop route with this depth |

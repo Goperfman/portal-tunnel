@@ -126,7 +126,7 @@ func TestExposureReconcileRemovesStaleListener(t *testing.T) {
 	}
 }
 
-func TestExposureRemoveRelayDetachesRunningListener(t *testing.T) {
+func TestExposureRemoveRelayStopsRunningListener(t *testing.T) {
 	const relayA = "https://relay-a.example"
 
 	relayAURL, err := url.Parse(relayA)

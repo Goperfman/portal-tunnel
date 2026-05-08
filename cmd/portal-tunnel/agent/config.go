@@ -27,13 +27,8 @@ const (
 
 type Config struct {
 	sourcePath string
-	Agent      AgentConfig
-	Tunnels    []TunnelConfig
-}
-
-type configDocument struct {
-	Agent   AgentConfig    `koanf:"agent"`
-	Tunnels []TunnelConfig `koanf:"tunnels"`
+	Agent      AgentConfig    `koanf:"agent"`
+	Tunnels    []TunnelConfig `koanf:"tunnels"`
 }
 
 type AgentConfig struct {
@@ -48,7 +43,6 @@ type TunnelConfig struct {
 	TargetAddr      string            `koanf:"target"`
 	HTTPRoutes      []HTTPRouteConfig `koanf:"http_routes"`
 	RelayURLs       []string          `koanf:"relays"`
-	SeedRelayURLs   []string          `koanf:"seed_relays"`
 	Discovery       *bool             `koanf:"discovery"`
 	IdentityPath    string            `koanf:"identity_path"`
 	IdentityJSON    string            `koanf:"identity_json"`
@@ -76,11 +70,33 @@ func LoadConfig(path string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	doc, _, err := readConfigDocument(absPath)
+	cfg, _, err := readConfigDocument(absPath)
 	if err != nil {
 		return Config{}, err
 	}
-	return resolveConfigDocument(absPath, doc)
+	return cfg, nil
+}
+
+func LoadExistingConfig(path string) (Config, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = service.DefaultConfigPath()
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return Config{}, err
+	}
+	if _, err := os.Stat(absPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Config{}, fmt.Errorf("agent config %q does not exist; run `portal agent run` to create it", absPath)
+		}
+		return Config{}, err
+	}
+	cfg, _, err := readConfigDocument(absPath)
+	if err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
 }
 
 func ensureConfigDocument(path string) (string, error) {
@@ -98,7 +114,7 @@ func ensureConfigDocument(path string) (string, error) {
 	}
 	if _, err := os.Stat(absPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			if err := writeConfigDocument(absPath, 0o644, defaultConfigDocument()); err != nil {
+			if err := writeConfigDocument(absPath, 0o644, defaultConfig()); err != nil {
 				return "", fmt.Errorf("create default agent config %q: %w", absPath, err)
 			}
 		} else {
@@ -108,9 +124,9 @@ func ensureConfigDocument(path string) (string, error) {
 	return absPath, nil
 }
 
-func defaultConfigDocument() configDocument {
+func defaultConfig() Config {
 	discovery := true
-	return configDocument{
+	return Config{
 		Agent: AgentConfig{
 			StateDir:    service.DefaultDataDir(),
 			ControlAddr: DefaultControlAddr,
@@ -125,71 +141,50 @@ func defaultConfigDocument() configDocument {
 	}
 }
 
-func loadConfigDocument(path string) (configDocument, string, os.FileMode, error) {
+func loadConfigDocument(path string) (Config, string, os.FileMode, error) {
 	absPath, err := ensureConfigDocument(path)
 	if err != nil {
-		return configDocument{}, "", 0, err
+		return Config{}, "", 0, err
 	}
-	doc, mode, err := readConfigDocument(absPath)
+	cfg, mode, err := readConfigDocument(absPath)
 	if err != nil {
-		return configDocument{}, "", 0, err
+		return Config{}, "", 0, err
 	}
-	return doc, absPath, mode, nil
+	return cfg, absPath, mode, nil
 }
 
-func readConfigDocument(absPath string) (configDocument, os.FileMode, error) {
+func readConfigDocument(absPath string) (Config, os.FileMode, error) {
 	info, err := os.Stat(absPath)
 	if err != nil {
-		return configDocument{}, 0, err
+		return Config{}, 0, err
 	}
 	data, err := os.ReadFile(absPath)
 	if err != nil {
-		return configDocument{}, 0, err
+		return Config{}, 0, err
 	}
 
-	var doc configDocument
+	var cfg Config
 	if strings.TrimSpace(string(data)) != "" {
 		k := koanf.New(".")
 		if err := k.Load(file.Provider(absPath), toml.Parser()); err != nil {
-			return configDocument{}, 0, err
+			return Config{}, 0, err
 		}
-		if err := k.Unmarshal("", &doc); err != nil {
-			return configDocument{}, 0, err
+		if err := k.Unmarshal("", &cfg); err != nil {
+			return Config{}, 0, err
 		}
 	}
-	return doc, info.Mode().Perm(), nil
+	cfg.sourcePath = absPath
+	if err := cfg.ApplyDefaults(absPath); err != nil {
+		return Config{}, 0, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return Config{}, 0, err
+	}
+	return cfg, info.Mode().Perm(), nil
 }
 
-func resolveConfigDocument(path string, doc configDocument) (Config, error) {
-	cfg := Config{
-		sourcePath: path,
-		Agent:      doc.Agent,
-		Tunnels:    append([]TunnelConfig(nil), doc.Tunnels...),
-	}
-	for i := range cfg.Tunnels {
-		tunnel := &cfg.Tunnels[i]
-		tunnel.HTTPRoutes = append([]HTTPRouteConfig(nil), tunnel.HTTPRoutes...)
-		tunnel.RelayURLs = append([]string(nil), tunnel.RelayURLs...)
-		tunnel.SeedRelayURLs = append([]string(nil), tunnel.SeedRelayURLs...)
-		tunnel.MultiHop = append([]string(nil), tunnel.MultiHop...)
-		tunnel.Tags = append([]string(nil), tunnel.Tags...)
-		if tunnel.Discovery != nil {
-			value := *tunnel.Discovery
-			tunnel.Discovery = &value
-		}
-		if tunnel.BanMITM != nil {
-			value := *tunnel.BanMITM
-			tunnel.BanMITM = &value
-		}
-	}
-	if err := cfg.ApplyDefaults(path); err != nil {
-		return Config{}, err
-	}
-	return cfg, cfg.Validate()
-}
-
-func writeConfigDocument(path string, mode os.FileMode, doc configDocument) error {
-	data, err := toml.Parser().Marshal(configDocumentMap(doc))
+func writeConfigDocument(path string, mode os.FileMode, cfg Config) error {
+	data, err := toml.Parser().Marshal(configMap(cfg))
 	if err != nil {
 		return err
 	}
@@ -199,14 +194,14 @@ func writeConfigDocument(path string, mode os.FileMode, doc configDocument) erro
 	return os.WriteFile(path, data, mode)
 }
 
-func configDocumentMap(doc configDocument) map[string]any {
+func configMap(cfg Config) map[string]any {
 	agent := make(map[string]any)
-	addStringDocumentField(agent, "state_dir", doc.Agent.StateDir)
-	addStringDocumentField(agent, "control_addr", doc.Agent.ControlAddr)
-	addStringDocumentField(agent, "service_name", doc.Agent.ServiceName)
+	addStringDocumentField(agent, "state_dir", cfg.Agent.StateDir)
+	addStringDocumentField(agent, "control_addr", cfg.Agent.ControlAddr)
+	addStringDocumentField(agent, "service_name", cfg.Agent.ServiceName)
 
-	tunnels := make([]map[string]any, 0, len(doc.Tunnels))
-	for _, tunnel := range doc.Tunnels {
+	tunnels := make([]map[string]any, 0, len(cfg.Tunnels))
+	for _, tunnel := range cfg.Tunnels {
 		tunnels = append(tunnels, tunnelConfigDocumentMap(tunnel))
 	}
 
@@ -235,7 +230,6 @@ func tunnelConfigDocumentMap(cfg TunnelConfig) map[string]any {
 		out["http_routes"] = routes
 	}
 	addStringSliceDocumentField(out, "relays", cfg.RelayURLs)
-	addStringSliceDocumentField(out, "seed_relays", cfg.SeedRelayURLs)
 	if cfg.Discovery != nil {
 		out["discovery"] = *cfg.Discovery
 	}
@@ -329,13 +323,6 @@ func (cfg *Config) ApplyDefaults(configPath string) error {
 				return fmt.Errorf("tunnel %q relays: %w", t.ID, err)
 			}
 			t.RelayURLs = relays
-		}
-		if len(t.SeedRelayURLs) > 0 {
-			seedRelays, err := utils.NormalizeRelayURLs(t.SeedRelayURLs...)
-			if err != nil {
-				return fmt.Errorf("tunnel %q seed_relays: %w", t.ID, err)
-			}
-			t.SeedRelayURLs = utils.FilterRelayURLs(seedRelays, t.RelayURLs)
 		}
 		for idx, relayURL := range t.MultiHop {
 			normalized, err := utils.NormalizeRelayURL(relayURL)

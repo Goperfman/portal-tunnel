@@ -291,7 +291,7 @@ func loadAgentCommandConfig(configPath, stateDir string) (agent.Config, string, 
 	if configPath == "" {
 		configPath = service.DefaultConfigPath()
 	}
-	cfg, err := agent.LoadConfig(configPath)
+	cfg, err := agent.LoadExistingConfig(configPath)
 	if err != nil {
 		return agent.Config{}, "", err
 	}
