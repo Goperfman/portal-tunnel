@@ -1097,6 +1097,9 @@ func openDashboardURL(rawURL string) error {
 	}
 
 	var cmd *exec.Cmd
+	ctx, cancel := Context.WithCancel(context.Background())
+	defer cancel()
+
 	switch runtime.GOOS {
 	case "windows":
 		cmd = exec.CommandContext(ctx, "rundll32", "url.dll,FileProtocolHandler", rawURL)
