@@ -101,9 +101,9 @@ func (s *controlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			var err error
 			if r.Method == http.MethodPost {
-				err = s.manager.AddRelay(tunnelID, req.RelayURL)
+				err = s.manager.ConnectRelay(tunnelID, req.RelayURL)
 			} else {
-				err = s.manager.RemoveRelay(tunnelID, req.RelayURL)
+				err = s.manager.DisconnectRelay(tunnelID, req.RelayURL)
 			}
 			if err != nil {
 				utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, err.Error())
@@ -158,12 +158,12 @@ func DeleteTunnel(ctx context.Context, stateDir, tunnelID string) error {
 	return controlRequest(ctx, stateDir, http.MethodDelete, path, nil, nil)
 }
 
-func AddRelay(ctx context.Context, stateDir, tunnelID, relayURL string) error {
+func ConnectRelay(ctx context.Context, stateDir, tunnelID, relayURL string) error {
 	path := types.PathAgentTunnelsPrefix + url.PathEscape(tunnelID) + "/relays"
 	return controlRequest(ctx, stateDir, http.MethodPost, path, types.AgentRelayRequest{RelayURL: relayURL}, nil)
 }
 
-func RemoveRelay(ctx context.Context, stateDir, tunnelID, relayURL string) error {
+func DisconnectRelay(ctx context.Context, stateDir, tunnelID, relayURL string) error {
 	path := types.PathAgentTunnelsPrefix + url.PathEscape(tunnelID) + "/relays"
 	return controlRequest(ctx, stateDir, http.MethodDelete, path, types.AgentRelayRequest{RelayURL: relayURL}, nil)
 }

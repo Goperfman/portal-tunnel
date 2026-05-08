@@ -2,6 +2,7 @@ package portal
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -10,6 +11,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
+	"github.com/gosuda/portal-tunnel/v2/portal/acme"
 	"github.com/gosuda/portal-tunnel/v2/portal/auth"
 	"github.com/gosuda/portal-tunnel/v2/portal/keyless"
 	"github.com/gosuda/portal-tunnel/v2/portal/policy"
@@ -645,6 +649,57 @@ func (r *leaseRegistry) DeleteHopRoute(route *types.HopRoute) *leaseRecord {
 	r.mu.Unlock()
 	deleted.Close()
 	return deleted
+}
+
+func (r *leaseRegistry) promoteECHDNS(record *leaseRecord, manager *acme.Manager, sniPort int) {
+	if !record.hasECHDNSRecord() {
+		return
+	}
+
+	go func() {
+		active := false
+		now := time.Now()
+		r.mu.RLock()
+		for _, existing := range r.records {
+			if existing == record && !existing.isExpired(now) {
+				active = true
+				break
+			}
+		}
+		r.mu.RUnlock()
+		if !active {
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), defaultClaimTimeout)
+		err := record.syncECHDNS(ctx, manager, sniPort)
+		cancel()
+
+		if err != nil {
+			log.Warn().
+				Err(err).
+				Str("hostname", record.ECHDNSHostname).
+				Str("route_hostname", record.Hostname).
+				Str("address", record.Address).
+				Msg("promote ech dns record")
+		}
+
+		hostnameActive := false
+		now = time.Now()
+		r.mu.RLock()
+		for _, existing := range r.records {
+			if existing != nil && !existing.isExpired(now) && existing.hasECHDNSRecord() && existing.ECHDNSHostname == record.ECHDNSHostname {
+				hostnameActive = true
+				break
+			}
+		}
+		r.mu.RUnlock()
+		if !hostnameActive {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), defaultClaimTimeout)
+			record.deleteECHDNS(cleanupCtx, manager)
+			cleanupCancel()
+		}
+	}()
 }
 
 func (r *leaseRegistry) issueRegisterChallenge(req types.RegisterChallengeRequest, domain, uri, clientIP string) (types.RegisterChallengeResponse, error) {

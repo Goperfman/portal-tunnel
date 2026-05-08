@@ -219,8 +219,8 @@ func (e *Exposure) AddRelay(relayURL string) error {
 	return e.reconcileRelayListeners(true)
 }
 
-// RemoveRelay detaches a relay from the running exposure and suppresses
-// auto-selection for that relay until it is added again.
+// RemoveRelay detaches a relay from the running exposure and lets it fall back
+// to the discovered candidate pool.
 func (e *Exposure) RemoveRelay(relayURL string) error {
 	relayURL, err := utils.NormalizeRelayURL(relayURL)
 	if err != nil {
@@ -234,6 +234,10 @@ func (e *Exposure) RemoveRelay(relayURL string) error {
 	}
 
 	e.listenerMu.Lock()
+	if slices.Contains(e.multiHop, relayURL) {
+		e.listenerMu.Unlock()
+		return errors.New("relay is part of the multi-hop route; clear multi-hop first")
+	}
 	nextRelays := make([]string, 0, len(e.explicitRelays))
 	for _, existing := range e.explicitRelays {
 		if existing != relayURL {
@@ -241,22 +245,9 @@ func (e *Exposure) RemoveRelay(relayURL string) error {
 		}
 	}
 	e.explicitRelays = nextRelays
-	if slices.Contains(e.multiHop, relayURL) {
-		nextMultiHop := make([]string, 0, len(e.multiHop))
-		for _, existing := range e.multiHop {
-			if existing != relayURL {
-				nextMultiHop = append(nextMultiHop, existing)
-			}
-		}
-		if len(nextMultiHop) < 2 {
-			nextMultiHop = nil
-		}
-		e.multiHop = nextMultiHop
-		e.multiHopDepth = 0
-	}
 	e.listenerMu.Unlock()
 
-	e.relaySet.BanRelayURL(relayURL)
+	e.relaySet.DeactivateRelayURL(relayURL)
 	e.relaySet.RemoveBootstrapRelayURL(relayURL)
 	return e.reconcileRelayListeners(false)
 }

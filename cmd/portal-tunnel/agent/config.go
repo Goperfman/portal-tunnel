@@ -295,10 +295,6 @@ func (cfg Config) Validate() error {
 	if err := validateAgentPathComponent("agent.service_name", cfg.Agent.ServiceName); err != nil {
 		return err
 	}
-	if len(cfg.Tunnels) == 0 {
-		return errors.New("at least one tunnel is required")
-	}
-
 	seen := make(map[string]struct{}, len(cfg.Tunnels))
 	for _, tunnel := range cfg.Tunnels {
 		if err := tunnel.Validate(); err != nil {

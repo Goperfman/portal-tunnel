@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/go-acme/lego/v4/challenge"
 	"github.com/go-acme/lego/v4/providers/dns/cloudflare"
@@ -20,6 +21,9 @@ const (
 
 type Provider struct {
 	token string
+
+	zoneMu sync.RWMutex
+	zones  map[string]string
 }
 
 type apiError struct {
@@ -117,7 +121,7 @@ func (p *Provider) EnsureARecords(ctx context.Context, baseDomain, publicIPv4 st
 	}
 	publicIPv4 = strings.TrimSpace(publicIPv4)
 
-	zoneID, err := findZoneID(ctx, p.token, baseDomain)
+	zoneID, err := p.findZoneID(ctx, baseDomain)
 	if err != nil {
 		return fmt.Errorf("find cloudflare zone: %w", err)
 	}
@@ -146,7 +150,7 @@ func (p *Provider) EnsureARecord(ctx context.Context, name, publicIPv4 string) e
 	}
 	publicIPv4 = strings.TrimSpace(publicIPv4)
 
-	zoneID, err := findZoneID(ctx, p.token, name)
+	zoneID, err := p.findZoneID(ctx, name)
 	if err != nil {
 		return fmt.Errorf("find cloudflare zone: %w", err)
 	}
@@ -168,7 +172,7 @@ func (p *Provider) DeleteARecord(ctx context.Context, name string) error {
 		return errors.New("cloudflare token is required")
 	}
 
-	zoneID, err := findZoneID(ctx, p.token, name)
+	zoneID, err := p.findZoneID(ctx, name)
 	if err != nil {
 		return fmt.Errorf("find cloudflare zone: %w", err)
 	}
@@ -204,7 +208,7 @@ func (p *Provider) EnsureTXTRecord(ctx context.Context, name, value string) erro
 		return errors.New("txt record value is required")
 	}
 
-	zoneID, err := findZoneID(ctx, p.token, name)
+	zoneID, err := p.findZoneID(ctx, name)
 	if err != nil {
 		return fmt.Errorf("find cloudflare zone: %w", err)
 	}
@@ -230,7 +234,7 @@ func (p *Provider) DeleteTXTRecords(ctx context.Context, name, matchPrefix strin
 		return errors.New("txt record match prefix is required")
 	}
 
-	zoneID, err := findZoneID(ctx, p.token, name)
+	zoneID, err := p.findZoneID(ctx, name)
 	if err != nil {
 		return fmt.Errorf("find cloudflare zone: %w", err)
 	}
@@ -274,7 +278,7 @@ func (p *Provider) EnsureHTTPSRecord(ctx context.Context, name string, priority 
 		return errors.New("https record content is required")
 	}
 
-	zoneID, err := findZoneID(ctx, p.token, name)
+	zoneID, err := p.findZoneID(ctx, name)
 	if err != nil {
 		return fmt.Errorf("find cloudflare zone: %w", err)
 	}
@@ -296,7 +300,7 @@ func (p *Provider) DeleteHTTPSRecord(ctx context.Context, name string) error {
 		return errors.New("cloudflare token is required")
 	}
 
-	zoneID, err := findZoneID(ctx, p.token, name)
+	zoneID, err := p.findZoneID(ctx, name)
 	if err != nil {
 		return fmt.Errorf("find cloudflare zone: %w", err)
 	}
@@ -328,7 +332,7 @@ func (p *Provider) EnsureDNSSEC(ctx context.Context, baseDomain string) (state, 
 		return "", "", "", errors.New("cloudflare token is required")
 	}
 
-	zoneID, err := findZoneID(ctx, p.token, baseDomain)
+	zoneID, err := p.findZoneID(ctx, baseDomain)
 	if err != nil {
 		return "", "", "", fmt.Errorf("find cloudflare zone: %w", err)
 	}
@@ -358,17 +362,37 @@ func (p *Provider) EnsureDNSSEC(ctx context.Context, baseDomain string) (state, 
 	return state, dsRecord, message, nil
 }
 
-func findZoneID(ctx context.Context, token, domain string) (string, error) {
-	parts := strings.Split(domain, ".")
-	for i := range len(parts) - 1 {
-		candidate := strings.Join(parts[i:], ".")
-		zones, err := listZones(ctx, token, candidate)
+func (p *Provider) findZoneID(ctx context.Context, domain string) (string, error) {
+	domain = utils.NormalizeHostname(domain)
+	candidates := utils.DomainCandidates(domain)
+
+	p.zoneMu.RLock()
+	for _, candidate := range candidates {
+		if zoneID := p.zones[candidate]; zoneID != "" {
+			p.zoneMu.RUnlock()
+			return zoneID, nil
+		}
+	}
+	p.zoneMu.RUnlock()
+
+	for _, candidate := range candidates {
+		zones, err := listZones(ctx, p.token, candidate)
 		if err != nil {
 			return "", err
 		}
 		for _, z := range zones {
 			if strings.EqualFold(z.Name, candidate) {
-				return z.ID, nil
+				zoneID := strings.TrimSpace(z.ID)
+				if zoneID == "" {
+					continue
+				}
+				p.zoneMu.Lock()
+				if p.zones == nil {
+					p.zones = make(map[string]string)
+				}
+				p.zones[utils.NormalizeHostname(z.Name)] = zoneID
+				p.zoneMu.Unlock()
+				return zoneID, nil
 			}
 		}
 	}

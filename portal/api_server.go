@@ -284,7 +284,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dnsCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), defaultClaimTimeout)
-	deleteECHOnRollback, err := record.syncDNS(dnsCtx, s.acmeManager, s.cfg.SNIPort)
+	err = record.syncENSGaslessDNS(dnsCtx, s.acmeManager)
 	cancel()
 	if err != nil {
 		removed, _ := s.registry.Unregister(types.UnregisterRequest{AccessToken: resp.AccessToken})
@@ -293,11 +293,12 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 			removed = record
 		}
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(r.Context()), defaultClaimTimeout)
-		removed.deleteDNS(cleanupCtx, s.acmeManager, deleteECHOnRollback)
+		removed.deleteDNS(cleanupCtx, s.acmeManager, false)
 		cleanupCancel()
 		writeAPIErrorResponse(w, err)
 		return
 	}
+	s.registry.promoteECHDNS(record, s.acmeManager, s.cfg.SNIPort)
 
 	utils.WriteAPIData(w, http.StatusCreated, resp)
 }
@@ -468,7 +469,7 @@ func (s *Server) handleHop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dnsCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), defaultClaimTimeout)
-	deleteECHOnRollback, err := record.syncDNS(dnsCtx, s.acmeManager, s.cfg.SNIPort)
+	err = record.syncENSGaslessDNS(dnsCtx, s.acmeManager)
 	cancel()
 	if err != nil {
 		removed := s.registry.DeleteHopRoute(&route)
@@ -476,11 +477,12 @@ func (s *Server) handleHop(w http.ResponseWriter, r *http.Request) {
 			removed = record
 		}
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(r.Context()), defaultClaimTimeout)
-		removed.deleteDNS(cleanupCtx, s.acmeManager, deleteECHOnRollback)
+		removed.deleteDNS(cleanupCtx, s.acmeManager, false)
 		cleanupCancel()
 		writeAPIErrorResponse(w, err)
 		return
 	}
+	s.registry.promoteECHDNS(record, s.acmeManager, s.cfg.SNIPort)
 	var accessToken string
 	if record.isPublicEntry() {
 		accessToken, err = s.registry.issueLeaseAccessToken(record, now)
