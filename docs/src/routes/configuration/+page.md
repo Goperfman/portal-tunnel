@@ -152,8 +152,7 @@ The `portal list` subcommand accepts the following flags:
 
 ### `config.toml`
 
-`portal agent run` reads the platform default `config.toml` and starts one managed process for all declared tunnels. Relative paths are resolved from the config file directory.
-If the file is missing, `portal agent run` creates a default config and the agent creates the identity file on first tunnel start.
+`portal agent run` reads the platform default `config.toml` and starts one managed process for all declared tunnels. Relative paths are resolved from the config file directory. The config file must exist before the agent is started.
 
 Default paths:
 

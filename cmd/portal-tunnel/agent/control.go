@@ -86,19 +86,6 @@ func (s *controlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		switch action {
-		case "relays/seed":
-			if !utils.RequireMethod(w, r, http.MethodPost) {
-				return
-			}
-			req, ok := utils.DecodeJSONRequest[types.AgentRelayRequest](w, r, controlRequestBodyLimit)
-			if !ok {
-				return
-			}
-			if err := s.manager.SeedRelay(tunnelID, req.RelayURL); err != nil {
-				utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, err.Error())
-				return
-			}
-			utils.WriteAPIData(w, http.StatusAccepted, map[string]bool{"accepted": true})
 		case "relays":
 			switch r.Method {
 			case http.MethodPost:
@@ -179,11 +166,6 @@ func AddRelay(ctx context.Context, stateDir, tunnelID, relayURL string) error {
 func RemoveRelay(ctx context.Context, stateDir, tunnelID, relayURL string) error {
 	path := types.PathAgentTunnelsPrefix + url.PathEscape(tunnelID) + "/relays"
 	return controlRequest(ctx, stateDir, http.MethodDelete, path, types.AgentRelayRequest{RelayURL: relayURL}, nil)
-}
-
-func SeedRelay(ctx context.Context, stateDir, tunnelID, relayURL string) error {
-	path := types.PathAgentTunnelsPrefix + url.PathEscape(tunnelID) + "/relays/seed"
-	return controlRequest(ctx, stateDir, http.MethodPost, path, types.AgentRelayRequest{RelayURL: relayURL}, nil)
 }
 
 func SetMultiHop(ctx context.Context, stateDir, tunnelID string, relayURLs []string) error {

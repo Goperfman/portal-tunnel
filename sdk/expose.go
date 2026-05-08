@@ -28,7 +28,6 @@ type Exposure struct {
 
 	identity        types.Identity
 	explicitRelays  []string
-	seedOnlyRelays  []string
 	TargetAddr      string
 	UDPAddr         string
 	udpEnabled      bool
@@ -210,13 +209,6 @@ func (e *Exposure) AddRelay(relayURL string) error {
 	}
 
 	e.listenerMu.Lock()
-	nextSeedOnlyRelays := make([]string, 0, len(e.seedOnlyRelays))
-	for _, existing := range e.seedOnlyRelays {
-		if existing != relayURL {
-			nextSeedOnlyRelays = append(nextSeedOnlyRelays, existing)
-		}
-	}
-	e.seedOnlyRelays = nextSeedOnlyRelays
 	if !slices.Contains(e.explicitRelays, relayURL) {
 		e.explicitRelays = append(append([]string(nil), e.explicitRelays...), relayURL)
 	}
@@ -249,13 +241,6 @@ func (e *Exposure) RemoveRelay(relayURL string) error {
 		}
 	}
 	e.explicitRelays = nextRelays
-	nextSeedOnlyRelays := make([]string, 0, len(e.seedOnlyRelays))
-	for _, existing := range e.seedOnlyRelays {
-		if existing != relayURL {
-			nextSeedOnlyRelays = append(nextSeedOnlyRelays, existing)
-		}
-	}
-	e.seedOnlyRelays = nextSeedOnlyRelays
 	if slices.Contains(e.multiHop, relayURL) {
 		nextMultiHop := make([]string, 0, len(e.multiHop))
 		for _, existing := range e.multiHop {
@@ -273,51 +258,6 @@ func (e *Exposure) RemoveRelay(relayURL string) error {
 
 	e.relaySet.BanRelayURL(relayURL)
 	e.relaySet.RemoveBootstrapRelayURL(relayURL)
-	return e.reconcileRelayListeners(false)
-}
-
-// SeedRelay keeps a relay as a discovery seed while removing it from the
-// active relay pool for this exposure.
-func (e *Exposure) SeedRelay(relayURL string) error {
-	relayURL, err := utils.NormalizeRelayURL(relayURL)
-	if err != nil {
-		return err
-	}
-	if e.closed() {
-		return net.ErrClosed
-	}
-	if e.relaySet == nil {
-		return errors.New("exposure relay set is not initialized")
-	}
-
-	e.listenerMu.Lock()
-	nextRelays := make([]string, 0, len(e.explicitRelays))
-	for _, existing := range e.explicitRelays {
-		if existing != relayURL {
-			nextRelays = append(nextRelays, existing)
-		}
-	}
-	e.explicitRelays = nextRelays
-	if !slices.Contains(e.seedOnlyRelays, relayURL) {
-		e.seedOnlyRelays = append(append([]string(nil), e.seedOnlyRelays...), relayURL)
-	}
-	if slices.Contains(e.multiHop, relayURL) {
-		nextMultiHop := make([]string, 0, len(e.multiHop))
-		for _, existing := range e.multiHop {
-			if existing != relayURL {
-				nextMultiHop = append(nextMultiHop, existing)
-			}
-		}
-		if len(nextMultiHop) < 2 {
-			nextMultiHop = nil
-		}
-		e.multiHop = nextMultiHop
-		e.multiHopDepth = 0
-	}
-	e.listenerMu.Unlock()
-
-	e.relaySet.AllowRelayURL(relayURL)
-	e.relaySet.AddBootstrapRelayURL(relayURL)
 	return e.reconcileRelayListeners(false)
 }
 
@@ -352,13 +292,6 @@ func (e *Exposure) SetMultiHop(relayURLs []string) error {
 	}
 
 	e.listenerMu.Lock()
-	nextSeedOnlyRelays := make([]string, 0, len(e.seedOnlyRelays))
-	for _, existing := range e.seedOnlyRelays {
-		if !slices.Contains(multiHop, existing) {
-			nextSeedOnlyRelays = append(nextSeedOnlyRelays, existing)
-		}
-	}
-	e.seedOnlyRelays = nextSeedOnlyRelays
 	e.multiHop = append([]string(nil), multiHop...)
 	e.multiHopDepth = 0
 	e.listenerMu.Unlock()
@@ -417,6 +350,7 @@ func (e *Exposure) Snapshot() types.AgentTunnelStatus {
 		}
 	}
 	multiHop := append([]string(nil), e.multiHop...)
+	explicitRelays := append([]string(nil), e.explicitRelays...)
 	e.listenerMu.RUnlock()
 
 	relayByURL := make(map[string]types.AgentRelayStatus, len(listeners))
@@ -427,6 +361,7 @@ func (e *Exposure) Snapshot() types.AgentTunnelStatus {
 		}
 		snap := types.AgentRelayStatus{
 			RelayURL:   relayURL,
+			Explicit:   slices.Contains(explicitRelays, relayURL),
 			Connecting: true,
 		}
 		if lease, ok := listener.leaseSnapshot(); ok {
@@ -444,6 +379,7 @@ func (e *Exposure) Snapshot() types.AgentTunnelStatus {
 			}
 			snap := relayByURL[relayURL]
 			snap.RelayURL = relayURL
+			snap.Explicit = slices.Contains(explicitRelays, relayURL)
 			snap.Bootstrap = state.Bootstrap
 			snap.Banned = state.Banned
 			snap.SupportsOverlay = state.Descriptor.SupportsOverlay
@@ -713,24 +649,21 @@ func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
 	e.listenerMu.Lock()
 	multiHop = append([]string(nil), e.multiHop...)
 	explicitRelays := append([]string(nil), e.explicitRelays...)
-	seedOnlyRelays := append([]string(nil), e.seedOnlyRelays...)
 	if len(multiHop) > 0 {
 		listenerRelayURLs = e.relaySet.PriorityRelays(discovery.ClientState{
-			ExplicitRelayURLs:   explicitRelays,
-			SuppressedRelayURLs: seedOnlyRelays,
-			MaxActiveRelays:     e.maxActiveRelays,
-			RequireUDP:          e.udpEnabled,
-			RequireTCP:          e.tcpEnabled,
-			LocalAddress:        e.identity.Address,
+			ExplicitRelayURLs: explicitRelays,
+			MaxActiveRelays:   e.maxActiveRelays,
+			RequireUDP:        e.udpEnabled,
+			RequireTCP:        e.tcpEnabled,
+			LocalAddress:      e.identity.Address,
 		})
 		if exitRelayURL := multiHop[len(multiHop)-1]; !slices.Contains(listenerRelayURLs, exitRelayURL) {
 			listenerRelayURLs = append(listenerRelayURLs, exitRelayURL)
 		}
 	} else if e.multiHopDepth > 1 {
 		multiHop = e.relaySet.PriorityMultiHop(discovery.ClientState{
-			SuppressedRelayURLs: seedOnlyRelays,
-			MultiHopDepth:       e.multiHopDepth,
-			LocalAddress:        e.identity.Address,
+			MultiHopDepth: e.multiHopDepth,
+			LocalAddress:  e.identity.Address,
 		})
 		if len(multiHop) < e.multiHopDepth {
 			e.listenerMu.Unlock()
@@ -739,12 +672,11 @@ func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
 		listenerRelayURLs = []string{multiHop[len(multiHop)-1]}
 	} else {
 		listenerRelayURLs = e.relaySet.PriorityRelays(discovery.ClientState{
-			ExplicitRelayURLs:   explicitRelays,
-			SuppressedRelayURLs: seedOnlyRelays,
-			MaxActiveRelays:     e.maxActiveRelays,
-			RequireUDP:          e.udpEnabled,
-			RequireTCP:          e.tcpEnabled,
-			LocalAddress:        e.identity.Address,
+			ExplicitRelayURLs: explicitRelays,
+			MaxActiveRelays:   e.maxActiveRelays,
+			RequireUDP:        e.udpEnabled,
+			RequireTCP:        e.tcpEnabled,
+			LocalAddress:      e.identity.Address,
 		})
 	}
 	staleRelayListeners := make(map[string]*listener)

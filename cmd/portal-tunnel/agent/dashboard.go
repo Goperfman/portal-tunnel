@@ -38,7 +38,6 @@ const (
 	agentDashboardActionAddRelay
 	agentDashboardActionDeleteRelay
 	agentDashboardActionAttachRelay
-	agentDashboardActionDetachRelay
 	agentDashboardActionAddHop
 	agentDashboardActionRemoveHop
 	agentDashboardActionApplyHop
@@ -139,6 +138,9 @@ func (m agentDashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		if msg.err == nil {
 			m.status = msg.status
+			if strings.TrimSpace(msg.status.ConfigPath) != "" {
+				m.configPath = msg.status.ConfigPath
+			}
 			m.clampSelection()
 		}
 		return m, nil
@@ -249,8 +251,6 @@ func (m agentDashboardModel) runAction(action agentDashboardAction, tunnelID, re
 		return m.deleteSelectedRelay()
 	case agentDashboardActionAttachRelay:
 		return m.attachSelectedRelay()
-	case agentDashboardActionDetachRelay:
-		return m.detachSelectedRelay()
 	case agentDashboardActionAddHop:
 		return m.addSelectedHop()
 	case agentDashboardActionRemoveHop:
@@ -483,21 +483,11 @@ func (m agentDashboardModel) attachSelectedRelay() (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	if relayDashboardInUse(relay) {
+	if relay.Explicit {
 		return m, nil
 	}
 	return m, agentDashboardRun(func(ctx context.Context) error {
 		return AddRelay(ctx, m.stateDir, tunnel.ID, relay.RelayURL)
-	})
-}
-
-func (m agentDashboardModel) detachSelectedRelay() (tea.Model, tea.Cmd) {
-	tunnel, relay, ok := m.selectedTunnelRelay()
-	if !ok {
-		return m, nil
-	}
-	return m, agentDashboardRun(func(ctx context.Context) error {
-		return SeedRelay(ctx, m.stateDir, tunnel.ID, relay.RelayURL)
 	})
 }
 
@@ -630,6 +620,12 @@ func (m agentDashboardModel) layout() agentDashboardView {
 	if m.mode != agentDashboardNormalMode {
 		layout.addLine(m.input.View())
 	}
+	if strings.TrimSpace(m.status.ConfigPath) != "" {
+		layout.addStyled(width, agentDashboardMutedStyle, agentDashboardFit("Config: "+m.status.ConfigPath, width))
+	}
+	if strings.TrimSpace(m.status.ControlAddr) != "" {
+		layout.addStyled(width, agentDashboardMutedStyle, agentDashboardFit("Control: "+m.status.ControlAddr, width))
+	}
 	layout.addLine("")
 	if m.height > 0 {
 		bodyHeight = max(1, m.height-len(layout.lines))
@@ -718,15 +714,12 @@ func (m agentDashboardModel) renderTunnelPane(width, height int) agentDashboardV
 
 func (m agentDashboardModel) renderRelaysSection(pane *agentDashboardView, width, maxRows int, tunnel types.AgentTunnelStatus) {
 	relay, hasRelay := m.selectedRelayStatus()
-	inUse := hasRelay && relayDashboardInUse(relay)
-	attachDisabled := !hasRelay || inUse || relay.Connecting || relay.Banned
-	detachDisabled := !hasRelay || relay.Banned || (!inUse && !relay.Connecting && relay.Bootstrap)
-	deleteDisabled := !hasRelay
+	attachDisabled := !hasRelay || relay.Explicit || relay.Banned
+	deleteDisabled := !hasRelay || !relay.Explicit
 
 	pane.addStyled(width, agentDashboardSectionStyle, "Relays")
 	pane.addButtons(width,
 		agentDashboardButton{label: "Attach", action: agentDashboardActionAttachRelay, disabled: attachDisabled},
-		agentDashboardButton{label: "Detach", action: agentDashboardActionDetachRelay, disabled: detachDisabled},
 		agentDashboardButton{label: "Add URL", action: agentDashboardActionAddRelay},
 		agentDashboardButton{label: "Remove", action: agentDashboardActionDeleteRelay, disabled: deleteDisabled},
 	)
@@ -991,6 +984,8 @@ func relayDashboardRole(relay types.AgentRelayStatus) string {
 	switch {
 	case relay.Banned:
 		return "blocked"
+	case relay.Explicit:
+		return "pinned"
 	case relayDashboardInUse(relay):
 		return "attached"
 	case relay.Connecting:
