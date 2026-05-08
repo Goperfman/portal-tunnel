@@ -96,37 +96,38 @@ func (m *manager) Stop(ctx context.Context) error {
 	}
 }
 
-func (m *manager) AddRelay(id, relayURL string) error {
-	relayURL, err := utils.NormalizeRelayURL(relayURL)
-	if err != nil {
+func (m *manager) ConnectRelay(id, relayURL string) error {
+	id = strings.TrimSpace(id)
+	if err := validateAgentPathComponent("tunnel id", id); err != nil {
 		return err
 	}
-	return m.updateTunnelConfig(id, func(tunnel *TunnelConfig) error {
-		relayURLs, err := utils.MergeRelayURLs(tunnel.RelayURLs, nil, []string{relayURL})
-		if err != nil {
-			return err
-		}
-		tunnel.RelayURLs = relayURLs
-		return nil
-	})
+
+	m.mu.RLock()
+	tunnel := m.tunnels[id]
+	m.mu.RUnlock()
+	if tunnel == nil {
+		return fmt.Errorf("tunnel %q not found", id)
+	}
+	return tunnel.ConnectRelay(relayURL)
 }
 
-func (m *manager) RemoveRelay(id, relayURL string) error {
-	relayURL, err := utils.NormalizeRelayURL(relayURL)
-	if err != nil {
+func (m *manager) DisconnectRelay(id, relayURL string) error {
+	id = strings.TrimSpace(id)
+	if err := validateAgentPathComponent("tunnel id", id); err != nil {
 		return err
 	}
-	return m.updateTunnelConfig(id, func(tunnel *TunnelConfig) error {
-		relayURLs, err := utils.NormalizeRelayURLs(tunnel.RelayURLs...)
-		if err != nil {
-			return err
-		}
-		tunnel.RelayURLs = utils.RemoveRelayURL(relayURLs, relayURL)
-		return removeRelayFromTunnelRoute(tunnel, relayURL)
-	})
+
+	m.mu.RLock()
+	tunnel := m.tunnels[id]
+	m.mu.RUnlock()
+	if tunnel == nil {
+		return fmt.Errorf("tunnel %q not found", id)
+	}
+	return tunnel.DisconnectRelay(relayURL)
 }
 
 func (m *manager) SetMultiHop(id string, relayURLs []string) error {
+	id = strings.TrimSpace(id)
 	multiHop, err := utils.NormalizeRelayURLs(relayURLs...)
 	if err != nil {
 		return fmt.Errorf("normalize multi-hop relay url: %w", err)
@@ -137,11 +138,21 @@ func (m *manager) SetMultiHop(id string, relayURLs []string) error {
 	if len(multiHop) == 1 {
 		return errors.New("multi-hop requires at least entry and exit relay urls")
 	}
-	return m.updateTunnelConfig(id, func(tunnel *TunnelConfig) error {
+	if err := m.updateTunnelConfig(id, func(tunnel *TunnelConfig) error {
 		tunnel.MultiHop = append([]string(nil), multiHop...)
 		tunnel.MultiHopDepth = 0
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	m.mu.RLock()
+	tunnel := m.tunnels[id]
+	m.mu.RUnlock()
+	if tunnel == nil {
+		return fmt.Errorf("tunnel %q not found", id)
+	}
+	return tunnel.SetMultiHop(multiHop)
 }
 
 func (m *manager) AddTunnel(req types.AgentTunnelRequest) error {
@@ -231,27 +242,26 @@ func (m *manager) updateTunnelConfig(id string, update func(*TunnelConfig) error
 	if reflect.DeepEqual(before, cfg.Tunnels[index]) {
 		return nil
 	}
-	return m.writeConfigAndApply(path, mode, cfg)
-}
+	cfg.sourcePath = path
+	if err := cfg.ApplyDefaults(path); err != nil {
+		return err
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	if err := writeConfigDocument(path, mode, cfg); err != nil {
+		return err
+	}
 
-func removeRelayFromTunnelRoute(tunnel *TunnelConfig, relayURL string) error {
-	if len(tunnel.MultiHop) == 0 {
-		return nil
+	nextTunnelCfg := cfg.Tunnels[index]
+	m.mu.Lock()
+	m.cfg = cfg
+	if tunnel := m.tunnels[id]; tunnel != nil {
+		tunnel.mu.Lock()
+		tunnel.cfg = nextTunnelCfg
+		tunnel.mu.Unlock()
 	}
-	multiHop, err := utils.NormalizeRelayURLs(tunnel.MultiHop...)
-	if err != nil {
-		return fmt.Errorf("normalize multi-hop relay url: %w", err)
-	}
-	nextMultiHop := utils.RemoveRelayURL(multiHop, relayURL)
-	if len(nextMultiHop) == len(multiHop) {
-		tunnel.MultiHop = nextMultiHop
-		return nil
-	}
-	if len(nextMultiHop) < 2 {
-		nextMultiHop = nil
-	}
-	tunnel.MultiHop = nextMultiHop
-	tunnel.MultiHopDepth = 0
+	m.mu.Unlock()
 	return nil
 }
 
@@ -266,9 +276,6 @@ func (m *manager) DeleteTunnel(id string) error {
 	cfg, path, mode, err := m.loadConfigDocument()
 	if err != nil {
 		return err
-	}
-	if len(cfg.Tunnels) <= 1 {
-		return errors.New("cannot delete the last tunnel")
 	}
 
 	index := slices.IndexFunc(cfg.Tunnels, func(tunnel TunnelConfig) bool { return tunnel.ID == id })
@@ -388,6 +395,7 @@ type managedTunnel struct {
 	done      chan struct{}
 	exposure  *sdk.Exposure
 	lastError string
+	runtime   types.AgentTunnelStatus
 }
 
 func newTunnel(cfg TunnelConfig) *managedTunnel {
@@ -434,12 +442,43 @@ func (t *managedTunnel) Stop(ctx context.Context) error {
 	}
 }
 
+func (t *managedTunnel) ConnectRelay(relayURL string) error {
+	t.mu.RLock()
+	exposure := t.exposure
+	t.mu.RUnlock()
+	if exposure == nil {
+		return nil
+	}
+	return exposure.AddRelay(relayURL)
+}
+
+func (t *managedTunnel) DisconnectRelay(relayURL string) error {
+	t.mu.RLock()
+	exposure := t.exposure
+	t.mu.RUnlock()
+	if exposure == nil {
+		return nil
+	}
+	return exposure.RemoveRelay(relayURL)
+}
+
+func (t *managedTunnel) SetMultiHop(relayURLs []string) error {
+	t.mu.RLock()
+	exposure := t.exposure
+	t.mu.RUnlock()
+	if exposure == nil {
+		return nil
+	}
+	return exposure.SetMultiHop(relayURLs)
+}
+
 func (t *managedTunnel) Snapshot() types.AgentTunnelStatus {
 	t.mu.RLock()
 	cfg := t.cfg
 	lastError := t.lastError
 	exposure := t.exposure
 	done := t.done
+	runtime := t.runtime
 	t.mu.RUnlock()
 
 	running := false
@@ -467,11 +506,29 @@ func (t *managedTunnel) Snapshot() types.AgentTunnelStatus {
 		State:      state,
 		TargetAddr: cfg.TargetAddr,
 		LastError:  lastError,
+		MultiHop:   append([]string(nil), cfg.MultiHop...),
 	}
 	if exposure == nil {
+		if strings.TrimSpace(runtime.TargetAddr) != "" {
+			status.TargetAddr = runtime.TargetAddr
+		}
+		if cfg.MultiHopDepth > 1 && len(runtime.MultiHop) > 0 {
+			status.MultiHop = append([]string(nil), runtime.MultiHop...)
+		}
+		status.Relays = append([]types.AgentRelayStatus(nil), runtime.Relays...)
 		return status
 	}
 	snapshot := exposure.Snapshot()
+	t.mu.Lock()
+	if t.exposure == exposure {
+		t.runtime = types.AgentTunnelStatus{
+			TargetAddr: snapshot.TargetAddr,
+			MultiHop:   append([]string(nil), snapshot.MultiHop...),
+			Relays:     append([]types.AgentRelayStatus(nil), snapshot.Relays...),
+		}
+	}
+	t.mu.Unlock()
+
 	status.TargetAddr = snapshot.TargetAddr
 	status.MultiHop = append([]string(nil), snapshot.MultiHop...)
 	status.Relays = append([]types.AgentRelayStatus(nil), snapshot.Relays...)
@@ -540,8 +597,14 @@ func (t *managedTunnel) runOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	snapshot := exposure.Snapshot()
 	t.mu.Lock()
 	t.exposure = exposure
+	t.runtime = types.AgentTunnelStatus{
+		TargetAddr: snapshot.TargetAddr,
+		MultiHop:   append([]string(nil), snapshot.MultiHop...),
+		Relays:     append([]types.AgentRelayStatus(nil), snapshot.Relays...),
+	}
 	t.lastError = ""
 	t.mu.Unlock()
 
