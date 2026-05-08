@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	defaultLeaseTTL                          = 30 * time.Second
+	defaultLeaseTTL                          = 2 * time.Minute
 	defaultRegisterChallengeTTL              = 2 * time.Minute
 	defaultRegisterChallengeOutstandingPerIP = 32
 	defaultPortReservationGrace              = 5 * time.Minute
