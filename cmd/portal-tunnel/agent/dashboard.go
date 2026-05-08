@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	agentDashboardPollInterval = 2 * time.Second
-	agentDashboardMinRelayRows = 1
+	agentDashboardPollInterval        = 2 * time.Second
+	agentDashboardMinRelayRows        = 1
+	agentDashboardTunnelInputMaxWidth = 80
 )
 
 type agentDashboardAction int
@@ -102,11 +103,12 @@ var (
 func RunDashboard(configPath, stateDir string) error {
 	input := textinput.New()
 	input.CharLimit = 512
-	input.Prompt = ""
-	input.Placeholder = "name port"
+	input.Prompt = "New tunnel: "
+	input.Placeholder = "name target (Examples: myname 3000)"
+	input.PromptStyle = agentDashboardSectionStyle
 	input.TextStyle = agentDashboardInputStyle
 	input.PlaceholderStyle = agentDashboardMutedStyle
-	input.Width = 32
+	input.Width = agentDashboardTunnelInputMaxWidth
 	_ = input.Focus()
 
 	_, err := tea.NewProgram(agentDashboardModel{
@@ -126,8 +128,9 @@ func (m agentDashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		buttonsWidth := lipgloss.Width("[ Add Tunnel ]") + lipgloss.Width("[ Delete ]") + 2
-		m.input.Width = max(1, min(32, msg.Width-buttonsWidth))
+		availableWidth := msg.Width - lipgloss.Width(m.input.Prompt)
+		clearWidth := lipgloss.Width(m.input.Prompt) + lipgloss.Width(m.input.Placeholder)
+		m.input.Width = max(clearWidth, min(agentDashboardTunnelInputMaxWidth, availableWidth))
 		return m, nil
 	case agentDashboardTickMsg:
 		return m, tea.Batch(agentDashboardFetchStatus(m.stateDir), agentDashboardTick())
@@ -399,7 +402,7 @@ func (m agentDashboardModel) addTunnelFromInput() (tea.Model, tea.Cmd) {
 	}
 	fields := strings.Fields(value)
 	if len(fields) < 2 {
-		m.err = fmt.Errorf("use: name port")
+		m.err = fmt.Errorf("use: name target")
 		return m, nil
 	}
 	name := strings.Join(fields[:len(fields)-1], " ")
@@ -613,10 +616,11 @@ func (m agentDashboardModel) layout() agentDashboardView {
 func (m agentDashboardModel) renderTunnelsSection(width int) agentDashboardView {
 	var pane agentDashboardView
 	pane.addStyled(width, agentDashboardSectionStyle, "Tunnels")
-	pane.addInputButton(width, m.input.View(),
+	pane.addButtons(width,
 		agentDashboardButton{label: "Add Tunnel", action: agentDashboardActionAddTunnel, disabled: strings.TrimSpace(m.input.Value()) == ""},
 		agentDashboardButton{label: "Delete", action: agentDashboardActionDeleteTunnel, disabled: len(m.status.Tunnels) == 0},
 	)
+	pane.addLine(m.input.View())
 	tunnelRowWidth := agentDashboardTunnelTableWidth(width, m.status.Tunnels)
 	pane.addLine(agentDashboardMutedStyle.Render(agentDashboardTunnelRow(tunnelRowWidth, "STATUS", "TARGET", "TUNNEL")))
 
@@ -760,43 +764,6 @@ func (v *agentDashboardView) addButtons(width int, buttons ...agentDashboardButt
 	lines, regions := agentDashboardRenderButtons(width, len(v.lines), 0, buttons...)
 	v.lines = append(v.lines, lines...)
 	v.regions = append(v.regions, regions...)
-}
-
-func (v *agentDashboardView) addInputButton(width int, input string, buttons ...agentDashboardButton) {
-	if width <= 0 {
-		width = 1
-	}
-	line := agentDashboardFit(input, width)
-	lineWidth := lipgloss.Width(line)
-	y := len(v.lines)
-	for _, button := range buttons {
-		if lineWidth >= width {
-			break
-		}
-		if lineWidth > 0 {
-			line += " "
-			lineWidth++
-		}
-		buttonText := agentDashboardFit("[ "+button.label+" ]", width-lineWidth)
-		buttonWidth := lipgloss.Width(buttonText)
-		if buttonWidth == 0 {
-			break
-		}
-		buttonStyle := agentDashboardButtonStyle
-		if button.disabled {
-			buttonStyle = agentDashboardDisabledStyle
-		} else {
-			v.regions = append(v.regions, agentDashboardRegion{
-				x0:     lineWidth,
-				x1:     lineWidth + buttonWidth,
-				y:      y,
-				action: button.action,
-			})
-		}
-		line += buttonStyle.Render(buttonText)
-		lineWidth += buttonWidth
-	}
-	v.lines = append(v.lines, line)
 }
 
 func (v *agentDashboardView) addView(child agentDashboardView) {
