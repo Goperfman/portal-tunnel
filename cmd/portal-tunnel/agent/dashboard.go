@@ -1097,7 +1097,7 @@ func openDashboardURL(rawURL string) error {
 	}
 
 	var cmd *exec.Cmd
-	ctx, cancel := Context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	switch runtime.GOOS {
