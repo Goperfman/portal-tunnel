@@ -610,25 +610,23 @@ func (l *listener) openQUICBackhaulSession(ctx context.Context) (*quic.Conn, err
 }
 
 func (l *listener) runRenewLoop(ctx context.Context) error {
-	leaseTTL := l.leaseTTL
-	if leaseTTL <= 0 {
-		leaseTTL = defaultLeaseTTL
-	}
-	interval := leaseTTL / 2
-	if l.renewBefore > 0 && l.renewBefore < leaseTTL {
-		interval = leaseTTL - l.renewBefore
-	}
-
 	const wakeThreshold = 10 * time.Second
 
 	for {
+		interval, err := l.renewDelay(time.Now())
+		if err != nil {
+			return err
+		}
+
 		// Round(0) strips the monotonic clock reading so that
 		// time.Since uses wall-clock time.  The monotonic clock
 		// freezes during macOS sleep, so without this the elapsed
 		// duration would equal the timer interval, not real time.
 		before := time.Now().Round(0)
-		if !utils.SleepOrDone(ctx, interval) {
-			return ctx.Err()
+		if interval > 0 {
+			if !utils.SleepOrDone(ctx, interval) {
+				return ctx.Err()
+			}
 		}
 		elapsed := time.Since(before)
 
@@ -664,6 +662,31 @@ func (l *listener) runRenewLoop(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func (l *listener) renewDelay(now time.Time) (time.Duration, error) {
+	lease, ok := l.leaseSnapshot()
+	if !ok || lease.accessToken == "" || !now.Before(lease.expiresAt) {
+		return 0, errLeaseRefreshRequired
+	}
+
+	leaseTTL := l.leaseTTL
+	if leaseTTL <= 0 {
+		leaseTTL = defaultLeaseTTL
+	}
+	renewBefore := l.renewBefore
+	if renewBefore <= 0 || renewBefore >= leaseTTL {
+		renewBefore = leaseTTL / 2
+	}
+	if renewBefore <= 0 {
+		renewBefore = time.Second
+	}
+
+	renewAt := lease.expiresAt.Add(-renewBefore)
+	if !now.Before(renewAt) {
+		return 0, nil
+	}
+	return renewAt.Sub(now), nil
 }
 
 func (l *listener) renewLease(ctx context.Context) error {

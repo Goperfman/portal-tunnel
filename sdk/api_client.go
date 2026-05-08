@@ -23,7 +23,7 @@ const (
 	defaultDialTimeout         = 5 * time.Second
 	defaultRequestTimeout      = 15 * time.Second
 	defaultHandshakeTimeout    = 15 * time.Second
-	defaultLeaseTTL            = 30 * time.Second
+	defaultLeaseTTL            = 2 * time.Minute
 	defaultRenewBefore         = 30 * time.Second
 	defaultReadyTarget         = 2
 	defaultRetryWait           = 3 * time.Second
