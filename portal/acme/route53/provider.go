@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -34,7 +35,9 @@ type Config struct {
 }
 
 type Provider struct {
-	cfg Config
+	cfg    Config
+	zoneMu sync.RWMutex
+	zones  map[string]string
 }
 
 func New(cfg Config) *Provider {
@@ -93,7 +96,7 @@ func (p *Provider) EnsureARecords(ctx context.Context, baseDomain, publicIPv4 st
 		return err
 	}
 
-	hostedZoneID, err := findHostedZoneID(ctx, client, baseDomain, p.cfg.HostedZoneID)
+	hostedZoneID, err := p.findHostedZoneID(ctx, client, baseDomain)
 	if err != nil {
 		return err
 	}
@@ -123,7 +126,7 @@ func (p *Provider) EnsureARecord(ctx context.Context, name, publicIPv4 string) e
 		return err
 	}
 
-	hostedZoneID, err := findHostedZoneID(ctx, client, name, p.cfg.HostedZoneID)
+	hostedZoneID, err := p.findHostedZoneID(ctx, client, name)
 	if err != nil {
 		return err
 	}
@@ -147,7 +150,7 @@ func (p *Provider) DeleteARecord(ctx context.Context, name string) error {
 		return err
 	}
 
-	hostedZoneID, err := findHostedZoneID(ctx, client, name, p.cfg.HostedZoneID)
+	hostedZoneID, err := p.findHostedZoneID(ctx, client, name)
 	if err != nil {
 		return err
 	}
@@ -182,7 +185,7 @@ func (p *Provider) EnsureTXTRecord(ctx context.Context, name, value string) erro
 		return err
 	}
 
-	hostedZoneID, err := findHostedZoneID(ctx, client, name, p.cfg.HostedZoneID)
+	hostedZoneID, err := p.findHostedZoneID(ctx, client, name)
 	if err != nil {
 		return err
 	}
@@ -210,7 +213,7 @@ func (p *Provider) DeleteTXTRecords(ctx context.Context, name, matchPrefix strin
 		return err
 	}
 
-	hostedZoneID, err := findHostedZoneID(ctx, client, name, p.cfg.HostedZoneID)
+	hostedZoneID, err := p.findHostedZoneID(ctx, client, name)
 	if err != nil {
 		return err
 	}
@@ -238,7 +241,7 @@ func (p *Provider) EnsureHTTPSRecord(ctx context.Context, name string, _ uint16,
 		return err
 	}
 
-	hostedZoneID, err := findHostedZoneID(ctx, client, name, p.cfg.HostedZoneID)
+	hostedZoneID, err := p.findHostedZoneID(ctx, client, name)
 	if err != nil {
 		return err
 	}
@@ -262,7 +265,7 @@ func (p *Provider) DeleteHTTPSRecord(ctx context.Context, name string) error {
 		return err
 	}
 
-	hostedZoneID, err := findHostedZoneID(ctx, client, name, p.cfg.HostedZoneID)
+	hostedZoneID, err := p.findHostedZoneID(ctx, client, name)
 	if err != nil {
 		return err
 	}
@@ -293,7 +296,7 @@ func (p *Provider) EnsureDNSSEC(ctx context.Context, baseDomain string) (state, 
 		return "", "", "", err
 	}
 
-	hostedZoneID, err := findHostedZoneID(ctx, client, baseDomain, p.cfg.HostedZoneID)
+	hostedZoneID, err := p.findHostedZoneID(ctx, client, baseDomain)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -355,8 +358,8 @@ func newClient(ctx context.Context, cfg Config) (*awsroute53.Client, error) {
 	return awsroute53.NewFromConfig(awsCfg), nil
 }
 
-func findHostedZoneID(ctx context.Context, client *awsroute53.Client, domain, explicitZoneID string) (string, error) {
-	if explicitZoneID = normalizeZoneID(explicitZoneID); explicitZoneID != "" {
+func (p *Provider) findHostedZoneID(ctx context.Context, client *awsroute53.Client, domain string) (string, error) {
+	if explicitZoneID := normalizeZoneID(p.cfg.HostedZoneID); explicitZoneID != "" {
 		return explicitZoneID, nil
 	}
 	if client == nil {
@@ -367,6 +370,15 @@ func findHostedZoneID(ctx context.Context, client *awsroute53.Client, domain, ex
 	if len(candidates) == 0 {
 		return "", fmt.Errorf("invalid base domain for hosted zone lookup: %q", domain)
 	}
+
+	p.zoneMu.RLock()
+	for _, candidate := range candidates {
+		if zoneID := p.zones[candidate]; zoneID != "" {
+			p.zoneMu.RUnlock()
+			return zoneID, nil
+		}
+	}
+	p.zoneMu.RUnlock()
 
 	zonesByName := make(map[string]string)
 	paginator := awsroute53.NewListHostedZonesPaginator(client, &awsroute53.ListHostedZonesInput{})
@@ -386,6 +398,17 @@ func findHostedZoneID(ctx context.Context, client *awsroute53.Client, domain, ex
 			}
 			zonesByName[zoneName] = zoneID
 		}
+	}
+
+	if len(zonesByName) > 0 {
+		p.zoneMu.Lock()
+		if p.zones == nil {
+			p.zones = make(map[string]string)
+		}
+		for zoneName, zoneID := range zonesByName {
+			p.zones[zoneName] = zoneID
+		}
+		p.zoneMu.Unlock()
 	}
 
 	for _, candidate := range candidates {

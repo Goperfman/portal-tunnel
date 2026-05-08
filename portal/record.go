@@ -132,21 +132,38 @@ func (r *leaseRecord) Close() {
 	}
 }
 
-func (r *leaseRecord) syncDNS(ctx context.Context, manager *acme.Manager, sniPort int) (bool, error) {
+func (r *leaseRecord) syncENSGaslessDNS(ctx context.Context, manager *acme.Manager) error {
 	if r == nil || manager == nil {
-		return false, nil
+		return nil
 	}
 	if ensHostname := r.ensGaslessDNSHostname(); ensHostname != "" {
 		if err := manager.SyncENSGaslessHostname(ctx, ensHostname, r.Address); err != nil {
-			return false, err
+			return err
 		}
 	}
-	if r.hasECHDNSRecord() {
-		if err := manager.SyncECHConfig(ctx, r.ECHDNSHostname, r.ECHConfigList, sniPort); err != nil {
-			return true, err
-		}
+	return nil
+}
+
+func (r *leaseRecord) syncECHDNS(ctx context.Context, manager *acme.Manager, sniPort int) error {
+	if r == nil || manager == nil || !r.hasECHDNSRecord() {
+		return nil
 	}
-	return false, nil
+	return manager.SyncECHConfig(ctx, r.ECHDNSHostname, r.ECHConfigList, sniPort)
+}
+
+func (r *leaseRecord) deleteECHDNS(ctx context.Context, manager *acme.Manager) {
+	if r == nil || manager == nil || !r.hasECHDNSRecord() {
+		return
+	}
+	err := manager.DeleteECHConfig(ctx, r.ECHDNSHostname)
+	if err != nil {
+		log.Warn().
+			Err(err).
+			Str("hostname", r.ECHDNSHostname).
+			Str("route_hostname", r.Hostname).
+			Str("address", r.Address).
+			Msg("delete ech dns record")
+	}
 }
 
 func (r *leaseRecord) deleteDNS(ctx context.Context, manager *acme.Manager, includeECH bool) {
@@ -163,15 +180,7 @@ func (r *leaseRecord) deleteDNS(ctx context.Context, manager *acme.Manager, incl
 				Msg("delete ens gasless hostname")
 		}
 	}
-	if includeECH && r.hasECHDNSRecord() {
-		err := manager.DeleteECHConfig(ctx, r.ECHDNSHostname)
-		if err != nil {
-			log.Warn().
-				Err(err).
-				Str("hostname", r.ECHDNSHostname).
-				Str("route_hostname", r.Hostname).
-				Str("address", r.Address).
-				Msg("delete ech dns record")
-		}
+	if includeECH {
+		r.deleteECHDNS(ctx, manager)
 	}
 }
