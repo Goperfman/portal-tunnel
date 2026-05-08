@@ -120,7 +120,7 @@ Runs Portal as a managed long-lived tunnel agent.
 - `portal agent dashboard` opens the mouse-capable local TUI for tunnel add/delete, per-tunnel relay add/delete/listing, and multi-hop route changes.
 - `portal agent stop` asks the local agent to shut down, then disables/stops the OS service so intentional shutdown is not immediately restarted.
 - `portal agent restart` stops the running agent if present, installs or updates the OS service from the existing config, and starts it again.
-- If the config file is missing, `portal agent run` creates a default config and the agent creates the identity file on first tunnel start.
+- `portal agent run`, `stop`, and `restart` require an existing config file. `portal agent dashboard` can attach with only the default state directory or an explicit `--state-dir`.
 
 Default paths:
 

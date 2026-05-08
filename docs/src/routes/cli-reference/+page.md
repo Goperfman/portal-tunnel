@@ -161,8 +161,8 @@ portal agent stop
 portal agent restart
 ```
 
-`portal agent run` reads or creates the platform default `config.toml`, installs or updates the OS-managed service, starts it in the background, and exits after the agent is ready. Use `--foreground` for local debugging without service registration.
-Use `portal agent dashboard` to attach to an already running managed agent. With `--foreground` in an interactive terminal, the dashboard attaches in the same process.
+`portal agent run` reads the platform default `config.toml`, installs or updates the OS-managed service, starts it in the background, and exits after the agent is ready. Use `--foreground` for local debugging without service registration.
+Use `portal agent dashboard` to attach to an already running managed agent. It uses `agent.state_dir` when a config file exists and otherwise falls back to the platform default state directory. With `--foreground` in an interactive terminal, the dashboard attaches in the same process.
 
 **Subcommands:**
 

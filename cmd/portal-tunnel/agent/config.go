@@ -65,18 +65,6 @@ type HTTPRouteConfig struct {
 	Upstream string `koanf:"upstream"`
 }
 
-func LoadConfig(path string) (Config, error) {
-	absPath, err := ensureConfigDocument(path)
-	if err != nil {
-		return Config{}, err
-	}
-	cfg, _, err := readConfigDocument(absPath)
-	if err != nil {
-		return Config{}, err
-	}
-	return cfg, nil
-}
-
 func LoadExistingConfig(path string) (Config, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -88,7 +76,7 @@ func LoadExistingConfig(path string) (Config, error) {
 	}
 	if _, err := os.Stat(absPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return Config{}, fmt.Errorf("agent config %q does not exist; run `portal agent run` to create it", absPath)
+			return Config{}, fmt.Errorf("agent config %q does not exist", absPath)
 		}
 		return Config{}, err
 	}
@@ -99,50 +87,12 @@ func LoadExistingConfig(path string) (Config, error) {
 	return cfg, nil
 }
 
-func ensureConfigDocument(path string) (string, error) {
+func loadConfigDocument(path string) (Config, string, os.FileMode, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		path = service.DefaultConfigPath()
 	}
 	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	configDir := filepath.Dir(absPath)
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		return "", fmt.Errorf("create agent config directory %q: %w", configDir, err)
-	}
-	if _, err := os.Stat(absPath); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			if err := writeConfigDocument(absPath, 0o644, defaultConfig()); err != nil {
-				return "", fmt.Errorf("create default agent config %q: %w", absPath, err)
-			}
-		} else {
-			return "", err
-		}
-	}
-	return absPath, nil
-}
-
-func defaultConfig() Config {
-	discovery := true
-	return Config{
-		Agent: AgentConfig{
-			StateDir:    service.DefaultDataDir(),
-			ControlAddr: DefaultControlAddr,
-			ServiceName: DefaultServiceName,
-		},
-		Tunnels: []TunnelConfig{{
-			ID:         "default",
-			Name:       "default",
-			TargetAddr: defaultTargetAddr,
-			Discovery:  &discovery,
-		}},
-	}
-}
-
-func loadConfigDocument(path string) (Config, string, os.FileMode, error) {
-	absPath, err := ensureConfigDocument(path)
 	if err != nil {
 		return Config{}, "", 0, err
 	}

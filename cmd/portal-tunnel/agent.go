@@ -54,7 +54,7 @@ func runAgentRunCommand(args []string) error {
 		return err
 	}
 
-	cfg, err := agent.LoadConfig(configPath)
+	cfg, err := agent.LoadExistingConfig(configPath)
 	if err != nil {
 		return err
 	}
@@ -226,14 +226,26 @@ func runAgentStopCommand(args []string) error {
 		return err
 	}
 
-	cfg, resolvedStateDir, err := loadAgentCommandConfig(configPath, stateDir)
-	if err != nil {
-		return err
+	configPath = strings.TrimSpace(configPath)
+	stateDir = strings.TrimSpace(stateDir)
+	cfg := agent.Config{Agent: agent.AgentConfig{ServiceName: agent.DefaultServiceName}}
+	if configPath != "" || stateDir == "" {
+		if configPath == "" {
+			configPath = service.DefaultConfigPath()
+		}
+		var err error
+		cfg, err = agent.LoadExistingConfig(configPath)
+		if err != nil {
+			return err
+		}
+	}
+	if stateDir != "" {
+		cfg.Agent.StateDir = stateDir
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	shutdownErr := agent.Shutdown(ctx, resolvedStateDir)
+	shutdownErr := agent.Shutdown(ctx, cfg.Agent.StateDir)
 	if err := service.StopDisable(ctx, cfg.Agent.ServiceName); err != nil {
 		if shutdownErr == nil {
 			fmt.Fprintf(os.Stderr, "Warning: agent stopped, but service manager cleanup failed: %v\n", err)
@@ -263,14 +275,25 @@ func runAgentDashboardCommand(args []string) error {
 		return err
 	}
 
-	_, resolvedStateDir, err := loadAgentCommandConfig(configPath, stateDir)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(configPath) == "" {
+	configPath = strings.TrimSpace(configPath)
+	stateDir = strings.TrimSpace(stateDir)
+	if configPath == "" {
 		configPath = service.DefaultConfigPath()
 	}
-	return agent.RunDashboard(configPath, resolvedStateDir)
+	if stateDir == "" {
+		if _, err := os.Stat(configPath); err == nil {
+			cfg, err := agent.LoadExistingConfig(configPath)
+			if err != nil {
+				return err
+			}
+			stateDir = cfg.Agent.StateDir
+		} else if errors.Is(err, os.ErrNotExist) {
+			stateDir = service.DefaultDataDir()
+		} else {
+			return err
+		}
+	}
+	return agent.RunDashboard(configPath, stateDir)
 }
 
 func waitAgentStatus(ctx context.Context, stateDir string) (types.AgentStatusResponse, error) {
@@ -346,26 +369,6 @@ func agentCLIInteractive() bool {
 	}
 	stdout, err := os.Stdout.Stat()
 	return err == nil && stdout.Mode()&os.ModeCharDevice != 0
-}
-
-func loadAgentCommandConfig(configPath, stateDir string) (agent.Config, string, error) {
-	configPath = strings.TrimSpace(configPath)
-	stateDir = strings.TrimSpace(stateDir)
-	if stateDir != "" && configPath == "" {
-		cfg := agent.Config{Agent: agent.AgentConfig{StateDir: stateDir, ServiceName: agent.DefaultServiceName}}
-		return cfg, stateDir, nil
-	}
-	if configPath == "" {
-		configPath = service.DefaultConfigPath()
-	}
-	cfg, err := agent.LoadExistingConfig(configPath)
-	if err != nil {
-		return agent.Config{}, "", err
-	}
-	if stateDir != "" {
-		cfg.Agent.StateDir = stateDir
-	}
-	return cfg, cfg.Agent.StateDir, nil
 }
 
 func printAgentUsage(w io.Writer) {
