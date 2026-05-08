@@ -119,6 +119,7 @@ Runs Portal as a managed long-lived tunnel agent.
 - The local control API is bound to loopback and authenticated with a token stored in the agent state directory.
 - `portal agent dashboard` opens the mouse-capable local TUI for tunnel add/delete, per-tunnel relay add/delete/listing, and multi-hop route changes.
 - `portal agent stop` asks the local agent to shut down, then disables/stops the OS service so intentional shutdown is not immediately restarted.
+- `portal agent restart` stops the running agent if present, installs or updates the OS service from the existing config, and starts it again.
 - If the config file is missing, `portal agent run` creates a default config and the agent creates the identity file on first tunnel start.
 
 Default paths:
@@ -154,6 +155,7 @@ Runtime controls:
 portal agent run
 portal agent dashboard
 portal agent stop
+portal agent restart
 ```
 
 Legacy execution compatibility has been removed:
