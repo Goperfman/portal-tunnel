@@ -3,6 +3,7 @@ package auth
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gosuda/portal-tunnel/v2/types"
@@ -11,19 +12,51 @@ import (
 
 var ErrHopRouteSignatureInvalid = errors.New("hop route signature is invalid")
 
+func normalizeHopRoute(route *types.HopRoute, requireOwner bool) error {
+	ownerPublicKey := strings.ToLower(utils.TrimHexPrefix(strings.TrimSpace(route.OwnerPublicKey)))
+	if ownerPublicKey != "" {
+		if _, err := utils.ParseSecp256k1PublicKeyHex(ownerPublicKey); err != nil {
+			return fmt.Errorf("hop route owner public key: %w", err)
+		}
+	} else if requireOwner {
+		return errors.New("hop route owner public key is required")
+	}
+
+	relayURL, err := utils.NormalizeRelayURL(route.RelayURL)
+	if err != nil {
+		return fmt.Errorf("hop relay url: %w", err)
+	}
+
+	route.OwnerPublicKey = ownerPublicKey
+	route.RelayURL = relayURL
+	route.PublicHostname = utils.NormalizeHostname(route.PublicHostname)
+	route.RouteHostname = utils.NormalizeHostname(route.RouteHostname)
+	route.HostnameHash = strings.TrimSpace(route.HostnameHash)
+	route.MatchToken = strings.TrimSpace(route.MatchToken)
+	route.Metadata = route.Metadata.Copy()
+	route.ForwardToken = strings.TrimSpace(route.ForwardToken)
+	route.ExpiresAt = route.ExpiresAt.UTC()
+	route.Signature = strings.TrimSpace(route.Signature)
+	return nil
+}
+
 func SignHopRoute(method string, route types.HopRoute, identity types.Identity, expiresAt time.Time) (types.HopRoute, error) {
 	route.ExpiresAt = expiresAt.UTC()
 	route.Signature = ""
-	route.OwnerPublicKey = identity.PublicKey
+	route.OwnerPublicKey = ""
 
-	route, err := normalizeHopRoute(route, true)
+	if err := normalizeHopRoute(&route, false); err != nil {
+		return types.HopRoute{}, err
+	}
+	identity, err := utils.NormalizeStoredIdentity(identity)
 	if err != nil {
 		return types.HopRoute{}, err
 	}
-	if identity.PrivateKey == "" || identity.PublicKey == "" {
+	if strings.TrimSpace(identity.PrivateKey) == "" || strings.TrimSpace(identity.PublicKey) == "" {
 		return types.HopRoute{}, errors.New("hop route owner identity is required")
 	}
 
+	route.OwnerPublicKey = identity.PublicKey
 	payload, err := types.HopRouteBytes(method, route)
 	if err != nil {
 		return types.HopRoute{}, err
@@ -36,11 +69,10 @@ func SignHopRoute(method string, route types.HopRoute, identity types.Identity, 
 }
 
 func VerifyHopRoute(method string, route types.HopRoute) (types.HopRoute, error) {
-	signature := route.Signature
+	signature := strings.TrimSpace(route.Signature)
 	route.Signature = ""
 
-	route, err := normalizeHopRoute(route, true)
-	if err != nil {
+	if err := normalizeHopRoute(&route, true); err != nil {
 		return types.HopRoute{}, err
 	}
 	payload, err := types.HopRouteBytes(method, route)
@@ -51,26 +83,5 @@ func VerifyHopRoute(method string, route types.HopRoute) (types.HopRoute, error)
 		return types.HopRoute{}, ErrHopRouteSignatureInvalid
 	}
 	route.Signature = signature
-	return route, nil
-}
-
-func normalizeHopRoute(route types.HopRoute, requireOwner bool) (types.HopRoute, error) {
-	if route.OwnerPublicKey != "" {
-		if _, err := utils.ParseSecp256k1PublicKeyHex(route.OwnerPublicKey); err != nil {
-			return types.HopRoute{}, fmt.Errorf("hop route owner public key: %w", err)
-		}
-	} else if requireOwner {
-		return types.HopRoute{}, errors.New("hop route owner public key is required")
-	}
-
-	relayURL, err := utils.NormalizeRelayURL(route.RelayURL)
-	if err != nil {
-		return types.HopRoute{}, fmt.Errorf("hop relay url: %w", err)
-	}
-
-	route.RelayURL = relayURL
-	route.PublicHostname = utils.NormalizeHostname(route.PublicHostname)
-	route.RouteHostname = utils.NormalizeHostname(route.RouteHostname)
-	route.ExpiresAt = route.ExpiresAt.UTC()
 	return route, nil
 }
