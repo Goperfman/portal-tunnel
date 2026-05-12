@@ -194,7 +194,7 @@ func (o *Overlay) Serve(ctx context.Context) error {
 			conn, err := o.hopListener.Accept()
 			if err != nil {
 				if errors.Is(err, net.ErrClosed) || ctx.Err() != nil {
-					return nil
+					return err
 				}
 				return fmt.Errorf("accept hop mux connection: %w", err)
 			}
@@ -512,4 +512,3 @@ func hopYamuxConfig() *yamux.Config {
 	cfg.MaxStreamWindowSize = 16 * 1024 * 1024
 	return cfg
 }
-
