@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
@@ -46,7 +45,7 @@ func NewHopMux(overlay *Overlay) (*HopMux, error) {
 	return &HopMux{
 		listener: listener,
 		overlay:  overlay,
-		incoming: make(chan HopStream),
+		incoming: make(chan HopStream, 1024),
 		outbound: make(map[string]*yamux.Session),
 		done:     make(chan struct{}),
 	}, nil
@@ -60,17 +59,13 @@ func (m *HopMux) Serve(ctx context.Context) error {
 
 	for {
 		conn, err := m.listener.Accept()
-		switch {
-		case err == nil:
-			go m.serveSession(ctx, conn)
-		case errors.Is(err, net.ErrClosed):
-			return nil
-		default:
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return ctxErr
+		if err != nil {
+			if errors.Is(err, net.ErrClosed) || ctx.Err() != nil {
+				return ctx.Err()
 			}
 			return fmt.Errorf("accept hop mux connection: %w", err)
 		}
+		go m.serveSession(ctx, conn)
 	}
 }
 
@@ -92,10 +87,7 @@ func (m *HopMux) Close() error {
 	default:
 	}
 	close(m.done)
-	sessions := make([]*yamux.Session, 0, len(m.outbound))
-	for _, session := range m.outbound {
-		sessions = append(sessions, session)
-	}
+	sessions := m.outbound
 	m.outbound = make(map[string]*yamux.Session)
 	m.mu.Unlock()
 
@@ -107,21 +99,15 @@ func (m *HopMux) Close() error {
 }
 
 func (m *HopMux) OpenStream(ctx context.Context, overlayIPv4, token string) (net.Conn, error) {
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return nil, errors.New("next hop token is required")
-	}
-
-	overlayIPv4 = strings.TrimSpace(overlayIPv4)
-	if overlayIPv4 == "" {
-		return nil, errors.New("next hop overlay ipv4 is required")
+	if token == "" || overlayIPv4 == "" {
+		return nil, errors.New("hop token and overlay ipv4 are required")
 	}
 
 	session, err := m.session(ctx, overlayIPv4)
 	if err != nil {
 		return nil, err
 	}
-	stream, err := openYamuxStream(ctx, session)
+	stream, err := session.OpenStream()
 	if err != nil {
 		m.mu.Lock()
 		if m.outbound[overlayIPv4] == session {
@@ -140,50 +126,22 @@ func (m *HopMux) OpenStream(ctx context.Context, overlayIPv4, token string) (net
 	frame := make([]byte, 4+len(payload))
 	binary.BigEndian.PutUint32(frame[:4], uint32(len(payload)))
 	copy(frame[4:], payload)
-	if n, err := stream.Write(frame); err != nil {
+
+	_ = stream.SetWriteDeadline(time.Now().Add(defaultTokenTimeout))
+	if _, err := stream.Write(frame); err != nil {
 		_ = stream.Close()
 		return nil, err
-	} else if n != len(frame) {
-		_ = stream.Close()
-		return nil, io.ErrShortWrite
 	}
+	_ = stream.SetWriteDeadline(time.Time{})
 	return stream, nil
-}
-
-func openYamuxStream(ctx context.Context, session *yamux.Session) (*yamux.Stream, error) {
-	type openResult struct {
-		stream *yamux.Stream
-		err    error
-	}
-	result := make(chan openResult, 1)
-	go func() {
-		stream, err := session.OpenStream()
-		result <- openResult{stream: stream, err: err}
-	}()
-	select {
-	case res := <-result:
-		return res.stream, res.err
-	case <-ctx.Done():
-		_ = session.Close()
-		return nil, ctx.Err()
-	}
 }
 
 func (m *HopMux) session(ctx context.Context, overlayIPv4 string) (*yamux.Session, error) {
 	m.mu.Lock()
-	select {
-	case <-m.done:
+	if session := m.outbound[overlayIPv4]; session != nil && !session.IsClosed() {
 		m.mu.Unlock()
-		return nil, net.ErrClosed
-	default:
+		return session, nil
 	}
-	if session := m.outbound[overlayIPv4]; session != nil {
-		if !session.IsClosed() {
-			m.mu.Unlock()
-			return session, nil
-		}
-	}
-	delete(m.outbound, overlayIPv4)
 	m.mu.Unlock()
 
 	addr := net.JoinHostPort(overlayIPv4, fmt.Sprintf("%d", DefaultPeerYamuxPort))
@@ -199,20 +157,12 @@ func (m *HopMux) session(ctx context.Context, overlayIPv4 string) (*yamux.Sessio
 	}
 
 	m.mu.Lock()
-	select {
-	case <-m.done:
-		m.mu.Unlock()
-		_ = session.Close()
-		return nil, net.ErrClosed
-	default:
-	}
+	defer m.mu.Unlock()
 	if current := m.outbound[overlayIPv4]; current != nil && !current.IsClosed() {
-		m.mu.Unlock()
 		_ = session.Close()
 		return current, nil
 	}
 	m.outbound[overlayIPv4] = session
-	m.mu.Unlock()
 	return session, nil
 }
 
@@ -222,29 +172,15 @@ func (m *HopMux) serveSession(ctx context.Context, conn net.Conn) {
 		_ = conn.Close()
 		return
 	}
-	m.mu.Lock()
-	select {
-	case <-m.done:
-		m.mu.Unlock()
-		_ = session.Close()
-		return
-	default:
-	}
-	done := m.done
-	m.mu.Unlock()
-	sessionDone := make(chan struct{})
+	defer session.Close()
+
 	go func() {
 		select {
 		case <-ctx.Done():
 			_ = session.Close()
-		case <-done:
+		case <-m.done:
 			_ = session.Close()
-		case <-sessionDone:
 		}
-	}()
-	defer func() {
-		close(sessionDone)
-		_ = session.Close()
 	}()
 
 	for {
@@ -275,22 +211,18 @@ func (m *HopMux) handleStream(ctx context.Context, stream *yamux.Stream) {
 		_ = stream.Close()
 		return
 	}
-	token := strings.TrimSpace(string(payload))
-	if token == "" {
-		_ = stream.Close()
-		return
-	}
+	token := string(payload)
+
 	remoteAddr := ""
-	if stream.RemoteAddr() != nil {
-		remoteAddr = stream.RemoteAddr().String()
+	if addr := stream.RemoteAddr(); addr != nil {
+		remoteAddr = addr.String()
 	}
+
 	select {
-	case m.incoming <- HopStream{
-		Conn:       stream,
-		Token:      token,
-		RemoteAddr: remoteAddr,
-	}:
+	case m.incoming <- HopStream{Conn: stream, Token: token, RemoteAddr: remoteAddr}:
 	case <-ctx.Done():
+		_ = stream.Close()
+	case <-m.done:
 		_ = stream.Close()
 	}
 }
