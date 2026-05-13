@@ -110,9 +110,10 @@ type DiscoveryAnnounceResponse struct {
 }
 
 type RenewRequest struct {
-	AccessToken string `json:"access_token"`
-	TTL         int    `json:"ttl,omitempty"`
-	ReportedIP  string `json:"reported_ip,omitempty"`
+	AccessToken string        `json:"access_token"`
+	TTL         int           `json:"ttl,omitempty"`
+	ReportedIP  string        `json:"reported_ip,omitempty"`
+	Metadata    LeaseMetadata `json:"metadata,omitempty"`
 }
 
 type RenewResponse struct {
