@@ -46,6 +46,7 @@ type relayServerConfig struct {
 	TCPEnabled         bool
 	MinPort            int
 	MaxPort            int
+	AdminWallets       string
 	LandingPageEnabled bool
 	HeadlessShellURL   string
 	PProfEnabled       bool
@@ -84,6 +85,7 @@ func runServeCommand(args []string) error {
 	utils.IntFlagEnv(fs, &cfg.MinPort, "min-port", 0, utils.ParseOptionalPortNumber, "inclusive minimum lease port shared by UDP and raw TCP transports (0=disabled)", "MIN_PORT")
 	utils.IntFlagEnv(fs, &cfg.MaxPort, "max-port", 0, utils.ParseOptionalPortNumber, "inclusive maximum lease port shared by UDP and raw TCP transports (0=disabled)", "MAX_PORT")
 
+	utils.StringFlagEnv(fs, &cfg.AdminWallets, "admin-wallets", "", "admin wallet address allowlist, comma-separated; relay identity address is always allowed", "ADMIN_WALLETS")
 	utils.BoolFlagEnv(fs, &cfg.LandingPageEnabled, "landing-page-enabled", false, "enable landing page by default when no admin setting has been saved yet", "LANDING_PAGE_ENABLED")
 	utils.StringFlagEnv(fs, &cfg.HeadlessShellURL, "headless-shell-url", "", "headless Chrome CDP WebSocket URL for thumbnail generation (e.g. ws://headless-shell:9222)", "HEADLESS_SHELL_URL")
 	utils.BoolFlagEnv(fs, &cfg.PProfEnabled, "pprof-enabled", false, "enable pprof diagnostics HTTP server", "PPROF_ENABLED")
@@ -128,6 +130,7 @@ func runServeCommand(args []string) error {
 		Bool("tcp_enabled", cfg.TCPEnabled).
 		Int("min_port", cfg.MinPort).
 		Int("max_port", cfg.MaxPort).
+		Bool("admin_wallets_configured", len(utils.SplitCSV(cfg.AdminWallets)) > 0).
 		Bool("landing_page_enabled", cfg.LandingPageEnabled).
 		Bool("headless_shell_enabled", strings.TrimSpace(cfg.HeadlessShellURL) != "").
 		Bool("pprof_enabled", cfg.PProfEnabled).
@@ -178,7 +181,7 @@ func runServer(ctx context.Context, cfg relayServerConfig) error {
 		return fmt.Errorf("create relay server: %w", err)
 	}
 
-	frontend, err := NewFrontend(server, cfg.IdentityPath, cfg.LandingPageEnabled, cfg.HeadlessShellURL)
+	frontend, err := NewFrontend(server, cfg.IdentityPath, cfg.LandingPageEnabled, cfg.HeadlessShellURL, utils.SplitCSV(cfg.AdminWallets))
 	if err != nil {
 		return fmt.Errorf("create frontend: %w", err)
 	}

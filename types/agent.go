@@ -1,14 +1,16 @@
 package types
 
 type AgentStatusResponse struct {
-	ConfigPath  string              `json:"config_path,omitempty"`
-	ControlAddr string              `json:"control_addr"`
-	Tunnels     []AgentTunnelStatus `json:"tunnels,omitempty"`
+	ConfigPath    string              `json:"config_path,omitempty"`
+	ControlAddr   string              `json:"control_addr"`
+	WalletAddress string              `json:"wallet_address,omitempty"`
+	Tunnels       []AgentTunnelStatus `json:"tunnels,omitempty"`
 }
 
 type AgentTunnelStatus struct {
 	ID         string             `json:"id"`
 	Name       string             `json:"name,omitempty"`
+	Address    string             `json:"address,omitempty"`
 	State      string             `json:"state"`
 	TargetAddr string             `json:"target_addr,omitempty"`
 	LastError  string             `json:"last_error,omitempty"`

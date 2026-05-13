@@ -509,6 +509,9 @@ func (t *managedTunnel) Snapshot() types.AgentTunnelStatus {
 		MultiHop:   append([]string(nil), cfg.MultiHop...),
 	}
 	if exposure == nil {
+		if strings.TrimSpace(runtime.Address) != "" {
+			status.Address = runtime.Address
+		}
 		if strings.TrimSpace(runtime.TargetAddr) != "" {
 			status.TargetAddr = runtime.TargetAddr
 		}
@@ -522,6 +525,7 @@ func (t *managedTunnel) Snapshot() types.AgentTunnelStatus {
 	t.mu.Lock()
 	if t.exposure == exposure {
 		t.runtime = types.AgentTunnelStatus{
+			Address:    snapshot.Address,
 			TargetAddr: snapshot.TargetAddr,
 			MultiHop:   append([]string(nil), snapshot.MultiHop...),
 			Relays:     append([]types.AgentRelayStatus(nil), snapshot.Relays...),
@@ -529,6 +533,7 @@ func (t *managedTunnel) Snapshot() types.AgentTunnelStatus {
 	}
 	t.mu.Unlock()
 
+	status.Address = snapshot.Address
 	status.TargetAddr = snapshot.TargetAddr
 	status.MultiHop = append([]string(nil), snapshot.MultiHop...)
 	status.Relays = append([]types.AgentRelayStatus(nil), snapshot.Relays...)
@@ -601,6 +606,7 @@ func (t *managedTunnel) runOnce(ctx context.Context) error {
 	t.mu.Lock()
 	t.exposure = exposure
 	t.runtime = types.AgentTunnelStatus{
+		Address:    snapshot.Address,
 		TargetAddr: snapshot.TargetAddr,
 		MultiHop:   append([]string(nil), snapshot.MultiHop...),
 		Relays:     append([]types.AgentRelayStatus(nil), snapshot.Relays...),

@@ -404,6 +404,7 @@ func (e *Exposure) Snapshot() types.AgentTunnelStatus {
 	})
 
 	return types.AgentTunnelStatus{
+		Address:    e.identity.Address,
 		TargetAddr: e.TargetAddr,
 		MultiHop:   multiHop,
 		Relays:     relays,

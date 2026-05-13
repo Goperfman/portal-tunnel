@@ -1,6 +1,8 @@
-import { LogOut } from "lucide-react";
+import { useState } from "react";
+import { Loader2, LogOut, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggleButton } from "@/components/ThemeToggleButton";
+import { useAuth } from "@/hooks/useAuth";
 import {
   Tooltip,
   TooltipContent,
@@ -12,19 +14,58 @@ import { getReleaseVersion } from "@/lib/releaseVersion";
 interface HeaderProps {
   title?: string;
   isAdmin?: boolean;
-  onLogout?: () => void;
+  onAuthChange?: () => void | Promise<void>;
   showQuickStartLink?: boolean;
 }
 
 const repoURL = "https://github.com/gosuda/portal-tunnel";
 
+function formatWalletAddress(address: string): string {
+  const trimmed = address.trim();
+  if (trimmed.length <= 12) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, 6)}...${trimmed.slice(-4)}`;
+}
+
 export function Header({
   title = "PORTAL",
   isAdmin,
-  onLogout,
+  onAuthChange,
   showQuickStartLink = true,
 }: HeaderProps) {
   const releaseVersion = getReleaseVersion();
+  const {
+    isAuthenticated,
+    isLoading,
+    walletAddress,
+    login,
+    logout,
+  } = useAuth(isAdmin ? "admin" : "auto");
+  const [authError, setAuthError] = useState("");
+
+  const handleWalletLogin = async () => {
+    setAuthError("");
+    const result = await login();
+    if (!result.success) {
+      setAuthError(result.error || "Wallet login failed.");
+      return;
+    }
+    await onAuthChange?.();
+  };
+
+  const handleLogout = async () => {
+    setAuthError("");
+    await logout();
+    await onAuthChange?.();
+  };
+
+  const walletLabel = isAuthenticated && walletAddress
+    ? formatWalletAddress(walletAddress)
+    : "Wallet";
+  const walletTooltip = authError || (
+    isAuthenticated && walletAddress ? walletAddress : "Connect wallet"
+  );
 
   return (
     <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 py-2 lg:flex-nowrap">
@@ -107,18 +148,48 @@ export function Header({
 
         <ThemeToggleButton className="inline-flex shrink-0" />
 
-        {isAdmin && onLogout && (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={isAuthenticated ? "secondary" : "outline"}
+                onClick={isAuthenticated ? undefined : handleWalletLogin}
+                disabled={isLoading}
+                className={`h-12 rounded-full border-border/70 bg-background/90 px-3 text-foreground shadow-sm transition-all hover:bg-background disabled:cursor-not-allowed sm:px-4 ${
+                  isAuthenticated
+                    ? "cursor-default"
+                    : "cursor-pointer hover:-translate-y-0.5 hover:border-primary/40 hover:text-primary"
+                }`}
+                aria-label={isAuthenticated ? "Wallet connected" : "Connect wallet"}
+              >
+                {isLoading ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  <Wallet className="h-5 w-5" />
+                )}
+                <span className="max-w-28 truncate font-mono text-xs sm:max-w-36">
+                  {walletLabel}
+                </span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{walletTooltip}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+
+        {isAuthenticated && (
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   variant="outline"
                   size="icon"
-                  onClick={onLogout}
+                  onClick={handleLogout}
                   className="h-12 w-12 cursor-pointer rounded-full border-border/70 bg-background/90 text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-destructive/40 hover:bg-background hover:text-destructive"
                   aria-label="Logout"
                 >
-                  <LogOut className="h-5.5 w-5.5" />
+                  <LogOut className="h-5 w-5" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>

@@ -194,17 +194,29 @@ type TunnelStatusResponse struct {
 	ServiceAlive bool   `json:"service_alive"`
 }
 
-type AdminLoginRequest struct {
-	Key string `json:"key"`
+type WalletAuthChallengeRequest struct {
+	Address string `json:"address"`
 }
 
-type AdminLoginResponse struct {
-	Success bool `json:"success,omitempty"`
+type WalletAuthChallengeResponse struct {
+	ChallengeID string    `json:"challenge_id"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	SIWEMessage string    `json:"siwe_message"`
 }
 
-type AdminAuthStatusResponse struct {
-	Authenticated bool `json:"authenticated"`
-	AuthEnabled   bool `json:"auth_enabled"`
+type WalletAuthLoginRequest struct {
+	ChallengeID   string `json:"challenge_id"`
+	SIWEMessage   string `json:"siwe_message"`
+	SIWESignature string `json:"siwe_signature"`
+}
+
+type WalletAuthLoginResponse struct {
+	WalletAddress string `json:"wallet_address,omitempty"`
+}
+
+type WalletAuthStatusResponse struct {
+	Authenticated bool   `json:"authenticated"`
+	WalletAddress string `json:"wallet_address,omitempty"`
 }
 
 type AdminSnapshotResponse struct {
