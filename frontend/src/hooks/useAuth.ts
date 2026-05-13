@@ -1,4 +1,11 @@
 import { useEffect, useState } from "react";
+import {
+  useAccount,
+  useConnect,
+  useConnectors,
+  useDisconnect,
+  useSignMessage,
+} from "wagmi";
 import { API_PATHS } from "@/lib/apiPaths";
 import { APIClientError, apiClient } from "@/lib/apiClient";
 
@@ -30,16 +37,6 @@ interface WalletAuthLoginPayload {
 
 type AuthTarget = "admin" | "agent" | "auto";
 type ResolvedAuthTarget = "admin" | "agent";
-
-type EthereumProvider = {
-  request<T>(args: { method: string; params?: unknown[] }): Promise<T>;
-};
-
-declare global {
-  interface Window {
-    ethereum?: EthereumProvider;
-  }
-}
 
 const authPaths = {
   admin: {
@@ -95,11 +92,12 @@ async function fetchAuthState(target: AuthTarget, preferred?: ResolvedAuthTarget
   return emptyAuthState(target === "admin" || target === "agent" ? target : "");
 }
 
-function ethereumProvider(): EthereumProvider | undefined {
-  return window.ethereum;
-}
-
 export function useAuth(target: AuthTarget = "admin") {
+  const { address: connectedAddress, isConnected } = useAccount();
+  const connectors = useConnectors();
+  const { connectAsync } = useConnect();
+  const { disconnectAsync } = useDisconnect();
+  const { signMessageAsync } = useSignMessage();
   const [authState, setAuthState] = useState<AuthState>({
     isAuthenticated: false,
     isLoading: true,
@@ -119,16 +117,17 @@ export function useAuth(target: AuthTarget = "admin") {
 
   const login = async (): Promise<LoginResult> => {
     try {
-      const provider = ethereumProvider();
-      if (!provider) {
-        return { success: false, error: "Wallet provider is unavailable." };
+      let address = connectedAddress;
+      if (!isConnected || !address) {
+        const connector = connectors[0];
+        if (!connector) {
+          return { success: false, error: "Wallet connector is unavailable." };
+        }
+        const connected = await connectAsync({ connector });
+        address = connected.accounts[0];
       }
-      const accounts = await provider.request<string[]>({
-        method: "eth_requestAccounts",
-      });
-      const address = accounts?.[0]?.trim();
       if (!address) {
-        return { success: false, error: "Wallet account is unavailable." };
+        return { success: false, error: "Wallet provider is unavailable." };
       }
       let authTarget = authState.authTarget;
       if (!authTarget) {
@@ -144,9 +143,9 @@ export function useAuth(target: AuthTarget = "admin") {
         authPaths[authTarget].challenge,
         { address }
       );
-      const signature = await provider.request<string>({
-        method: "personal_sign",
-        params: [challenge.siwe_message, address],
+      const signature = await signMessageAsync({
+        account: address,
+        message: challenge.siwe_message,
       });
       const data = await apiClient.post<WalletAuthLoginPayload>(
         authPaths[authTarget].login,
@@ -189,6 +188,11 @@ export function useAuth(target: AuthTarget = "admin") {
       }
     }
     setAuthState((prev) => ({ ...prev, isAuthenticated: false, walletAddress: "" }));
+    try {
+      await disconnectAsync();
+    } catch {
+      // Some wallet connectors cannot be disconnected programmatically.
+    }
   };
 
   return {
