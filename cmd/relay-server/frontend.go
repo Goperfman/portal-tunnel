@@ -19,6 +19,7 @@ import (
 
 	"github.com/gosuda/portal-tunnel/v2/cmd/portal-tunnel/installer"
 	"github.com/gosuda/portal-tunnel/v2/portal"
+	"github.com/gosuda/portal-tunnel/v2/portal/identity"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
@@ -51,7 +52,7 @@ func NewFrontend(server *portal.Server, identityPath string, defaultLandingPageE
 	if runtime == nil {
 		return nil, errors.New("frontend requires policy runtime")
 	}
-	adminSettingsPath := utils.ResolveRelayAdminSettingsPath(identityPath)
+	adminSettingsPath := identity.ResolveRelayAdminSettingsPath(identityPath)
 	if adminSettingsPath == "" {
 		return nil, errors.New("frontend requires identity path")
 	}
@@ -59,8 +60,8 @@ func NewFrontend(server *portal.Server, identityPath string, defaultLandingPageE
 	if err != nil {
 		return nil, err
 	}
-	identity := server.RelayIdentity()
-	auth, err := newAdminAuth(identity.AdminSecretKey)
+	relayIdentity := server.RelayIdentity()
+	auth, err := newAdminAuth(relayIdentity.AdminSecretKey)
 	if err != nil {
 		return nil, err
 	}

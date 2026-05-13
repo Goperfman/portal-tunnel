@@ -20,6 +20,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/gosuda/portal-tunnel/v2/portal/discovery"
+	"github.com/gosuda/portal-tunnel/v2/portal/identity"
 	"github.com/gosuda/portal-tunnel/v2/portal/keyless"
 	"github.com/gosuda/portal-tunnel/v2/portal/transport"
 	"github.com/gosuda/portal-tunnel/v2/types"
@@ -850,7 +851,7 @@ func (l *listener) tenantECHMaterials(publicHostname, routeHostname string) ([]t
 	if routeHostname == "" {
 		return nil, nil, nil
 	}
-	echSeed, err := l.identity.DeriveToken("tenant-ech", publicHostname, routeHostname)
+	echSeed, err := identity.DeriveToken(l.identity, "tenant-ech", publicHostname, routeHostname)
 	if err != nil {
 		return nil, nil, fmt.Errorf("derive tenant ech seed: %w", err)
 	}

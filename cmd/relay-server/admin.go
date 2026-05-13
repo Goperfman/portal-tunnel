@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gosuda/portal-tunnel/v2/portal/identity"
 	"github.com/gosuda/portal-tunnel/v2/portal/policy"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
@@ -251,7 +252,7 @@ func (f *Frontend) serveAdmin(w http.ResponseWriter, r *http.Request) {
 				utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidAddress, "invalid address")
 				return
 			}
-			identity, err := utils.NormalizeIdentity(types.Identity{
+			normalizedIdentity, err := identity.NormalizeIdentity(types.Identity{
 				Name:    name,
 				Address: address,
 			})
@@ -259,7 +260,7 @@ func (f *Frontend) serveAdmin(w http.ResponseWriter, r *http.Request) {
 				utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, "invalid identity")
 				return
 			}
-			identityKey := identity.Key()
+			identityKey := normalizedIdentity.Key()
 			approver := runtime.Approver()
 
 			type identityAction struct {
@@ -486,12 +487,12 @@ func (s persistedAdminState) apply(runtime *policy.Runtime) error {
 		}
 	}
 	runtime.Approver().SetDecisions(
-		utils.NormalizeIdentityKeys(s.ApprovedIdentityKeys),
-		utils.NormalizeIdentityKeys(s.DeniedIdentityKeys),
+		identity.NormalizeIdentityKeys(s.ApprovedIdentityKeys),
+		identity.NormalizeIdentityKeys(s.DeniedIdentityKeys),
 	)
-	runtime.SetBannedIdentityKeys(utils.NormalizeIdentityKeys(s.BannedIdentityKeys))
+	runtime.SetBannedIdentityKeys(identity.NormalizeIdentityKeys(s.BannedIdentityKeys))
 	runtime.IPFilter().SetBannedIPs(s.BannedIPs)
-	runtime.BPSManager().SetIdentityBPSLimits(utils.NormalizeIdentityKeyBPS(s.IdentityBPS))
+	runtime.BPSManager().SetIdentityBPSLimits(identity.NormalizeIdentityKeyBPS(s.IdentityBPS))
 	applyOptionalPolicy(s.UDPEnabled, s.UDPMaxLeases, runtime.IsUDPEnabled, runtime.UDPMaxLeases, runtime.SetUDPPolicy)
 	applyOptionalPolicy(s.TCPPortEnabled, s.TCPPortMaxLeases, runtime.IsTCPPortEnabled, runtime.TCPPortMaxLeases, runtime.SetTCPPortPolicy)
 	return nil

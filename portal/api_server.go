@@ -15,6 +15,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/gosuda/portal-tunnel/v2/portal/auth"
+	"github.com/gosuda/portal-tunnel/v2/portal/identity"
 	"github.com/gosuda/portal-tunnel/v2/portal/keyless"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
@@ -191,7 +192,7 @@ func (s *Server) handleRelayDiscoveryAnnounce(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	desc, err := utils.NormalizeDescriptor(req.Descriptor)
+	desc, err := identity.NormalizeRelayDescriptor(req.Descriptor)
 	if err != nil {
 		utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, err.Error())
 		return
@@ -459,7 +460,7 @@ func (s *Server) handleHop(w http.ResponseWriter, r *http.Request) {
 		utils.InvalidRequestError(fmt.Errorf("forward relay: %w", err)).Write(w)
 		return
 	}
-	if err := s.syncOverlayPeers(s.relaySet.OverlayPeerStates()); err != nil {
+	if err := s.syncOverlayPeers(s.relaySet.OverlayPeerDescriptor()); err != nil {
 		utils.WriteAPIError(w, http.StatusInternalServerError, types.APIErrorCodeInternal, err.Error())
 		return
 	}

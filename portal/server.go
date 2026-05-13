@@ -21,6 +21,7 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/portal/acme"
 	"github.com/gosuda/portal-tunnel/v2/portal/auth"
 	"github.com/gosuda/portal-tunnel/v2/portal/discovery"
+	"github.com/gosuda/portal-tunnel/v2/portal/identity"
 	"github.com/gosuda/portal-tunnel/v2/portal/keyless"
 	"github.com/gosuda/portal-tunnel/v2/portal/overlay"
 	"github.com/gosuda/portal-tunnel/v2/portal/policy"
@@ -60,7 +61,7 @@ type ServerConfig struct {
 
 func normalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 	cfg.PortalURL = strings.TrimSuffix(strings.TrimSpace(cfg.PortalURL), "/")
-	cfg.IdentityPath = utils.ResolveRelayStateDir(cfg.IdentityPath)
+	cfg.IdentityPath = identity.ResolveRelayStateDir(cfg.IdentityPath)
 	if cfg.IdentityPath == "" {
 		return ServerConfig{}, errors.New("identity path is required")
 	}
@@ -114,6 +115,7 @@ type Server struct {
 
 	cfg         ServerConfig
 	identity    types.RelayIdentity
+	authority   identity.Authority
 	acmeManager *acme.Manager
 	proxy       proxy
 
@@ -134,7 +136,7 @@ type Server struct {
 
 type serverTestHooks struct {
 	overlayConfig    func() overlay.Config
-	syncOverlayPeers func([]discovery.RelayState) error
+	syncOverlayPeers func([]types.RelayDescriptor) error
 	openHopStream    func(context.Context, string, string) (net.Conn, error)
 }
 
@@ -144,11 +146,15 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		return nil, err
 	}
 
-	identity, err := utils.LoadOrCreateRelayIdentity(cfg.IdentityPath, utils.PortalRootHost(cfg.PortalURL), cfg.DiscoveryEnabled)
+	relayIdentity, err := identity.LoadOrCreateRelayIdentity(cfg.IdentityPath, utils.PortalRootHost(cfg.PortalURL), cfg.DiscoveryEnabled)
 	if err != nil {
 		return nil, fmt.Errorf("load relay identity: %w", err)
 	}
-	registry, err := newLeaseRegistry(cfg.UDPEnabled, cfg.TCPEnabled, cfg.MinPort, cfg.MaxPort, identity.Name, cfg.SNIPort, identity.PrivateKey, identity.PublicKey, identity.Address, cfg.PortalURL, cfg.TrustProxyHeaders, cfg.TrustedProxyCIDRs)
+	relayAuthority, err := identity.NewLocalAuthority(relayIdentity.Identity)
+	if err != nil {
+		return nil, fmt.Errorf("load relay authority: %w", err)
+	}
+	registry, err := newLeaseRegistry(cfg.UDPEnabled, cfg.TCPEnabled, cfg.MinPort, cfg.MaxPort, relayIdentity.Name, cfg.SNIPort, relayAuthority, cfg.PortalURL, cfg.TrustProxyHeaders, cfg.TrustedProxyCIDRs)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +170,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 
 	server := &Server{
 		cfg:             cfg,
-		identity:        identity,
+		identity:        relayIdentity,
+		authority:       relayAuthority,
 		registry:        registry,
 		relaySet:        relaySet,
 		announceLimiter: discovery.NewAnnounceLimiter(0, 0),
@@ -444,7 +451,8 @@ func (s *Server) prepareAPITLS(ctx context.Context) (keyless.TLSMaterialConfig, 
 		CertPEM: certPEM,
 		KeyPEM:  keyPEM,
 	}
-	echSeed, err := s.identity.DeriveToken(
+	echSeed, err := identity.DeriveToken(
+		s.identity.Identity,
 		"relay-ech",
 		s.identity.EncryptedClientHelloSeed,
 		s.identity.Name,
@@ -616,15 +624,15 @@ func (s *Server) currentOverlayConfig() (overlay.Config, bool) {
 	return overlay.Config{}, false
 }
 
-func (s *Server) syncOverlayPeers(states []discovery.RelayState) error {
+func (s *Server) syncOverlayPeers(descriptors []types.RelayDescriptor) error {
 	if s == nil {
 		return errors.New("server is unavailable")
 	}
 	if s.overlay != nil {
-		return s.overlay.Sync(states)
+		return s.overlay.Sync(descriptors)
 	}
 	if s.testHooks != nil && s.testHooks.syncOverlayPeers != nil {
-		return s.testHooks.syncOverlayPeers(states)
+		return s.testHooks.syncOverlayPeers(descriptors)
 	}
 	return errors.New("relay overlay is unavailable")
 }
@@ -767,7 +775,7 @@ func (s *Server) startOverlay() (*overlay.Overlay, error) {
 		}
 	})
 
-	if err := ov.Sync(s.relaySet.OverlayPeerStates()); err != nil {
+	if err := ov.Sync(s.relaySet.OverlayPeerDescriptor()); err != nil {
 		_ = ov.Shutdown(context.Background())
 		return nil, fmt.Errorf("sync wireguard peers: %w", err)
 	}
@@ -837,5 +845,5 @@ func (s *Server) newSelfDescriptor(now time.Time) (types.RelayDescriptor, error)
 		SupportsTCP:        s.cfg.TCPEnabled,
 		ActiveConnections:  s.proxy.activeConnectionCount(),
 		TCPBPS:             s.proxy.currentTCPBPS(now),
-	}, s.identity.PrivateKey)
+	}, s.authority)
 }

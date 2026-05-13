@@ -15,6 +15,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/gosuda/portal-tunnel/v2/portal/discovery"
+	"github.com/gosuda/portal-tunnel/v2/portal/identity"
 	"github.com/gosuda/portal-tunnel/v2/portal/telemetry"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
@@ -120,7 +121,7 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 		listenerRelayURLs = append([]string(nil), explicitRelayURLs...)
 	}
 
-	identity, createdIdentity, err := utils.ResolveListenerIdentity(
+	listenerIdentity, createdIdentity, err := identity.ResolveListenerIdentity(
 		types.Identity{Name: cfg.Name},
 		cfg.TargetAddr,
 		cfg.IdentityPath,
@@ -132,7 +133,7 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 	if createdIdentity {
 		log.Info().
 			Str("identity_path", strings.TrimSpace(cfg.IdentityPath)).
-			Str("address", identity.Address).
+			Str("address", listenerIdentity.Address).
 			Msg("generated tunnel identity and saved it to disk")
 	}
 	targetAddr, err := utils.NormalizeLoopbackTarget(cfg.TargetAddr)
@@ -150,7 +151,7 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 	exposure := &Exposure{
 		cancel:          cancel,
 		done:            exposureCtx.Done(),
-		identity:        identity,
+		identity:        listenerIdentity,
 		explicitRelays:  explicitRelayURLs,
 		TargetAddr:      targetAddr,
 		UDPAddr:         udpAddr,
@@ -364,7 +365,8 @@ func (e *Exposure) Snapshot() types.AgentTunnelStatus {
 	}
 	if e.relaySet != nil {
 		for _, state := range e.relaySet.AllRelays() {
-			relayURL := strings.TrimSpace(state.Descriptor.APIHTTPSAddr)
+			relay := state.Descriptor
+			relayURL := strings.TrimSpace(relay.APIHTTPSAddr)
 			if relayURL == "" {
 				continue
 			}
@@ -373,9 +375,9 @@ func (e *Exposure) Snapshot() types.AgentTunnelStatus {
 			snap.Explicit = slices.Contains(explicitRelays, relayURL)
 			snap.Bootstrap = state.Bootstrap
 			snap.Banned = state.Banned
-			snap.SupportsOverlay = state.Descriptor.SupportsOverlay
-			snap.SupportsUDP = state.Descriptor.SupportsUDP
-			snap.SupportsTCP = state.Descriptor.SupportsTCP
+			snap.SupportsOverlay = relay.SupportsOverlay
+			snap.SupportsUDP = relay.SupportsUDP
+			snap.SupportsTCP = relay.SupportsTCP
 			relayByURL[relayURL] = snap
 		}
 	}

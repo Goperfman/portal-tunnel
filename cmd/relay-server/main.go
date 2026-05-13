@@ -14,6 +14,7 @@ import (
 
 	"github.com/gosuda/portal-tunnel/v2/portal"
 	"github.com/gosuda/portal-tunnel/v2/portal/acme"
+	"github.com/gosuda/portal-tunnel/v2/portal/identity"
 	"github.com/gosuda/portal-tunnel/v2/portal/overlay"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
@@ -110,7 +111,7 @@ func runServeCommand(args []string) error {
 		printRootUsage(os.Stderr)
 		return err
 	}
-	cfg.IdentityPath = utils.ResolveRelayStateDir(cfg.IdentityPath)
+	cfg.IdentityPath = identity.ResolveRelayStateDir(cfg.IdentityPath)
 
 	log.Info().
 		Str("release_version", types.ReleaseVersion).

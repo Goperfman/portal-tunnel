@@ -25,6 +25,7 @@ import (
 	"github.com/go-acme/lego/v4/registration"
 	"github.com/rs/zerolog/log"
 
+	"github.com/gosuda/portal-tunnel/v2/portal/identity"
 	"github.com/gosuda/portal-tunnel/v2/portal/keyless"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
@@ -162,7 +163,7 @@ func NewManager(cfg Config) (*Manager, error) {
 		if cfg.ENSGaslessAddress == "" {
 			return nil, errors.New("ens gasless address is required when ens gasless import is enabled")
 		}
-		address, err := utils.NormalizeEVMAddress(cfg.ENSGaslessAddress)
+		address, err := identity.NormalizeEVMAddress(cfg.ENSGaslessAddress)
 		if err != nil {
 			return nil, fmt.Errorf("normalize ens gasless address: %w", err)
 		}
@@ -624,7 +625,7 @@ func (m *Manager) SyncENSGaslessHostname(ctx context.Context, hostname, address 
 		return fmt.Errorf("hostname %q is outside acme base domain %q", hostname, m.cfg.BaseDomain)
 	}
 
-	address, err := utils.NormalizeEVMAddress(address)
+	address, err := identity.NormalizeEVMAddress(address)
 	if err != nil {
 		return fmt.Errorf("normalize ens gasless address: %w", err)
 	}
