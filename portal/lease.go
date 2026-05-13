@@ -438,6 +438,7 @@ func (r *leaseRegistry) Renew(req types.RenewRequest, clientIP string) (types.Re
 	if strings.TrimSpace(reportedIP) != "" {
 		record.ReportedIP = reportedIP
 	}
+	record.Metadata = req.Metadata.Copy()
 	r.policy.IPFilter().RegisterIdentityIP(leaseKey, clientIP)
 	identity := record.Identity
 	r.mu.Unlock()

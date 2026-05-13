@@ -237,14 +237,20 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 
 func (l *listener) renewRegisteredLease(ctx context.Context, ttl time.Duration, accessToken string) (types.RenewResponse, error) {
 	var resp types.RenewResponse
-	if err := utils.HTTPDoAPIPath(ctx, l.httpClient, l.relayURL, http.MethodPost, types.PathSDKRenew, types.RenewRequest{
-		AccessToken: accessToken,
-		TTL:         int(ttl / time.Second),
-		ReportedIP:  utils.ResolvePublicIP(ctx),
-	}, nil, &resp); err != nil {
+	req := newRenewRequest(ttl, accessToken, utils.ResolvePublicIP(ctx), l.metadata)
+	if err := utils.HTTPDoAPIPath(ctx, l.httpClient, l.relayURL, http.MethodPost, types.PathSDKRenew, req, nil, &resp); err != nil {
 		return types.RenewResponse{}, err
 	}
 	return resp, nil
+}
+
+func newRenewRequest(ttl time.Duration, accessToken, reportedIP string, metadata types.LeaseMetadata) types.RenewRequest {
+	return types.RenewRequest{
+		AccessToken: accessToken,
+		TTL:         int(ttl / time.Second),
+		ReportedIP:  reportedIP,
+		Metadata:    metadata.Copy(),
+	}
 }
 
 func (l *listener) unregisterLease(ctx context.Context, accessToken string, hopRoutes []types.HopRoute) error {

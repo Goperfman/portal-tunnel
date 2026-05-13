@@ -641,16 +641,7 @@ func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
 	multiHop = append([]string(nil), e.multiHop...)
 	explicitRelays := append([]string(nil), e.explicitRelays...)
 	if len(multiHop) > 0 {
-		listenerRelayURLs = e.relaySet.PriorityRelays(discovery.ClientState{
-			ExplicitRelayURLs: explicitRelays,
-			MaxActiveRelays:   e.maxActiveRelays,
-			RequireUDP:        e.udpEnabled,
-			RequireTCP:        e.tcpEnabled,
-			LocalAddress:      e.identity.Address,
-		})
-		if exitRelayURL := multiHop[len(multiHop)-1]; !slices.Contains(listenerRelayURLs, exitRelayURL) {
-			listenerRelayURLs = append(listenerRelayURLs, exitRelayURL)
-		}
+		listenerRelayURLs = []string{multiHop[len(multiHop)-1]}
 	} else if e.multiHopDepth > 1 {
 		multiHop = e.relaySet.PriorityMultiHop(discovery.ClientState{
 			MultiHopDepth: e.multiHopDepth,
