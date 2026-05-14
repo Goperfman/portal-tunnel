@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2, LogOut, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggleButton } from "@/components/ThemeToggleButton";
 import { useAuth } from "@/hooks/useAuth";
+import { apiClient } from "@/lib/apiClient";
+import { API_PATHS } from "@/lib/apiPaths";
 import {
   Tooltip,
   TooltipContent,
@@ -16,6 +18,12 @@ interface HeaderProps {
   isAdmin?: boolean;
   onAuthChange?: () => void | Promise<void>;
   showQuickStartLink?: boolean;
+}
+
+interface DomainStatusResponse {
+  ens?: {
+    verified?: boolean;
+  };
 }
 
 const repoURL = "https://github.com/gosuda/portal-tunnel";
@@ -35,6 +43,7 @@ export function Header({
   showQuickStartLink = true,
 }: HeaderProps) {
   const releaseVersion = getReleaseVersion();
+  const [ensVerified, setENSVerified] = useState(false);
   const {
     isAuthenticated,
     isLoading,
@@ -67,6 +76,29 @@ export function Header({
     isAuthenticated && walletAddress ? walletAddress : "Connect wallet"
   );
 
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const status = await apiClient.get<DomainStatusResponse>(
+          API_PATHS.sdk.domain
+        );
+        if (!cancelled) {
+          setENSVerified(status?.ens?.verified === true);
+        }
+      } catch {
+        if (!cancelled) {
+          setENSVerified(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 py-2 lg:flex-nowrap">
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-2 text-foreground sm:gap-x-6 lg:gap-x-7">
@@ -94,6 +126,11 @@ export function Header({
               {releaseVersion && (
                 <span className="inline-flex h-6 items-center rounded-full bg-secondary px-2.5 text-xs font-semibold text-text-muted">
                   {releaseVersion}
+                </span>
+              )}
+              {ensVerified && (
+                <span className="inline-flex h-6 items-center rounded-full bg-primary/12 px-2.5 text-xs font-semibold text-primary ring-1 ring-primary/20">
+                  ENS verified
                 </span>
               )}
             </div>

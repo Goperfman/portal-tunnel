@@ -250,6 +250,7 @@ func (s *Server) handleDomain(w http.ResponseWriter, r *http.Request) {
 	utils.WriteAPIData(w, http.StatusOK, types.DomainResponse{
 		ProtocolVersion: types.SDKVersion,
 		ReleaseVersion:  types.ReleaseVersion,
+		ENS:             s.acmeManager.ENSStatus(),
 	})
 }
 

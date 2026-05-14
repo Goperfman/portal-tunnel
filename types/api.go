@@ -184,8 +184,20 @@ func HopRouteBytes(method string, route HopRoute) ([]byte, error) {
 }
 
 type DomainResponse struct {
-	ProtocolVersion string `json:"protocol_version"`
-	ReleaseVersion  string `json:"release_version"`
+	ProtocolVersion string    `json:"protocol_version"`
+	ReleaseVersion  string    `json:"release_version"`
+	ENS             ENSStatus `json:"ens"`
+}
+
+type ENSStatus struct {
+	Enabled     bool   `json:"enabled"`
+	Verified    bool   `json:"verified"`
+	Provider    string `json:"provider,omitempty"`
+	Address     string `json:"address,omitempty"`
+	DNSSECState string `json:"dnssec_state,omitempty"`
+	DSRecord    string `json:"ds_record,omitempty"`
+	Message     string `json:"message,omitempty"`
+	LastError   string `json:"last_error,omitempty"`
 }
 
 type TunnelStatusResponse struct {
