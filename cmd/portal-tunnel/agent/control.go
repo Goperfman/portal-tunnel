@@ -200,6 +200,7 @@ func (s *controlHandler) serveWalletAuth(w http.ResponseWriter, r *http.Request)
 			Value:    token,
 			Path:     types.PathAgentPrefix,
 			HttpOnly: true,
+			Secure:   true,
 			SameSite: http.SameSiteStrictMode,
 			MaxAge:   86400,
 		})
@@ -217,6 +218,7 @@ func (s *controlHandler) serveWalletAuth(w http.ResponseWriter, r *http.Request)
 			Value:    "",
 			Path:     types.PathAgentPrefix,
 			HttpOnly: true,
+			Secure:   true,
 			SameSite: http.SameSiteStrictMode,
 			MaxAge:   -1,
 		})
