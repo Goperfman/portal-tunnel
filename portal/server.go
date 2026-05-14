@@ -131,13 +131,6 @@ type Server struct {
 	relaySet        *discovery.RelaySet
 	announceLimiter *discovery.AnnounceLimiter
 	registry        *leaseRegistry
-	testHooks       *serverTestHooks
-}
-
-type serverTestHooks struct {
-	overlayConfig    func() overlay.Config
-	syncOverlayPeers func([]types.RelayDescriptor) error
-	openHopStream    func(context.Context, string, string) (net.Conn, error)
 }
 
 func NewServer(cfg ServerConfig) (*Server, error) {
@@ -560,6 +553,8 @@ func (s *Server) bridgeLeaseConn(ctx context.Context, conn net.Conn, record *lea
 	}
 	if overlayIPv4, forwardToken, hasNextHop := record.nextHop(); hasNextHop {
 		switch {
+		case s.overlay == nil:
+			return errors.New("relay overlay is unavailable")
 		case overlayIPv4 == "":
 			return errors.New("next hop overlay ipv4 is required")
 		case forwardToken == "":
@@ -572,7 +567,7 @@ func (s *Server) bridgeLeaseConn(ctx context.Context, conn net.Conn, record *lea
 		var lastErr error
 		for {
 			var err error
-			next, err = s.openHopStream(openCtx, overlayIPv4, forwardToken)
+			next, err = s.overlay.OpenHopStream(openCtx, overlayIPv4, forwardToken)
 			if err == nil {
 				break
 			}
@@ -601,53 +596,6 @@ func (s *Server) bridgeLeaseConn(ctx context.Context, conn net.Conn, record *lea
 	}
 	s.proxy.bridge(conn, session, record.Key(), s.registry.policy.BPSManager())
 	return nil
-}
-
-func (s *Server) hasHopTransport() bool {
-	return s != nil && (s.overlay != nil || (s.testHooks != nil && s.testHooks.openHopStream != nil))
-}
-
-func (s *Server) hasOverlayRuntime() bool {
-	return s != nil && (s.overlay != nil || (s.testHooks != nil && s.testHooks.overlayConfig != nil && s.testHooks.syncOverlayPeers != nil))
-}
-
-func (s *Server) currentOverlayConfig() (overlay.Config, bool) {
-	if s == nil {
-		return overlay.Config{}, false
-	}
-	if s.overlay != nil {
-		return s.overlay.Config(), true
-	}
-	if s.testHooks != nil && s.testHooks.overlayConfig != nil {
-		return s.testHooks.overlayConfig(), true
-	}
-	return overlay.Config{}, false
-}
-
-func (s *Server) syncOverlayPeers(descriptors []types.RelayDescriptor) error {
-	if s == nil {
-		return errors.New("server is unavailable")
-	}
-	if s.overlay != nil {
-		return s.overlay.Sync(descriptors)
-	}
-	if s.testHooks != nil && s.testHooks.syncOverlayPeers != nil {
-		return s.testHooks.syncOverlayPeers(descriptors)
-	}
-	return errors.New("relay overlay is unavailable")
-}
-
-func (s *Server) openHopStream(ctx context.Context, overlayIPv4, token string) (net.Conn, error) {
-	if s == nil {
-		return nil, errors.New("server is unavailable")
-	}
-	if s.overlay != nil {
-		return s.overlay.OpenHopStream(ctx, overlayIPv4, token)
-	}
-	if s.testHooks != nil && s.testHooks.openHopStream != nil {
-		return s.testHooks.openHopStream(ctx, overlayIPv4, token)
-	}
-	return nil, errors.New("relay overlay is unavailable")
 }
 
 func (s *Server) runRegistryJanitor(ctx context.Context, interval time.Duration) error {
@@ -826,7 +774,8 @@ func (s *Server) newSelfDescriptor(now time.Time) (types.RelayDescriptor, error)
 	var wireGuardPublicKey string
 	var wireGuardPort int
 	supportsOverlay := false
-	if cfg, ok := s.currentOverlayConfig(); ok {
+	if s.overlay != nil {
+		cfg := s.overlay.Config()
 		wireGuardPublicKey = cfg.PublicKey
 		wireGuardPort = cfg.ListenPort
 		supportsOverlay = true

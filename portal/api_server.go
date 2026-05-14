@@ -334,7 +334,7 @@ func (s *Server) handleRegisterChallenge(w http.ResponseWriter, r *http.Request)
 		Path:   types.PathSDKRegister,
 	}).String()
 
-	if strings.TrimSpace(req.HopToken) != "" && !s.hasHopTransport() {
+	if strings.TrimSpace(req.HopToken) != "" && s.overlay == nil {
 		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
 		return
 	}
@@ -408,7 +408,7 @@ func (s *Server) handleHop(w http.ResponseWriter, r *http.Request) {
 		utils.MethodNotAllowedError().Write(w)
 		return
 	}
-	if !s.hasHopTransport() || !s.hasOverlayRuntime() || s.relaySet == nil {
+	if s.overlay == nil || s.relaySet == nil {
 		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
 		return
 	}
@@ -461,7 +461,7 @@ func (s *Server) handleHop(w http.ResponseWriter, r *http.Request) {
 		utils.InvalidRequestError(fmt.Errorf("forward relay: %w", err)).Write(w)
 		return
 	}
-	if err := s.syncOverlayPeers(s.relaySet.OverlayPeerDescriptor()); err != nil {
+	if err := s.overlay.Sync(s.relaySet.OverlayPeerDescriptor()); err != nil {
 		utils.WriteAPIError(w, http.StatusInternalServerError, types.APIErrorCodeInternal, err.Error())
 		return
 	}
