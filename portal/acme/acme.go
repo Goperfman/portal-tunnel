@@ -60,6 +60,7 @@ type Config struct {
 	AWSRegion          string
 	AWSHostedZoneID    string
 	AWSKMSKeyARN       string
+	VultrAPIKey        string
 }
 
 type Manager struct {
@@ -162,6 +163,7 @@ func NewManager(cfg Config) (*Manager, error) {
 	cfg.AWSRegion = strings.TrimSpace(cfg.AWSRegion)
 	cfg.AWSHostedZoneID = strings.TrimSpace(cfg.AWSHostedZoneID)
 	cfg.AWSKMSKeyARN = strings.TrimSpace(cfg.AWSKMSKeyARN)
+	cfg.VultrAPIKey = strings.TrimSpace(cfg.VultrAPIKey)
 	if cfg.ENSGaslessEnabled {
 		if cfg.ENSGaslessAddress == "" {
 			return nil, errors.New("ens gasless address is required when ens gasless import is enabled")

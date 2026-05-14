@@ -145,7 +145,7 @@ only prepares DNSSEC-backed DNS records for ENS-aware clients.
 Requirements:
 
 - public relay domain, not `localhost`
-- `ACME_DNS_PROVIDER=cloudflare`, `gcloud`, or `route53`
+- `ACME_DNS_PROVIDER=cloudflare`, `gcloud`, `route53`, or `vultr`
 - provider credentials with DNS write access
 - `ENS_GASLESS_ENABLED=true`
 - DNSSEC active at the parent zone

@@ -49,7 +49,7 @@ The relay server (`relay-server`) reads configuration from environment variables
 
 | Variable | Default | Type | Description |
 |----------|---------|------|-------------|
-| `ACME_DNS_PROVIDER` | `""` | string | DNS provider for managed DNS-01/A-record sync, ECH HTTPS records, and ENS gasless DNSSEC/TXT automation (`cloudflare` \| `gcloud` \| `route53`); leave empty to use manual `fullchain.pem`/`privatekey.pem` from `IDENTITY_PATH` |
+| `ACME_DNS_PROVIDER` | `""` | string | DNS provider for managed DNS-01/A-record sync, ECH HTTPS records, and ENS gasless DNSSEC/TXT automation (`cloudflare` \| `gcloud` \| `route53` \| `vultr`); leave empty to use manual `fullchain.pem`/`privatekey.pem` from `IDENTITY_PATH` |
 | `ENS_GASLESS_ENABLED` | `false` | bool | Enable ENS gasless DNS import automation for the managed DNS zone and lease hostnames |
 
 ### Admin
@@ -89,6 +89,12 @@ The relay server (`relay-server`) reads configuration from environment variables
 | `AWS_REGION` | `AWS_DEFAULT_REGION` | `us-east-1` | string | AWS region for Route53 and Route53-backed DNS-01 |
 | `AWS_HOSTED_ZONE_ID` | | | string | Explicit Route53 hosted zone ID override |
 | `AWS_DNSSEC_KMS_KEY_ARN` | | | string | AWS KMS key ARN used to create a Route53 DNSSEC key-signing key when needed |
+
+### Vultr
+
+| Variable | Default | Type | Description |
+|----------|---------|------|-------------|
+| `VULTR_API_KEY` | | string | Vultr API key for DNS automation; required when `ACME_DNS_PROVIDER=vultr` |
 
 ---
 
@@ -278,3 +284,9 @@ For ENS gasless behavior and wallet authentication details, see [Wallet and ENS]
 | `AWS_REGION` | No | AWS region; defaults to `us-east-1` |
 | `AWS_HOSTED_ZONE_ID` | No | Route53 hosted zone ID; inferred from the portal domain when omitted |
 | `AWS_DNSSEC_KMS_KEY_ARN` | No | KMS key ARN for DNSSEC key-signing key creation |
+
+### Vultr DNS (`vultr`)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `VULTR_API_KEY` | Yes | Vultr API key with DNS domain, record, and DNSSEC write access |

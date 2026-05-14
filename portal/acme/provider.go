@@ -10,12 +10,14 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/portal/acme/cloudflare"
 	"github.com/gosuda/portal-tunnel/v2/portal/acme/gcloud"
 	"github.com/gosuda/portal-tunnel/v2/portal/acme/route53"
+	"github.com/gosuda/portal-tunnel/v2/portal/acme/vultr"
 )
 
 const (
 	TypeCloudflare = "cloudflare"
 	TypeGCloud     = "gcloud"
 	TypeRoute53    = "route53"
+	TypeVultr      = "vultr"
 )
 
 type DNSProvider interface {
@@ -51,6 +53,8 @@ func NewDNSProvider(providerType string, cfg Config) (DNSProvider, error) {
 			HostedZoneID:    cfg.AWSHostedZoneID,
 			KMSKeyARN:       cfg.AWSKMSKeyARN,
 		}), nil
+	case TypeVultr:
+		return vultr.New(cfg.VultrAPIKey), nil
 	default:
 		return nil, fmt.Errorf("unsupported acme dns provider: %q", providerType)
 	}
