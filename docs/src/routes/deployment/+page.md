@@ -58,6 +58,9 @@ Set `ACME_DNS_PROVIDER` to one of:
 - `gcloud`
 - `route53`
 
+For a focused explanation of wallet auth and ENS gasless DNS behavior, see
+[Wallet and ENS](/wallet-and-ens).
+
 ### 3.2 Cloudflare setup
 
 #### Add domain to Cloudflare

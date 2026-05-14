@@ -65,6 +65,11 @@ Admin clients authenticate with a wallet signature:
 5. Include the cookie in subsequent admin requests
 6. Sessions expire after 24 hours
 
+The local agent has its own loopback wallet auth endpoints under
+`/v1/agent/auth/*`. Agent wallet sessions can read `/v1/agent/status`; mutating
+agent actions require the bearer token stored in the agent state directory. See
+[Portal Agent](/portal-agent) for the local control API.
+
 ## Endpoint Summary
 
 ### SDK Endpoints
@@ -109,7 +114,7 @@ Admin clients authenticate with a wallet signature:
 | `GET` | `/healthz` | Health check | None |
 | `GET` | `/discovery` | Relay discovery | None |
 | `POST` | `/discovery/announce` | Relay discovery self-announce | Signed Descriptor |
-| `POST` | `/v1/sign` | Keyless TLS signing | None |
+| `POST` | `/v1/sign` | Keyless TLS signing | Access Token |
 | `GET` | `/thumbnail/{hostname}` | Cached thumbnail screenshot | None |
 | `GET` | `/tunnel/status` | Tunnel connection status | Access Token |
 
@@ -194,7 +199,11 @@ Submits this relay's signed descriptor to a bootstrap relay so registry-external
 
 ### `POST /v1/sign`
 
-Keyless TLS signing endpoint. Used by the relay's keyless TLS infrastructure. Only available when the API server is configured with a TLS private key.
+Keyless TLS signing endpoint. Used by the SDK-side tenant TLS server during the
+default stream handshake. Requests must include a valid lease access token in
+the `X-Portal-Access-Token` header.
+
+Only available when the API server is configured with a TLS private key.
 
 Returns `404 Not Found` if signing is not configured.
 
