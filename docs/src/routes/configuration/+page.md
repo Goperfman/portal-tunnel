@@ -198,6 +198,7 @@ Agent fields:
 | `state_dir` | Platform default state directory | Stores the local control endpoint token and runtime state |
 | `control_addr` | `127.0.0.1:4018` | Loopback-only local control API address |
 | `service_name` | `portal-agent` | OS service name |
+| `allowed_wallets` | empty | Wallet addresses allowed to sign in to the local agent UI; empty allows any wallet on the loopback UI |
 
 Tunnel fields mirror `portal expose` flags:
 
@@ -224,7 +225,6 @@ Stores the secp256k1 identity used to sign tunnel sessions and relay descriptors
 | `address` | string | Derived EVM address used for SIWE and identity ownership |
 | `public_key` | string | Compressed secp256k1 public key hex |
 | `private_key` | string | secp256k1 private key hex; keep secret |
-| `admin_secret_key` | string | Relay-only admin login secret, generated automatically when missing |
 | `wireguard_public_key` | string | Relay-only WireGuard overlay public key when discovery is enabled |
 | `wireguard_private_key` | string | Relay-only WireGuard overlay private key when discovery is enabled |
 | `encrypted_client_hello_seed` | string | Relay-only HKDF salt for deriving the ECH HPKE private key; generated automatically when missing; keep secret |

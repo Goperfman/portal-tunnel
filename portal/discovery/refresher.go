@@ -21,7 +21,7 @@ const (
 
 type OverlayRuntime interface {
 	DiscoverRelay(context.Context, types.RelayDescriptor) (types.DiscoveryResponse, error)
-	Sync([]RelayState) error
+	Sync([]types.RelayDescriptor) error
 }
 
 type Refresher struct {
@@ -206,11 +206,15 @@ func (r *Refresher) refreshHTTPS(ctx context.Context) error {
 }
 
 func (r *Refresher) refreshOverlay(ctx context.Context) error {
-	states := r.relaySet.OverlayPeerStates()
+	states := r.relaySet.overlayPeerRelayStates()
 	if len(states) == 0 {
 		return nil
 	}
-	if err := r.overlay.Sync(states); err != nil {
+	descriptors := make([]types.RelayDescriptor, 0, len(states))
+	for _, state := range states {
+		descriptors = append(descriptors, state.Descriptor)
+	}
+	if err := r.overlay.Sync(descriptors); err != nil {
 		return err
 	}
 	relaySetChanged := false
@@ -251,7 +255,7 @@ func (r *Refresher) refreshOverlay(ctx context.Context) error {
 	if !relaySetChanged {
 		return nil
 	}
-	if err := r.overlay.Sync(r.relaySet.OverlayPeerStates()); err != nil {
+	if err := r.overlay.Sync(r.relaySet.OverlayPeerDescriptor()); err != nil {
 		return err
 	}
 	return nil

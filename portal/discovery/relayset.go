@@ -287,7 +287,7 @@ func (s *RelaySet) PriorityRelaysWithTrace(clientState ClientState) ([]string, t
 		Int("output_count", len(trace.OutputURLs)).
 		Str("mode", trace.Mode).
 		Bool("congested", trace.Congested).
-		Strs("top3", first3(trace.OutputURLs)).
+		Strs("relay_urls", trace.OutputURLs).
 		Msg("relay selection")
 	return result, trace
 }
@@ -322,7 +322,7 @@ func (s *RelaySet) PriorityMultiHopWithTrace(clientState ClientState) ([]string,
 		Int("output_count", len(trace.OutputURLs)).
 		Str("mode", trace.Mode).
 		Bool("congested", trace.Congested).
-		Strs("top3", first3(trace.OutputURLs)).
+		Strs("relay_urls", trace.OutputURLs).
 		Msg("relay selection")
 	return result, trace
 }
@@ -335,16 +335,7 @@ func (s *RelaySet) PriorityMultiHop(clientState ClientState) []string {
 	return out
 }
 
-// first3 returns a slice containing the first three elements of s, or all
-// elements if s has fewer than three. It never modifies the input slice.
-func first3(s []string) []string {
-	if len(s) <= 3 {
-		return s
-	}
-	return s[:3]
-}
-
-func (s *RelaySet) OverlayPeerStates() []RelayState {
+func (s *RelaySet) overlayPeerRelayStates() []RelayState {
 	now := time.Now().UTC()
 	s.mu.RLock()
 	out := make([]RelayState, 0, len(s.relays))
@@ -357,6 +348,18 @@ func (s *RelaySet) OverlayPeerStates() []RelayState {
 	s.mu.RUnlock()
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+func (s *RelaySet) OverlayPeerDescriptor() []types.RelayDescriptor {
+	states := s.overlayPeerRelayStates()
+	if len(states) == 0 {
+		return nil
+	}
+	out := make([]types.RelayDescriptor, 0, len(states))
+	for _, state := range states {
+		out = append(out, state.Descriptor)
 	}
 	return out
 }

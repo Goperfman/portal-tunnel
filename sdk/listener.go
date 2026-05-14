@@ -20,6 +20,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/gosuda/portal-tunnel/v2/portal/discovery"
+	"github.com/gosuda/portal-tunnel/v2/portal/identity"
 	"github.com/gosuda/portal-tunnel/v2/portal/keyless"
 	"github.com/gosuda/portal-tunnel/v2/portal/transport"
 	"github.com/gosuda/portal-tunnel/v2/types"
@@ -31,7 +32,7 @@ type listenerConfig struct {
 	UDPEnabled       bool
 	TCPEnabled       bool
 	BanMITM          bool
-	Metadata         types.LeaseMetadata
+	Metadata         func() types.LeaseMetadata
 	DialTimeout      time.Duration
 	RequestTimeout   time.Duration
 	HandshakeTimeout time.Duration
@@ -52,8 +53,8 @@ type listener struct {
 	closeOnce sync.Once
 
 	relayURL       *url.URL
+	metadata       func() types.LeaseMetadata
 	identity       types.Identity
-	metadata       types.LeaseMetadata
 	relaySet       *discovery.RelaySet
 	multiHop       []string
 	udpEnabled     bool
@@ -73,6 +74,8 @@ type listener struct {
 	httpClient    *http.Client
 	httpTransport *http.Transport
 	tlsConfig     *tls.Config
+
+	releaseVersion string
 
 	leaseMu sync.RWMutex
 	lease   *listenerSnapshot
@@ -104,10 +107,10 @@ func newListener(ctx context.Context, relayURL string, cfg listenerConfig) (*lis
 		cancel:         cancel,
 		doneCh:         listenerCtx.Done(),
 		relayURL:       relayurl,
-		identity:       cfg.Identity,
 		metadata:       cfg.Metadata,
+		identity:       cfg.Identity.Copy(),
 		relaySet:       cfg.relaySet,
-		multiHop:       cfg.MultiHop,
+		multiHop:       append([]string(nil), cfg.MultiHop...),
 		udpEnabled:     cfg.UDPEnabled,
 		tcpEnabled:     cfg.TCPEnabled,
 		dialTimeout:    dialTimeout,
@@ -132,6 +135,13 @@ func newListener(ctx context.Context, relayURL string, cfg listenerConfig) (*lis
 
 	go l.run(listenerCtx)
 	return l, nil
+}
+
+func (l *listener) metadataSnapshot() types.LeaseMetadata {
+	if l.metadata == nil {
+		return types.LeaseMetadata{}
+	}
+	return l.metadata()
 }
 
 func (l *listener) run(ctx context.Context) {
@@ -850,7 +860,7 @@ func (l *listener) tenantECHMaterials(publicHostname, routeHostname string) ([]t
 	if routeHostname == "" {
 		return nil, nil, nil
 	}
-	echSeed, err := l.identity.DeriveToken("tenant-ech", publicHostname, routeHostname)
+	echSeed, err := identity.DeriveToken(l.identity, "tenant-ech", publicHostname, routeHostname)
 	if err != nil {
 		return nil, nil, fmt.Errorf("derive tenant ech seed: %w", err)
 	}

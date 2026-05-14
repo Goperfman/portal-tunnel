@@ -5,11 +5,53 @@ import (
 	"testing"
 
 	"github.com/gosuda/portal-tunnel/v2/portal/discovery"
+	"github.com/gosuda/portal-tunnel/v2/types"
 )
 
 func mustRelaySet(t *testing.T, relayURLs ...string) *discovery.RelaySet {
 	t.Helper()
 	return discovery.NewRelaySet(relayURLs)
+}
+
+func TestExposureConfigSnapshotsDoNotShareMutableState(t *testing.T) {
+	exposure := &Exposure{
+		cfg: ExposeConfig{
+			RelayURLs: []string{"https://relay-a.example"},
+			Identity: types.Identity{
+				Name:    "svc",
+				Address: "portal-address",
+			},
+			Metadata: types.LeaseMetadata{
+				Tags: []string{"initial"},
+			},
+		},
+	}
+
+	snapshot := exposure.Config()
+	snapshot.RelayURLs[0] = "https://mutated.example"
+	snapshot.Metadata.Tags[0] = "mutated"
+
+	next := exposure.Config()
+	if got := next.RelayURLs[0]; got != "https://relay-a.example" {
+		t.Fatalf("RelayURLs[0] = %q, want original relay", got)
+	}
+	if got := next.Metadata.Tags[0]; got != "initial" {
+		t.Fatalf("Metadata.Tags[0] = %q, want original tag", got)
+	}
+
+	exposure.cfgMu.Lock()
+	exposure.cfg.MaxActiveRelays = 2
+	exposure.cfg.Metadata = types.LeaseMetadata{Tags: []string{"updated"}}
+	exposure.cfgMu.Unlock()
+
+	metadata := exposure.metadata()
+	metadata.Tags[0] = "mutated"
+	if got := exposure.metadata().Tags[0]; got != "updated" {
+		t.Fatalf("MetadataSnapshot().Tags[0] = %q, want updated", got)
+	}
+	if got := exposure.Config().MaxActiveRelays; got != 2 {
+		t.Fatalf("MaxActiveRelays = %d, want 2", got)
+	}
 }
 
 func TestExposureReconcileRemovesBannedRelayFromActiveSet(t *testing.T) {
@@ -28,7 +70,7 @@ func TestExposureReconcileRemovesBannedRelayFromActiveSet(t *testing.T) {
 	}
 
 	exposure := &Exposure{
-		explicitRelays: []string{relayA, relayB},
+		cfg:            ExposeConfig{RelayURLs: []string{relayA, relayB}},
 		relaySet:       mustRelaySet(t, relayA, relayB),
 		relayListeners: make(map[string]*listener, 2),
 	}
@@ -59,9 +101,9 @@ func TestExposureReconcileRemovesBannedRelayFromActiveSet(t *testing.T) {
 		t.Fatalf("ActiveRelayURLs() = %v, want [%q]", got, relayB)
 	}
 
-	exposure.listenerMu.RLock()
+	exposure.mu.RLock()
 	_, listenerExists := exposure.relayListeners[relayA]
-	exposure.listenerMu.RUnlock()
+	exposure.mu.RUnlock()
 	if listenerExists {
 		t.Fatal("banned relay listener still exists in exposure.listeners")
 	}
@@ -84,7 +126,7 @@ func TestExposureReconcileRemovesStaleListener(t *testing.T) {
 
 	relayAClosed := make(chan struct{})
 	exposure := &Exposure{
-		explicitRelays: []string{relayA, relayB},
+		cfg:            ExposeConfig{RelayURLs: []string{relayA, relayB}},
 		relaySet:       mustRelaySet(t, relayA, relayB),
 		relayListeners: make(map[string]*listener, 2),
 	}
@@ -111,10 +153,10 @@ func TestExposureReconcileRemovesStaleListener(t *testing.T) {
 	}
 
 	knownRelayURLs := exposure.ActiveRelayURLs()
-	exposure.listenerMu.RLock()
+	exposure.mu.RLock()
 	_, relayAExists := exposure.relayListeners[relayA]
 	_, relayBExists := exposure.relayListeners[relayB]
-	exposure.listenerMu.RUnlock()
+	exposure.mu.RUnlock()
 	if len(knownRelayURLs) != 1 || knownRelayURLs[0] != relayB {
 		t.Fatalf("knownRelayURLs = %v, want [%q]", knownRelayURLs, relayB)
 	}
@@ -136,7 +178,7 @@ func TestExposureRemoveRelayStopsRunningListener(t *testing.T) {
 
 	relayAClosed := make(chan struct{})
 	exposure := &Exposure{
-		explicitRelays: []string{relayA},
+		cfg:            ExposeConfig{RelayURLs: []string{relayA}},
 		relaySet:       mustRelaySet(t, relayA),
 		relayListeners: make(map[string]*listener, 1),
 	}
@@ -158,8 +200,8 @@ func TestExposureRemoveRelayStopsRunningListener(t *testing.T) {
 	if got := exposure.ActiveRelayURLs(); len(got) != 0 {
 		t.Fatalf("ActiveRelayURLs() = %v, want empty", got)
 	}
-	if len(exposure.explicitRelays) != 0 {
-		t.Fatalf("explicitRelays = %v, want empty", exposure.explicitRelays)
+	if got := exposure.Config().RelayURLs; len(got) != 0 {
+		t.Fatalf("RelayURLs = %v, want empty", got)
 	}
 	if got := exposure.relaySet.PriorityRelays(discovery.ClientState{}); len(got) != 0 {
 		t.Fatalf("PriorityRelays() = %v, want empty", got)

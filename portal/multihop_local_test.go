@@ -17,10 +17,10 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/portal/acme"
 	"github.com/gosuda/portal-tunnel/v2/portal/auth"
 	"github.com/gosuda/portal-tunnel/v2/portal/discovery"
+	"github.com/gosuda/portal-tunnel/v2/portal/identity"
 	"github.com/gosuda/portal-tunnel/v2/portal/overlay"
 	"github.com/gosuda/portal-tunnel/v2/sdk"
 	"github.com/gosuda/portal-tunnel/v2/types"
-	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
 type localRelayCluster struct {
@@ -54,10 +54,10 @@ func (o *fakeOverlay) Config() overlay.Config {
 	return o.cfg.Copy()
 }
 
-func (o *fakeOverlay) Sync(states []discovery.RelayState) error {
-	synced := make(map[string]struct{}, len(states))
-	for _, state := range states {
-		overlayIP, err := utils.DeriveWireGuardOverlayIPv4(state.Descriptor.WireGuardPublicKey)
+func (o *fakeOverlay) Sync(descriptors []types.RelayDescriptor) error {
+	synced := make(map[string]struct{}, len(descriptors))
+	for _, desc := range descriptors {
+		overlayIP, err := identity.DeriveWireGuardOverlayIPv4(desc.WireGuardPublicKey)
 		if err != nil {
 			return err
 		}
@@ -178,13 +178,13 @@ func startLocalRelay(t *testing.T, ctx context.Context, spec localRelaySpec) *lo
 		spec.ServerMutator(server)
 	}
 
-	wgPrivate, err := utils.GenerateWireGuardPrivateKey()
+	wgPrivate, err := identity.GenerateWireGuardPrivateKey()
 	if err != nil {
-		t.Fatalf("GenerateWireGuardPrivateKey(%s) error = %v", name, err)
+		t.Fatalf("identity.GenerateWireGuardPrivateKey(%s) error = %v", name, err)
 	}
-	wgPublic, err := utils.WireGuardPublicKeyFromPrivate(wgPrivate)
+	wgPublic, err := identity.WireGuardPublicKeyFromPrivate(wgPrivate)
 	if err != nil {
-		t.Fatalf("WireGuardPublicKeyFromPrivate(%s) error = %v", name, err)
+		t.Fatalf("identity.WireGuardPublicKeyFromPrivate(%s) error = %v", name, err)
 	}
 	fakeOverlay := &fakeOverlay{cfg: overlay.Config{
 		PublicKey:  wgPublic,
@@ -198,9 +198,9 @@ func startLocalRelay(t *testing.T, ctx context.Context, spec localRelaySpec) *lo
 	}
 	server.cfg.DiscoveryEnabled = true
 
-	overlayIP, err := utils.DeriveWireGuardOverlayIPv4(wgPublic)
+	overlayIP, err := identity.DeriveWireGuardOverlayIPv4(wgPublic)
 	if err != nil {
-		t.Fatalf("DeriveWireGuardOverlayIPv4(%s) error = %v", name, err)
+		t.Fatalf("identity.DeriveWireGuardOverlayIPv4(%s) error = %v", name, err)
 	}
 	return &localRelay{
 		name:              name,
@@ -225,7 +225,7 @@ func (c *localRelayCluster) seedDiscovery(t *testing.T) {
 		}
 		if relay.descriptorMutator != nil {
 			relay.descriptorMutator(&desc)
-			desc, err = auth.SignRelayDescriptor(desc, relay.server.identity.PrivateKey)
+			desc, err = auth.SignRelayDescriptor(desc, relay.server.authority)
 			if err != nil {
 				t.Fatalf("SignRelayDescriptor(%s) error = %v", relay.name, err)
 			}
@@ -266,7 +266,7 @@ func (c *localRelayCluster) relayURLs() []string {
 func (c *localRelayCluster) exposeMultiHop(t *testing.T, ctx context.Context, name string) *sdk.Exposure {
 	t.Helper()
 	exposure, err := sdk.Expose(ctx, sdk.ExposeConfig{
-		Name:       name,
+		Identity:   types.Identity{Name: name},
 		TargetAddr: "127.0.0.1:1",
 		MultiHop:   c.relayURLs(),
 		BanMITM:    false,
