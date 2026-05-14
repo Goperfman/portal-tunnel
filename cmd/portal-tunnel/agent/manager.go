@@ -155,6 +155,51 @@ func (m *manager) SetMultiHop(id string, relayURLs []string) error {
 	return tunnel.SetMultiHop(multiHop)
 }
 
+func (m *manager) UpdateTunnel(id string, req types.AgentTunnelUpdateRequest) error {
+	if req.Empty() {
+		return errors.New("tunnel update requires at least one field")
+	}
+	updateMetadata := req.Metadata != nil && !req.Metadata.Empty()
+	updateMaxActiveRelays := req.MaxActiveRelays != nil
+	if err := m.updateTunnelConfig(id, func(tunnel *TunnelConfig) error {
+		if req.MaxActiveRelays != nil {
+			if *req.MaxActiveRelays <= 0 {
+				return errors.New("max_active_relays must be a positive integer")
+			}
+			tunnel.MaxActiveRelays = *req.MaxActiveRelays
+		}
+		if req.Metadata != nil {
+			if req.Metadata.Description != nil {
+				tunnel.Description = strings.TrimSpace(*req.Metadata.Description)
+			}
+			if req.Metadata.Owner != nil {
+				tunnel.Owner = strings.TrimSpace(*req.Metadata.Owner)
+			}
+			if req.Metadata.Thumbnail != nil {
+				tunnel.Thumbnail = strings.TrimSpace(*req.Metadata.Thumbnail)
+			}
+			if req.Metadata.Tags != nil {
+				tunnel.Tags = normalizeAgentMetadataTags(*req.Metadata.Tags)
+			}
+			if req.Metadata.Hide != nil {
+				tunnel.Hide = *req.Metadata.Hide
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	id = strings.TrimSpace(id)
+	m.mu.RLock()
+	tunnel := m.tunnels[id]
+	m.mu.RUnlock()
+	if tunnel == nil {
+		return fmt.Errorf("tunnel %q not found", id)
+	}
+	return tunnel.UpdateSettings(updateMetadata, updateMaxActiveRelays)
+}
+
 func (m *manager) AddTunnel(req types.AgentTunnelRequest) error {
 	m.configMu.Lock()
 	defer m.configMu.Unlock()
@@ -472,6 +517,24 @@ func (t *managedTunnel) SetMultiHop(relayURLs []string) error {
 	return exposure.SetMultiHop(relayURLs)
 }
 
+func (t *managedTunnel) UpdateSettings(updateMetadata, updateMaxActiveRelays bool) error {
+	t.mu.RLock()
+	cfg := t.cfg
+	exposure := t.exposure
+	t.mu.RUnlock()
+	if exposure == nil {
+		return nil
+	}
+	var err error
+	if updateMetadata {
+		err = errors.Join(err, exposure.UpdateMetadata(metadataFromTunnelConfig(cfg)))
+	}
+	if updateMaxActiveRelays {
+		err = errors.Join(err, exposure.UpdateMaxActiveRelays(cfg.MaxActiveRelays))
+	}
+	return err
+}
+
 func (t *managedTunnel) Snapshot() types.AgentTunnelStatus {
 	t.mu.RLock()
 	cfg := t.cfg
@@ -501,12 +564,14 @@ func (t *managedTunnel) Snapshot() types.AgentTunnelStatus {
 	}
 
 	status := types.AgentTunnelStatus{
-		ID:         cfg.ID,
-		Name:       cfg.Name,
-		State:      state,
-		TargetAddr: cfg.TargetAddr,
-		LastError:  lastError,
-		MultiHop:   append([]string(nil), cfg.MultiHop...),
+		ID:              cfg.ID,
+		Name:            cfg.Name,
+		State:           state,
+		TargetAddr:      cfg.TargetAddr,
+		LastError:       lastError,
+		MaxActiveRelays: cfg.MaxActiveRelays,
+		Metadata:        metadataFromTunnelConfig(cfg),
+		MultiHop:        append([]string(nil), cfg.MultiHop...),
 	}
 	if exposure == nil {
 		if strings.TrimSpace(runtime.Address) != "" {
@@ -525,10 +590,11 @@ func (t *managedTunnel) Snapshot() types.AgentTunnelStatus {
 	t.mu.Lock()
 	if t.exposure == exposure {
 		t.runtime = types.AgentTunnelStatus{
-			Address:    snapshot.Address,
-			TargetAddr: snapshot.TargetAddr,
-			MultiHop:   append([]string(nil), snapshot.MultiHop...),
-			Relays:     append([]types.AgentRelayStatus(nil), snapshot.Relays...),
+			Address:         snapshot.Address,
+			TargetAddr:      snapshot.TargetAddr,
+			MaxActiveRelays: snapshot.MaxActiveRelays,
+			MultiHop:        append([]string(nil), snapshot.MultiHop...),
+			Relays:          append([]types.AgentRelayStatus(nil), snapshot.Relays...),
 		}
 	}
 	t.mu.Unlock()
@@ -580,9 +646,9 @@ func (t *managedTunnel) runOnce(ctx context.Context) error {
 	exposure, err := sdk.Expose(ctx, sdk.ExposeConfig{
 		RelayURLs:       append([]string(nil), cfg.RelayURLs...),
 		Discovery:       discovery,
+		Identity:        types.Identity{Name: cfg.Name},
 		IdentityPath:    cfg.IdentityPath,
 		IdentityJSON:    cfg.IdentityJSON,
-		Name:            cfg.Name,
 		TargetAddr:      cfg.TargetAddr,
 		UDPAddr:         cfg.UDPAddr,
 		UDPEnabled:      cfg.UDPEnabled,
@@ -591,13 +657,7 @@ func (t *managedTunnel) runOnce(ctx context.Context) error {
 		MultiHopDepth:   cfg.MultiHopDepth,
 		BanMITM:         banMITM,
 		MaxActiveRelays: cfg.MaxActiveRelays,
-		Metadata: types.LeaseMetadata{
-			Description: cfg.Description,
-			Tags:        append([]string(nil), cfg.Tags...),
-			Owner:       cfg.Owner,
-			Thumbnail:   cfg.Thumbnail,
-			Hide:        cfg.Hide,
-		},
+		Metadata:        metadataFromTunnelConfig(cfg),
 	})
 	if err != nil {
 		return err
@@ -606,10 +666,11 @@ func (t *managedTunnel) runOnce(ctx context.Context) error {
 	t.mu.Lock()
 	t.exposure = exposure
 	t.runtime = types.AgentTunnelStatus{
-		Address:    snapshot.Address,
-		TargetAddr: snapshot.TargetAddr,
-		MultiHop:   append([]string(nil), snapshot.MultiHop...),
-		Relays:     append([]types.AgentRelayStatus(nil), snapshot.Relays...),
+		Address:         snapshot.Address,
+		TargetAddr:      snapshot.TargetAddr,
+		MaxActiveRelays: snapshot.MaxActiveRelays,
+		MultiHop:        append([]string(nil), snapshot.MultiHop...),
+		Relays:          append([]types.AgentRelayStatus(nil), snapshot.Relays...),
 	}
 	t.lastError = ""
 	t.mu.Unlock()
@@ -632,4 +693,30 @@ func (t *managedTunnel) runOnce(ctx context.Context) error {
 		return ctx.Err()
 	}
 	return err
+}
+
+func metadataFromTunnelConfig(cfg TunnelConfig) types.LeaseMetadata {
+	return types.LeaseMetadata{
+		Description: strings.TrimSpace(cfg.Description),
+		Tags:        normalizeAgentMetadataTags(cfg.Tags),
+		Owner:       strings.TrimSpace(cfg.Owner),
+		Thumbnail:   strings.TrimSpace(cfg.Thumbnail),
+		Hide:        cfg.Hide,
+	}
+}
+
+func normalizeAgentMetadataTags(tags []string) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if tag = strings.TrimSpace(tag); tag != "" {
+			out = append(out, tag)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

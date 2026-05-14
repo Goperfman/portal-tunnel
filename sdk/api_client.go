@@ -113,7 +113,7 @@ func (l *listener) buildHopRoutes(hopPath []types.RelayDescriptor, publicHostnam
 			route.RouteHostname = routeHostname
 			route.HostnameHash = utils.HostnameHash(publicHostname)
 			route.ECHConfigList = bytes.Clone(echConfigList)
-			route.Metadata = l.metadata.Copy()
+			route.Metadata = l.metadataSnapshot()
 			route.Metadata.Hide = true
 		} else {
 			route.MatchToken = previousHopToken
@@ -194,7 +194,7 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 
 	registerReq := types.RegisterChallengeRequest{
 		Identity:   registerIdentity,
-		Metadata:   l.metadata,
+		Metadata:   l.metadataSnapshot(),
 		TTL:        int(ttl / time.Second),
 		UDPEnabled: udpEnabled,
 		TCPEnabled: tcpEnabled,
@@ -243,7 +243,7 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 
 func (l *listener) renewRegisteredLease(ctx context.Context, ttl time.Duration, accessToken string) (types.RenewResponse, error) {
 	var resp types.RenewResponse
-	req := newRenewRequest(ttl, accessToken, utils.ResolvePublicIP(ctx), l.metadata)
+	req := newRenewRequest(ttl, accessToken, utils.ResolvePublicIP(ctx), l.metadataSnapshot())
 	if err := utils.HTTPDoAPIPath(ctx, l.httpClient, l.relayURL, http.MethodPost, types.PathSDKRenew, req, nil, &resp); err != nil {
 		return types.RenewResponse{}, err
 	}
@@ -285,6 +285,10 @@ func (l *listener) registerHopRoutes(ctx context.Context, expiresAt time.Time, r
 		}
 		route.ForwardRelay = desc
 		route.FirstSeenAt = expiresAt.Add(-30 * time.Second)
+		if i == 0 {
+			route.Metadata = l.metadataSnapshot()
+			route.Metadata.Hide = true
+		}
 		route, err := auth.SignHopRoute(http.MethodPost, route, authority, expiresAt)
 		if err != nil {
 			return "", 0, err

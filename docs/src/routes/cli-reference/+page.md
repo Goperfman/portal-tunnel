@@ -201,7 +201,7 @@ portal agent restart
 |---------|-------------|
 | `portal agent run` | Install or update and start the managed agent service |
 | `portal agent run --config config.toml --foreground` | Run the agent in the current terminal |
-| `portal agent dashboard` | Open the local TUI for tunnels, relays, and multi-hop routes |
+| `portal agent dashboard` | Open the local TUI for tunnels, relays, multi-hop routes, and settings |
 | `portal agent stop` | Gracefully stop the agent and disable or stop the OS service |
 | `portal agent restart` | Stop the current agent if present, install or update the service, and start it again |
 

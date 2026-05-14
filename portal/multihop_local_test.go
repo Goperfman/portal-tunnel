@@ -266,7 +266,7 @@ func (c *localRelayCluster) relayURLs() []string {
 func (c *localRelayCluster) exposeMultiHop(t *testing.T, ctx context.Context, name string) *sdk.Exposure {
 	t.Helper()
 	exposure, err := sdk.Expose(ctx, sdk.ExposeConfig{
-		Name:       name,
+		Identity:   types.Identity{Name: name},
 		TargetAddr: "127.0.0.1:1",
 		MultiHop:   c.relayURLs(),
 		BanMITM:    false,

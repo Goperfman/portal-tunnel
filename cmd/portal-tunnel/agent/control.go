@@ -88,11 +88,23 @@ func (s *controlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !ok {
-			if !utils.RequireMethod(w, r, http.MethodDelete) {
-				return
-			}
-			if err := s.manager.DeleteTunnel(tunnelID); err != nil {
-				utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, err.Error())
+			switch r.Method {
+			case http.MethodDelete:
+				if err := s.manager.DeleteTunnel(tunnelID); err != nil {
+					utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, err.Error())
+					return
+				}
+			case http.MethodPatch:
+				req, ok := utils.DecodeJSONRequest[types.AgentTunnelUpdateRequest](w, r, controlRequestBodyLimit)
+				if !ok {
+					return
+				}
+				if err := s.manager.UpdateTunnel(tunnelID, req); err != nil {
+					utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, err.Error())
+					return
+				}
+			default:
+				utils.MethodNotAllowedError().Write(w)
 				return
 			}
 			utils.WriteAPIData(w, http.StatusAccepted, map[string]bool{"accepted": true})
@@ -302,6 +314,11 @@ func SetMultiHop(ctx context.Context, stateDir, tunnelID string, relayURLs []str
 		return controlRequest(ctx, stateDir, http.MethodDelete, path, nil, nil)
 	}
 	return controlRequest(ctx, stateDir, http.MethodPost, path, types.AgentMultiHopRequest{Relays: relayURLs}, nil)
+}
+
+func UpdateTunnel(ctx context.Context, stateDir, tunnelID string, req types.AgentTunnelUpdateRequest) error {
+	path := types.PathAgentTunnelsPrefix + url.PathEscape(tunnelID)
+	return controlRequest(ctx, stateDir, http.MethodPatch, path, req, nil)
 }
 
 func controlRequest(ctx context.Context, stateDir, method, path string, payload any, out any) error {

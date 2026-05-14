@@ -8,14 +8,16 @@ type AgentStatusResponse struct {
 }
 
 type AgentTunnelStatus struct {
-	ID         string             `json:"id"`
-	Name       string             `json:"name,omitempty"`
-	Address    string             `json:"address,omitempty"`
-	State      string             `json:"state"`
-	TargetAddr string             `json:"target_addr,omitempty"`
-	LastError  string             `json:"last_error,omitempty"`
-	MultiHop   []string           `json:"multi_hop,omitempty"`
-	Relays     []AgentRelayStatus `json:"relays,omitempty"`
+	ID              string             `json:"id"`
+	Name            string             `json:"name,omitempty"`
+	Address         string             `json:"address,omitempty"`
+	State           string             `json:"state"`
+	TargetAddr      string             `json:"target_addr,omitempty"`
+	LastError       string             `json:"last_error,omitempty"`
+	MaxActiveRelays int                `json:"max_active_relays,omitempty"`
+	Metadata        LeaseMetadata      `json:"metadata,omitempty"`
+	MultiHop        []string           `json:"multi_hop,omitempty"`
+	Relays          []AgentRelayStatus `json:"relays,omitempty"`
 }
 
 type AgentRelayStatus struct {
@@ -43,4 +45,30 @@ type AgentRelayRequest struct {
 
 type AgentMultiHopRequest struct {
 	Relays []string `json:"relays"`
+}
+
+type AgentTunnelUpdateRequest struct {
+	MaxActiveRelays *int                  `json:"max_active_relays,omitempty"`
+	Metadata        *AgentMetadataRequest `json:"metadata,omitempty"`
+}
+
+func (r AgentTunnelUpdateRequest) Empty() bool {
+	return r.MaxActiveRelays == nil &&
+		(r.Metadata == nil || r.Metadata.Empty())
+}
+
+type AgentMetadataRequest struct {
+	Description *string   `json:"description,omitempty"`
+	Owner       *string   `json:"owner,omitempty"`
+	Thumbnail   *string   `json:"thumbnail,omitempty"`
+	Tags        *[]string `json:"tags,omitempty"`
+	Hide        *bool     `json:"hide,omitempty"`
+}
+
+func (r AgentMetadataRequest) Empty() bool {
+	return r.Description == nil &&
+		r.Owner == nil &&
+		r.Thumbnail == nil &&
+		r.Tags == nil &&
+		r.Hide == nil
 }
