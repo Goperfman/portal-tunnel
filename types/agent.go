@@ -23,6 +23,7 @@ type AgentTunnelStatus struct {
 type AgentRelayStatus struct {
 	RelayURL        string `json:"relay_url"`
 	PublicURL       string `json:"public_url,omitempty"`
+	Version         string `json:"version,omitempty"`
 	Explicit        bool   `json:"explicit,omitempty"`
 	Connecting      bool   `json:"connecting"`
 	Bootstrap       bool   `json:"bootstrap"`

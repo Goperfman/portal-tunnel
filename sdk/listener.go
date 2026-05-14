@@ -75,6 +75,8 @@ type listener struct {
 	httpTransport *http.Transport
 	tlsConfig     *tls.Config
 
+	releaseVersion string
+
 	leaseMu sync.RWMutex
 	lease   *listenerSnapshot
 }

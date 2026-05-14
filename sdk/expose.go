@@ -76,15 +76,6 @@ func (e *Exposure) config() ExposeConfig {
 	return e.cfg.clone()
 }
 
-func (e *Exposure) updateCfg(update func(*ExposeConfig) error) error {
-	if e == nil {
-		return errors.New("exposure config is not initialized")
-	}
-	e.cfgMu.Lock()
-	defer e.cfgMu.Unlock()
-	return update(&e.cfg)
-}
-
 func (e *Exposure) metadata() types.LeaseMetadata {
 	if e == nil {
 		return types.LeaseMetadata{}
@@ -229,14 +220,11 @@ func (e *Exposure) AddRelay(relayURL string) error {
 		return errors.New("exposure relay set is not initialized")
 	}
 
-	if err := e.updateCfg(func(cfg *ExposeConfig) error {
-		if !slices.Contains(cfg.RelayURLs, relayURL) {
-			cfg.RelayURLs = append(append([]string(nil), cfg.RelayURLs...), relayURL)
-		}
-		return nil
-	}); err != nil {
-		return err
+	e.cfgMu.Lock()
+	if !slices.Contains(e.cfg.RelayURLs, relayURL) {
+		e.cfg.RelayURLs = append(append([]string(nil), e.cfg.RelayURLs...), relayURL)
 	}
+	e.cfgMu.Unlock()
 
 	e.relaySet.AllowRelayURL(relayURL)
 	e.relaySet.AddBootstrapRelayURL(relayURL)
@@ -257,21 +245,19 @@ func (e *Exposure) RemoveRelay(relayURL string) error {
 		return errors.New("exposure relay set is not initialized")
 	}
 
-	if err := e.updateCfg(func(cfg *ExposeConfig) error {
-		if slices.Contains(cfg.MultiHop, relayURL) {
-			return errors.New("relay is part of the multi-hop route; clear multi-hop first")
-		}
-		nextRelays := make([]string, 0, len(cfg.RelayURLs))
-		for _, existing := range cfg.RelayURLs {
-			if existing != relayURL {
-				nextRelays = append(nextRelays, existing)
-			}
-		}
-		cfg.RelayURLs = nextRelays
-		return nil
-	}); err != nil {
-		return err
+	e.cfgMu.Lock()
+	if slices.Contains(e.cfg.MultiHop, relayURL) {
+		e.cfgMu.Unlock()
+		return errors.New("relay is part of the multi-hop route; clear multi-hop first")
 	}
+	nextRelays := make([]string, 0, len(e.cfg.RelayURLs))
+	for _, existing := range e.cfg.RelayURLs {
+		if existing != relayURL {
+			nextRelays = append(nextRelays, existing)
+		}
+	}
+	e.cfg.RelayURLs = nextRelays
+	e.cfgMu.Unlock()
 
 	e.relaySet.DeactivateRelayURL(relayURL)
 	e.relaySet.RemoveBootstrapRelayURL(relayURL)
@@ -309,13 +295,10 @@ func (e *Exposure) SetMultiHop(relayURLs []string) error {
 		e.relaySet.AddBootstrapRelayURL(relayURL)
 	}
 
-	if err := e.updateCfg(func(cfg *ExposeConfig) error {
-		cfg.MultiHop = append([]string(nil), multiHop...)
-		cfg.MultiHopDepth = 0
-		return nil
-	}); err != nil {
-		return err
-	}
+	e.cfgMu.Lock()
+	e.cfg.MultiHop = append([]string(nil), multiHop...)
+	e.cfg.MultiHopDepth = 0
+	e.cfgMu.Unlock()
 	return e.reconcileRelayListeners(false)
 }
 
@@ -324,12 +307,9 @@ func (e *Exposure) UpdateMetadata(metadata types.LeaseMetadata) error {
 		return net.ErrClosed
 	}
 
-	if err := e.updateCfg(func(cfg *ExposeConfig) error {
-		cfg.Metadata = metadata.Copy()
-		return nil
-	}); err != nil {
-		return err
-	}
+	e.cfgMu.Lock()
+	e.cfg.Metadata = metadata.Copy()
+	e.cfgMu.Unlock()
 	return nil
 }
 
@@ -341,14 +321,10 @@ func (e *Exposure) UpdateMaxActiveRelays(maxActiveRelays int) error {
 		return net.ErrClosed
 	}
 
-	changed := false
-	if err := e.updateCfg(func(cfg *ExposeConfig) error {
-		changed = cfg.MaxActiveRelays != maxActiveRelays
-		cfg.MaxActiveRelays = maxActiveRelays
-		return nil
-	}); err != nil {
-		return err
-	}
+	e.cfgMu.Lock()
+	changed := e.cfg.MaxActiveRelays != maxActiveRelays
+	e.cfg.MaxActiveRelays = maxActiveRelays
+	e.cfgMu.Unlock()
 	if !changed {
 		return nil
 	}
@@ -416,13 +392,16 @@ func (e *Exposure) Snapshot() types.AgentTunnelStatus {
 		if listener.relayURL != nil {
 			relayURL = listener.relayURL.String()
 		}
+		explicit := slices.Contains(cfg.RelayURLs, relayURL)
 		snap := types.AgentRelayStatus{
 			RelayURL:   relayURL,
-			Explicit:   slices.Contains(cfg.RelayURLs, relayURL),
-			Connecting: true,
+			Version:    listener.releaseVersion,
+			Explicit:   explicit,
+			Connecting: explicit || len(listener.multiHop) > 0,
 		}
 		if lease, ok := listener.leaseSnapshot(); ok {
 			snap.PublicURL = listener.publicURLForLease(lease)
+			snap.Connecting = snap.PublicURL == ""
 		}
 		if relayURL != "" {
 			relayByURL[relayURL] = snap
@@ -773,7 +752,7 @@ func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
 			listenerMultiHop = append([]string(nil), multiHop...)
 		}
 		retryCount := 10
-		if len(listenerMultiHop) > 0 || slices.Contains(cfg.RelayURLs, relayURL) {
+		if len(listenerMultiHop) > 0 {
 			retryCount = 0
 		}
 		listener, err := newListener(context.Background(), relayURL, listenerConfig{
@@ -781,7 +760,9 @@ func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
 			UDPEnabled: cfg.UDPEnabled,
 			TCPEnabled: cfg.TCPEnabled,
 			BanMITM:    cfg.BanMITM,
-			Metadata:   e.metadata,
+			Metadata: func() types.LeaseMetadata {
+				return e.metadata()
+			},
 			MultiHop:   listenerMultiHop,
 			RetryCount: retryCount,
 			relaySet:   e.relaySet,
@@ -863,11 +844,34 @@ func (e *Exposure) runListenerAcceptLoop(listener *listener) {
 		}()
 	}
 	defer func() {
+		removed := false
 		e.mu.Lock()
 		if current, ok := e.relayListeners[relayURL]; ok && current == listener {
 			delete(e.relayListeners, relayURL)
+			removed = true
 		}
 		e.mu.Unlock()
+		if !removed || e.closed() {
+			return
+		}
+
+		removedExplicit := false
+		e.cfgMu.Lock()
+		next := e.cfg.RelayURLs[:0]
+		for _, existing := range e.cfg.RelayURLs {
+			if existing == relayURL {
+				removedExplicit = true
+				continue
+			}
+			next = append(next, existing)
+		}
+		e.cfg.RelayURLs = next
+		e.cfgMu.Unlock()
+
+		if removedExplicit && e.relaySet != nil {
+			e.relaySet.DeactivateRelayURL(relayURL)
+			e.relaySet.RemoveBootstrapRelayURL(relayURL)
+		}
 	}()
 
 	for {

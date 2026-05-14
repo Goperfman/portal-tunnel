@@ -39,13 +39,10 @@ func TestExposureConfigSnapshotsDoNotShareMutableState(t *testing.T) {
 		t.Fatalf("Metadata.Tags[0] = %q, want original tag", got)
 	}
 
-	if err := exposure.updateCfg(func(cfg *ExposeConfig) error {
-		cfg.MaxActiveRelays = 2
-		cfg.Metadata = types.LeaseMetadata{Tags: []string{"updated"}}
-		return nil
-	}); err != nil {
-		t.Fatalf("Update() error = %v", err)
-	}
+	exposure.cfgMu.Lock()
+	exposure.cfg.MaxActiveRelays = 2
+	exposure.cfg.Metadata = types.LeaseMetadata{Tags: []string{"updated"}}
+	exposure.cfgMu.Unlock()
 
 	metadata := exposure.metadata()
 	metadata.Tags[0] = "mutated"

@@ -78,6 +78,8 @@ func (l *listener) initHTTPTransport(ctx context.Context) error {
 		return fmt.Errorf("%w: relay sdk protocol version mismatch: relay=%q client=%q", errRelayIncompatible, protocolVersion, types.SDKVersion)
 	}
 
+	l.releaseVersion = strings.TrimSpace(domainResp.ReleaseVersion)
+
 	l.httpClient = httpClient
 	l.httpTransport = httpTransport
 	l.tlsConfig = tlsConfig

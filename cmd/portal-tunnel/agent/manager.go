@@ -444,7 +444,9 @@ type managedTunnel struct {
 }
 
 func newTunnel(cfg TunnelConfig) *managedTunnel {
-	return &managedTunnel{cfg: cfg}
+	return &managedTunnel{
+		cfg: cfg,
+	}
 }
 
 func (t *managedTunnel) Start(parent context.Context) {
