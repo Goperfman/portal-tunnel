@@ -219,6 +219,10 @@ The agent service owns multiple tunnel definitions from one config file. The
 local control API binds to loopback and is authenticated with a token stored in
 the agent state directory.
 
+For the full agent workflow, control API, dashboard behavior, and wallet status
+auth details, see [Portal Agent](../../docs/src/routes/portal-agent/+page.md)
+and [Wallet and ENS](../../docs/src/routes/wallet-and-ens/+page.md).
+
 Useful commands:
 
 - `portal agent run` reads the platform default config path, installs or updates
