@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/go-acme/lego/v4/challenge"
 	legovultr "github.com/go-acme/lego/v4/providers/dns/vultr"
@@ -21,12 +20,14 @@ const defaultRecordTTL = 60
 type Provider struct {
 	apiKey string
 
-	zoneMu sync.RWMutex
-	zones  map[string]string
+	zones *utils.Snapshot[map[string]string]
 }
 
 func New(apiKey string) *Provider {
-	return &Provider{apiKey: strings.TrimSpace(apiKey)}
+	return &Provider{
+		apiKey: strings.TrimSpace(apiKey),
+		zones:  utils.NewSnapshot(map[string]string{}, utils.CloneMap[string, string]),
+	}
 }
 
 func (p *Provider) Name() string {
@@ -290,14 +291,12 @@ func (p *Provider) findZone(ctx context.Context, client *govultr.Client, domain 
 	domain = utils.NormalizeHostname(domain)
 	candidates := utils.DomainCandidates(domain)
 
-	p.zoneMu.RLock()
+	zones := p.zones.Load()
 	for _, candidate := range candidates {
-		if zone := p.zones[candidate]; zone != "" {
-			p.zoneMu.RUnlock()
+		if zone := zones[candidate]; zone != "" {
 			return zone, nil
 		}
 	}
-	p.zoneMu.RUnlock()
 
 	listOptions := &govultr.ListOptions{PerPage: 100}
 	for {
@@ -311,12 +310,12 @@ func (p *Provider) findZone(ctx context.Context, client *govultr.Client, domain 
 				if zone != candidate {
 					continue
 				}
-				p.zoneMu.Lock()
-				if p.zones == nil {
-					p.zones = make(map[string]string)
-				}
-				p.zones[candidate] = zone
-				p.zoneMu.Unlock()
+				p.zones.UpdateCopy(func(zones *map[string]string) {
+					if *zones == nil {
+						*zones = make(map[string]string)
+					}
+					(*zones)[candidate] = zone
+				})
 				return zone, nil
 			}
 		}

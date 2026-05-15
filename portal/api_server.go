@@ -104,13 +104,13 @@ func (s *Server) apiHandler(base *http.ServeMux, keylessSignerHandler http.Handl
 		case types.PathSDKConnect:
 			s.handleConnect(w, r)
 		case types.PathDiscovery:
-			if !s.cfg.DiscoveryEnabled {
+			if !s.config().DiscoveryEnabled {
 				base.ServeHTTP(w, r)
 				return
 			}
 			s.handleRelayDiscovery(w, r)
 		case types.PathDiscoveryAnnounce:
-			if !s.cfg.DiscoveryEnabled {
+			if !s.config().DiscoveryEnabled {
 				base.ServeHTTP(w, r)
 				return
 			}
@@ -212,7 +212,8 @@ func (s *Server) handleRelayDiscoveryAnnounce(w http.ResponseWriter, r *http.Req
 			fmt.Sprintf("self-announce rejected: host %q is local-only", host))
 		return
 	}
-	if selfURL, err := utils.NormalizeRelayURL(s.cfg.PortalURL); err == nil && desc.APIHTTPSAddr == selfURL {
+	cfg := s.config()
+	if selfURL, err := utils.NormalizeRelayURL(cfg.PortalURL); err == nil && desc.APIHTTPSAddr == selfURL {
 		utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest,
 			fmt.Sprintf("self-announce rejected: %q matches receiving relay url", desc.APIHTTPSAddr))
 		return
@@ -300,7 +301,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorResponse(w, err)
 		return
 	}
-	s.registry.promoteECHDNS(record, s.acmeManager, s.cfg.SNIPort)
+	s.registry.promoteECHDNS(record, s.acmeManager, s.config().SNIPort)
 
 	utils.WriteAPIData(w, http.StatusCreated, resp)
 }
@@ -338,11 +339,11 @@ func (s *Server) handleRegisterChallenge(w http.ResponseWriter, r *http.Request)
 		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
 		return
 	}
-	if req.UDPEnabled && (!s.cfg.UDPEnabled || s.group != nil && s.quicBackhaul == nil) {
+	if req.UDPEnabled && !s.supportsUDP() {
 		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
 		return
 	}
-	if req.TCPEnabled && !s.cfg.TCPEnabled {
+	if req.TCPEnabled && !s.supportsTCP() {
 		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
 		return
 	}
@@ -429,7 +430,8 @@ func (s *Server) handleHop(w http.ResponseWriter, r *http.Request) {
 		utils.InvalidRequestError(err).Write(w)
 		return
 	}
-	if route.RelayURL != s.cfg.PortalURL {
+	cfg := s.config()
+	if route.RelayURL != cfg.PortalURL {
 		utils.WriteAPIError(w, http.StatusForbidden, types.APIErrorCodeUnauthorized, "hop route relay url does not match receiving relay")
 		return
 	}
@@ -484,7 +486,7 @@ func (s *Server) handleHop(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorResponse(w, err)
 		return
 	}
-	s.registry.promoteECHDNS(record, s.acmeManager, s.cfg.SNIPort)
+	s.registry.promoteECHDNS(record, s.acmeManager, cfg.SNIPort)
 	var accessToken string
 	if record.isPublicEntry() {
 		accessToken, err = s.registry.issueLeaseAccessToken(record, now)
@@ -495,7 +497,7 @@ func (s *Server) handleHop(w http.ResponseWriter, r *http.Request) {
 	}
 	utils.WriteAPIData(w, http.StatusOK, types.HopRouteResponse{
 		AccessToken: accessToken,
-		SNIPort:     s.cfg.SNIPort,
+		SNIPort:     cfg.SNIPort,
 	})
 }
 

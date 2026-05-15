@@ -103,9 +103,18 @@ func normalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 		}
 	}
 
-	cfg.UDPEnabled = cfg.UDPEnabled && hasPortRange
-	cfg.TCPEnabled = cfg.TCPEnabled && hasPortRange
+	cfg.UDPEnabled = cfg.UDPEnabled && cfg.hasLeasePortRange()
+	cfg.TCPEnabled = cfg.TCPEnabled && cfg.hasLeasePortRange()
 	return cfg, nil
+}
+
+func (cfg ServerConfig) snapshot() ServerConfig {
+	cfg.Bootstraps = utils.CloneSlice(cfg.Bootstraps)
+	return cfg
+}
+
+func (cfg ServerConfig) hasLeasePortRange() bool {
+	return cfg.MinPort > 0 && cfg.MaxPort > 0 && cfg.MinPort <= 65535 && cfg.MaxPort <= 65535 && cfg.MinPort <= cfg.MaxPort
 }
 
 type Server struct {
@@ -113,7 +122,7 @@ type Server struct {
 	group        *errgroup.Group
 	shutdownOnce sync.Once
 
-	cfg         ServerConfig
+	cfg         *utils.Snapshot[ServerConfig]
 	identity    types.RelayIdentity
 	authority   identity.Authority
 	acmeManager *acme.Manager
@@ -162,7 +171,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	}
 
 	server := &Server{
-		cfg:             cfg,
+		cfg:             utils.NewSnapshot(cfg, ServerConfig.snapshot),
 		identity:        relayIdentity,
 		authority:       relayAuthority,
 		registry:        registry,
@@ -173,10 +182,52 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	return server, nil
 }
 
+func (s *Server) config() ServerConfig {
+	return s.cfg.Load()
+}
+
+func (s *Server) SetUDPPolicy(enabled bool, maxLeases int) {
+	if enabled && !s.config().hasLeasePortRange() {
+		enabled = false
+	}
+	if runtime := s.PolicyRuntime(); runtime != nil {
+		runtime.SetUDPPolicy(enabled, maxLeases)
+	}
+	s.cfg.UpdateCopy(func(cfg *ServerConfig) {
+		cfg.UDPEnabled = enabled
+	})
+}
+
+func (s *Server) SetTCPPortPolicy(enabled bool, maxLeases int) {
+	if enabled && !s.config().hasLeasePortRange() {
+		enabled = false
+	}
+	if runtime := s.PolicyRuntime(); runtime != nil {
+		runtime.SetTCPPortPolicy(enabled, maxLeases)
+	}
+	s.cfg.UpdateCopy(func(cfg *ServerConfig) {
+		cfg.TCPEnabled = enabled
+	})
+}
+
+func (s *Server) supportsUDP() bool {
+	runtime := s.PolicyRuntime()
+	if runtime == nil || !runtime.IsUDPEnabled() {
+		return false
+	}
+	return s.group == nil || s.quicBackhaul != nil
+}
+
+func (s *Server) supportsTCP() bool {
+	runtime := s.PolicyRuntime()
+	return runtime != nil && runtime.IsTCPPortEnabled()
+}
+
 func (s *Server) Start(ctx context.Context, apiMux *http.ServeMux) error {
 	if s.group != nil {
 		return errors.New("server already started")
 	}
+	cfg := s.config()
 	apiTLS, acmeManager, err := s.prepareAPITLS(ctx)
 	if err != nil {
 		return err
@@ -222,11 +273,11 @@ func (s *Server) Start(ctx context.Context, apiMux *http.ServeMux) error {
 	}()
 	var listenConfig net.ListenConfig
 
-	apiListener, err = listenConfig.Listen(serverCtx, "tcp", s.cfg.APIListenAddr)
+	apiListener, err = listenConfig.Listen(serverCtx, "tcp", cfg.APIListenAddr)
 	if err != nil {
 		return fmt.Errorf("listen api: %w", err)
 	}
-	sniListener, err = listenConfig.Listen(serverCtx, "tcp", s.cfg.SNIListenAddr)
+	sniListener, err = listenConfig.Listen(serverCtx, "tcp", cfg.SNIListenAddr)
 	if err != nil {
 		return fmt.Errorf("listen sni: %w", err)
 	}
@@ -236,8 +287,8 @@ func (s *Server) Start(ctx context.Context, apiMux *http.ServeMux) error {
 	if err != nil {
 		return err
 	}
-	if s.cfg.PProfEnabled {
-		pprofListener, err = listenConfig.Listen(serverCtx, "tcp", s.cfg.PProfListenAddr)
+	if cfg.PProfEnabled {
+		pprofListener, err = listenConfig.Listen(serverCtx, "tcp", cfg.PProfListenAddr)
 		if err != nil {
 			return fmt.Errorf("listen pprof: %w", err)
 		}
@@ -259,7 +310,7 @@ func (s *Server) Start(ctx context.Context, apiMux *http.ServeMux) error {
 			return err
 		}
 	}
-	if s.cfg.UDPEnabled {
+	if cfg.UDPEnabled {
 		quicBackhaul, err = s.newQUICBackhaulListener(apiTLS)
 		if err != nil {
 			log.Warn().Err(err).Msg("quic backhaul listener disabled")
@@ -292,7 +343,7 @@ func (s *Server) Start(ctx context.Context, apiMux *http.ServeMux) error {
 		group.Go(s.runQUICBackhaulListener)
 	}
 	group.Go(func() error { return s.runRegistryJanitor(groupCtx, 5*time.Second) })
-	if s.cfg.DiscoveryEnabled {
+	if cfg.DiscoveryEnabled {
 		group.Go(func() error { return s.runRelayDiscoveryLoop(groupCtx) })
 	}
 	s.acmeManager.Start(serverCtx)
@@ -307,14 +358,14 @@ func (s *Server) Start(ctx context.Context, apiMux *http.ServeMux) error {
 		Str("api_addr", utils.HostPortOrLoopback(s.apiListener.Addr().String())).
 		Str("sni_addr", s.sniListener.Addr().String()).
 		Str("root_host", s.identity.Name).
-		Str("acme_dns_provider", s.cfg.ACME.DNSProvider).
-		Int("min_port", s.cfg.MinPort).
-		Int("max_port", s.cfg.MaxPort).
-		Bool("discovery_enabled", s.cfg.DiscoveryEnabled).
+		Str("acme_dns_provider", cfg.ACME.DNSProvider).
+		Int("min_port", cfg.MinPort).
+		Int("max_port", cfg.MaxPort).
+		Bool("discovery_enabled", cfg.DiscoveryEnabled).
 		Bool("wireguard_enabled", s.overlay != nil).
 		Bool("multihop_enabled", s.overlay != nil).
 		Bool("udp_enabled", s.quicBackhaul != nil).
-		Bool("tcp_enabled", s.cfg.TCPEnabled).
+		Bool("tcp_enabled", s.supportsTCP()).
 		Bool("api_ech_enabled", len(apiTLS.EncryptedClientHelloKeys) > 0).
 		Bool("pprof_enabled", s.pprofServer != nil)
 	if s.pprofListener != nil {
@@ -350,7 +401,7 @@ func (s *Server) PortalURL() string {
 	if s == nil {
 		return ""
 	}
-	return s.cfg.PortalURL
+	return s.config().PortalURL
 }
 
 func (s *Server) PublicLeases() []types.Lease {
@@ -420,7 +471,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) prepareAPITLS(ctx context.Context) (keyless.TLSMaterialConfig, *acme.Manager, error) {
-	acmeCfg := s.cfg.ACME
+	cfg := s.config()
+	acmeCfg := cfg.ACME
 	if baseDomain := utils.NormalizeHostname(acmeCfg.BaseDomain); baseDomain != "" && baseDomain != s.identity.Name {
 		return keyless.TLSMaterialConfig{}, nil, fmt.Errorf("acme base domain %q does not match portal root host %q", acmeCfg.BaseDomain, s.identity.Name)
 	}
@@ -461,7 +513,7 @@ func (s *Server) prepareAPITLS(ctx context.Context) (keyless.TLSMaterialConfig, 
 	}
 	if len(echKeys) > 0 {
 		apiTLS.EncryptedClientHelloKeys = echKeys
-		if err := manager.SyncECHConfig(ctx, s.identity.Name, echConfigList, s.cfg.SNIPort); err != nil {
+		if err := manager.SyncECHConfig(ctx, s.identity.Name, echConfigList, cfg.SNIPort); err != nil {
 			log.Warn().
 				Err(err).
 				Str("hostname", s.identity.Name).
@@ -627,7 +679,7 @@ func (s *Server) newQUICBackhaulListener(apiTLS keyless.TLSMaterialConfig) (*qui
 	if err != nil {
 		return nil, fmt.Errorf("parse quic backhaul tls keypair: %w", err)
 	}
-	return transport.ListenQUICBackhaul(s.cfg.SNIListenAddr, tlsCert)
+	return transport.ListenQUICBackhaul(s.config().SNIListenAddr, tlsCert)
 }
 
 func (s *Server) runQUICBackhaulListener() error {
@@ -686,17 +738,18 @@ func (s *Server) handleQUICBackhaulConn(conn *quic.Conn) {
 }
 
 func (s *Server) startOverlay() (*overlay.Overlay, error) {
+	cfg := s.config()
 	peerMux := http.NewServeMux()
 	peerMux.HandleFunc(types.PathRoot, s.handleRoot)
 	peerMux.HandleFunc(types.PathHealthz, s.handleHealthz)
-	if s.cfg.DiscoveryEnabled {
+	if cfg.DiscoveryEnabled {
 		peerMux.HandleFunc(types.PathDiscovery, s.handleRelayDiscovery)
 	}
 
 	ov, err := overlay.NewOverlay(overlay.Config{
 		PrivateKey: s.identity.WireGuardPrivateKey,
 		PublicKey:  s.identity.WireGuardPublicKey,
-		ListenPort: s.cfg.WireGuardPort,
+		ListenPort: cfg.WireGuardPort,
 	}, peerMux, nil)
 	if err != nil {
 		return nil, fmt.Errorf("start wireguard overlay: %w", err)
@@ -770,6 +823,7 @@ func (s *Server) newSelfDescriptor(now time.Time) (types.RelayDescriptor, error)
 	} else {
 		now = now.UTC()
 	}
+	cfg := s.config()
 
 	var wireGuardPublicKey string
 	var wireGuardPort int
@@ -786,12 +840,12 @@ func (s *Server) newSelfDescriptor(now time.Time) (types.RelayDescriptor, error)
 		Version:            types.DiscoveryVersion,
 		IssuedAt:           now,
 		ExpiresAt:          now.Add(discovery.DiscoveryDescriptorTTL),
-		APIHTTPSAddr:       s.cfg.PortalURL,
+		APIHTTPSAddr:       cfg.PortalURL,
 		WireGuardPublicKey: wireGuardPublicKey,
 		WireGuardPort:      wireGuardPort,
 		SupportsOverlay:    supportsOverlay,
-		SupportsUDP:        s.cfg.UDPEnabled && s.quicBackhaul != nil,
-		SupportsTCP:        s.cfg.TCPEnabled,
+		SupportsUDP:        s.supportsUDP(),
+		SupportsTCP:        s.supportsTCP(),
 		ActiveConnections:  s.proxy.activeConnectionCount(),
 		TCPBPS:             s.proxy.currentTCPBPS(now),
 	}, s.authority)

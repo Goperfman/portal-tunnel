@@ -72,8 +72,7 @@ type Manager struct {
 	stopOnce      sync.Once
 	dnssecLogOnce sync.Once
 	ensLogOnce    sync.Once
-	ensStatusMu   sync.RWMutex
-	ensStatus     types.ENSStatus
+	ensStatus     *utils.Snapshot[types.ENSStatus]
 	trackedMu     sync.Mutex
 	echMu         sync.Mutex
 	echRecords    map[string]HTTPSRecord
@@ -185,14 +184,14 @@ func NewManager(cfg Config) (*Manager, error) {
 		return &Manager{
 			cfg:       cfg,
 			stopCh:    make(chan struct{}),
-			ensStatus: newENSStatus(cfg, nil),
+			ensStatus: utils.NewSnapshot(newENSStatus(cfg, nil)),
 		}, nil
 	}
 
 	manager := &Manager{
 		cfg:       cfg,
 		stopCh:    make(chan struct{}),
-		ensStatus: newENSStatus(cfg, nil),
+		ensStatus: utils.NewSnapshot(newENSStatus(cfg, nil)),
 	}
 
 	acmeDNS, err := NewDNSProvider(cfg.DNSProvider, cfg)
@@ -224,9 +223,10 @@ func (m *Manager) ENSStatus() types.ENSStatus {
 	if m == nil {
 		return types.ENSStatus{}
 	}
-	m.ensStatusMu.RLock()
-	status := m.ensStatus
-	m.ensStatusMu.RUnlock()
+	status := types.ENSStatus{}
+	if m.ensStatus != nil {
+		status = m.ensStatus.Load()
+	}
 	if status.Provider == "" && m.dns != nil {
 		status.Provider = m.dns.Name()
 	}
@@ -246,9 +246,11 @@ func (m *Manager) setENSStatus(state, record, message string, syncErr error) {
 		status.LastError = syncErr.Error()
 	}
 
-	m.ensStatusMu.Lock()
-	m.ensStatus = status
-	m.ensStatusMu.Unlock()
+	if m.ensStatus == nil {
+		m.ensStatus = utils.NewSnapshot(status)
+		return
+	}
+	m.ensStatus.Store(status)
 }
 
 func ensDNSSECVerified(state string) bool {
