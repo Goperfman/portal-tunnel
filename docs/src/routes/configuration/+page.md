@@ -49,7 +49,7 @@ The relay server (`relay-server`) reads configuration from environment variables
 
 | Variable | Default | Type | Description |
 |----------|---------|------|-------------|
-| `ACME_DNS_PROVIDER` | `""` | string | DNS provider for managed DNS-01/A-record sync, ECH HTTPS records, and ENS gasless DNSSEC/TXT automation (`cloudflare` \| `gcloud` \| `route53` \| `vultr`); leave empty to use manual `fullchain.pem`/`privatekey.pem` from `IDENTITY_PATH` |
+| `ACME_DNS_PROVIDER` | `""` | string | DNS provider for managed DNS-01/A-record sync, ECH HTTPS records, and ENS gasless DNSSEC/TXT automation (`cloudflare` \| `gcloud` \| `hetzner` \| `route53` \| `vultr`); leave empty to use manual `fullchain.pem`/`privatekey.pem` from `IDENTITY_PATH` |
 | `ENS_GASLESS_ENABLED` | `false` | bool | Enable ENS gasless DNS import automation for the managed DNS zone and lease hostnames |
 
 ### Admin
@@ -78,6 +78,12 @@ The relay server (`relay-server`) reads configuration from environment variables
 | `GCP_PROJECT_ID` | `GOOGLE_CLOUD_PROJECT`, `GCLOUD_PROJECT`, `GCE_PROJECT` | | string | Google Cloud project ID for Cloud DNS automation; auto-detected from ADC or GCE metadata when omitted |
 | `GCP_MANAGED_ZONE` | `GCP_ZONE`, `GCE_ZONE_ID` | | string | Explicit Google Cloud DNS managed zone name or numeric ID override |
 | `GOOGLE_APPLICATION_CREDENTIALS` | | | string | Path to GCP service account key file (standard ADC; used by the GCP client library) |
+
+### Hetzner
+
+| Variable | Aliases | Default | Type | Description |
+|----------|---------|---------|------|-------------|
+| `HETZNER_API_TOKEN` | `HCLOUD_TOKEN` | | string | Hetzner Cloud API token for DNS automation; required when `ACME_DNS_PROVIDER=hetzner` |
 
 ### AWS
 
@@ -284,6 +290,14 @@ For ENS gasless behavior and wallet authentication details, see [Wallet and ENS]
 | `AWS_REGION` | No | AWS region; defaults to `us-east-1` |
 | `AWS_HOSTED_ZONE_ID` | No | Route53 hosted zone ID; inferred from the portal domain when omitted |
 | `AWS_DNSSEC_KMS_KEY_ARN` | No | KMS key ARN for DNSSEC key-signing key creation |
+
+### Hetzner DNS (`hetzner`)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `HETZNER_API_TOKEN` | Yes | Hetzner Cloud API token with DNS zone and RRSet write access |
+
+Note: Hetzner DNS does not support provider-side DNSSEC signing, so `ACME_DNS_PROVIDER=hetzner` supports ACME, A records, and HTTPS/ECH records, but not ENS gasless DNSSEC automation.
 
 ### Vultr DNS (`vultr`)
 

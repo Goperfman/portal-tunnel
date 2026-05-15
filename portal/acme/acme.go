@@ -54,6 +54,7 @@ type Config struct {
 	CloudflareToken    string
 	GCPProjectID       string
 	GCPManagedZone     string
+	HetznerAPIToken    string
 	AWSAccessKeyID     string
 	AWSSecretAccessKey string
 	AWSSessionToken    string
@@ -156,6 +157,7 @@ func NewManager(cfg Config) (*Manager, error) {
 	cfg.CloudflareToken = strings.TrimSpace(cfg.CloudflareToken)
 	cfg.GCPProjectID = strings.TrimSpace(cfg.GCPProjectID)
 	cfg.GCPManagedZone = strings.TrimSpace(cfg.GCPManagedZone)
+	cfg.HetznerAPIToken = strings.TrimSpace(cfg.HetznerAPIToken)
 	cfg.AWSAccessKeyID = strings.TrimSpace(cfg.AWSAccessKeyID)
 	cfg.AWSSecretAccessKey = strings.TrimSpace(cfg.AWSSecretAccessKey)
 	cfg.AWSSessionToken = strings.TrimSpace(cfg.AWSSessionToken)

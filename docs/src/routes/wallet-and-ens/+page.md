@@ -150,6 +150,8 @@ Requirements:
 - `ENS_GASLESS_ENABLED=true`
 - DNSSEC active at the parent zone
 
+Hetzner is supported for managed ACME DNS automation, but not for ENS gasless automation because Hetzner DNS does not support provider-side DNSSEC signing.
+
 Example:
 
 ```bash

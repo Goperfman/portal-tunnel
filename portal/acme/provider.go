@@ -9,6 +9,7 @@ import (
 
 	"github.com/gosuda/portal-tunnel/v2/portal/acme/cloudflare"
 	"github.com/gosuda/portal-tunnel/v2/portal/acme/gcloud"
+	"github.com/gosuda/portal-tunnel/v2/portal/acme/hetzner"
 	"github.com/gosuda/portal-tunnel/v2/portal/acme/route53"
 	"github.com/gosuda/portal-tunnel/v2/portal/acme/vultr"
 )
@@ -16,6 +17,7 @@ import (
 const (
 	TypeCloudflare = "cloudflare"
 	TypeGCloud     = "gcloud"
+	TypeHetzner    = "hetzner"
 	TypeRoute53    = "route53"
 	TypeVultr      = "vultr"
 )
@@ -44,6 +46,8 @@ func NewDNSProvider(providerType string, cfg Config) (DNSProvider, error) {
 			ProjectID:   cfg.GCPProjectID,
 			ManagedZone: cfg.GCPManagedZone,
 		}), nil
+	case TypeHetzner:
+		return hetzner.New(cfg.HetznerAPIToken), nil
 	case TypeRoute53:
 		return route53.New(route53.Config{
 			AccessKeyID:     cfg.AWSAccessKeyID,

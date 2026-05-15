@@ -19,7 +19,7 @@ You need:
 - A public domain, for example `example.com`
 - A public Linux server with a static public IPv4
 - Docker and Docker Compose
-- Optional for managed ACME DNS-01 automation, Portal-managed ECH HTTPS records, or Portal-managed ENS TXT sync: a supported DNS provider account for `cloudflare`, `gcloud`, `route53`, or `vultr`
+- Optional for managed ACME DNS-01 automation and Portal-managed ECH HTTPS records: a supported DNS provider account for `cloudflare`, `gcloud`, `hetzner`, `route53`, or `vultr`
 - Open inbound ports:
   - `443/tcp`
   - `4017/tcp`
@@ -39,12 +39,12 @@ Choose one of these modes:
   - Portal uses the files as-is and does not modify DNS or renew the certificate.
 - Manual certificate + gasless mode
   - Place `fullchain.pem` and `privatekey.pem` in `IDENTITY_PATH`.
-  - Set `ACME_DNS_PROVIDER`.
+  - Set `ACME_DNS_PROVIDER` to a DNSSEC-capable provider.
   - Portal keeps the manual certificate files, skips ACME certificate issuance, and still uses the provider for ECH HTTPS records and DNSSEC + ENS TXT automation.
 - Managed ACME mode
-  - Set `ACME_DNS_PROVIDER` to `cloudflare`, `gcloud`, `route53`, or `vultr`.
+  - Set `ACME_DNS_PROVIDER` to `cloudflare`, `gcloud`, `hetzner`, `route53`, or `vultr`.
   - Portal manages root/wildcard A records, ECH HTTPS records, and certificate renewal.
-  - If ENS gasless is enabled, Portal also manages DNSSEC.
+  - ENS gasless additionally requires a DNSSEC-capable provider.
 
 If you only need a relay and do not need Portal-managed DNS or automatic renewal, manual certificate mode is the simplest option.
 
@@ -56,6 +56,7 @@ Set `ACME_DNS_PROVIDER` to one of:
 
 - `cloudflare`
 - `gcloud`
+- `hetzner`
 - `route53`
 - `vultr`
 
@@ -164,7 +165,25 @@ Notes:
 - `GOOGLE_APPLICATION_CREDENTIALS` should point to the in-container path when you run Portal in Docker with a mounted service account JSON file.
 - Portal only targets public Cloud DNS managed zones.
 
-### 3.5 Vultr DNS setup
+### 3.5 Hetzner DNS setup
+
+Create or select a Hetzner DNS zone that covers your relay host in Hetzner Console.
+
+Required environment variable:
+
+- `HETZNER_API_TOKEN`
+
+Equivalent relay flag:
+
+- `--hetzner-api-token`
+
+Notes:
+
+- The token needs permission to list DNS zones and edit RRSets for the target zone.
+- Hetzner uses `@` for apex records and relative names such as `www` or `*` for subdomains.
+- Hetzner DNS does not support provider-side DNSSEC signing, so ENS gasless automation is not supported with `ACME_DNS_PROVIDER=hetzner`.
+
+### 3.6 Vultr DNS setup
 
 Create or select a Vultr DNS domain that covers your relay host.
 
@@ -181,7 +200,7 @@ Notes:
 - The API key needs permission to list DNS domains, edit DNS records, and update DNSSEC for the target domain.
 - Vultr uses `@` for apex records and relative names such as `www` or `*` for subdomains.
 
-### 3.6 Optional ENS Gasless Automation
+### 3.7 Optional ENS Gasless Automation
 
 Portal can optionally enable ENS gasless DNS import for the base domain and lease hostnames.
 
@@ -315,6 +334,15 @@ Vultr example:
 IDENTITY_PATH=/portal-certs
 ACME_DNS_PROVIDER=vultr
 VULTR_API_KEY=...
+ENS_GASLESS_ENABLED=false
+```
+
+Hetzner example:
+
+```bash
+IDENTITY_PATH=/portal-certs
+ACME_DNS_PROVIDER=hetzner
+HETZNER_API_TOKEN=...
 ENS_GASLESS_ENABLED=false
 ```
 
