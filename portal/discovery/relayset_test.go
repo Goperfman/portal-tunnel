@@ -7,6 +7,18 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/types"
 )
 
+func relayStates(set *RelaySet) []RelayState {
+	set.mu.RLock()
+	defer set.mu.RUnlock()
+	states := make([]RelayState, 0, len(set.relays))
+	for _, state := range set.relays {
+		if !state.Banned {
+			states = append(states, state)
+		}
+	}
+	return states
+}
+
 func TestApplyRelayDiscoveryResponsePreservesBootstrapFlag(t *testing.T) {
 	set := NewRelaySet([]string{"https://relay-a.example"})
 
@@ -18,9 +30,9 @@ func TestApplyRelayDiscoveryResponsePreservesBootstrapFlag(t *testing.T) {
 		t.Fatalf("ApplyRelayDiscoveryResponse() error = %v", err)
 	}
 
-	states := set.AggregateRelays()
+	states := relayStates(set)
 	if len(states) != 1 {
-		t.Fatalf("len(AggregateRelays()) = %d, want 1", len(states))
+		t.Fatalf("len(relayStates()) = %d, want 1", len(states))
 	}
 	if !states[0].Bootstrap {
 		t.Fatal("bootstrap relay lost bootstrap flag after discovery update")
@@ -63,9 +75,9 @@ func TestApplyRelayDiscoveryResponseCollectsRelaysDespiteProtocolMismatch(t *tes
 		t.Fatal("expected protocol-mismatched discovery response to change relay set")
 	}
 
-	states := set.AggregateRelays()
+	states := relayStates(set)
 	if len(states) != 1 {
-		t.Fatalf("len(AggregateRelays()) = %d, want 1", len(states))
+		t.Fatalf("len(relayStates()) = %d, want 1", len(states))
 	}
 	if got := states[0].Descriptor.APIHTTPSAddr; got != desc.APIHTTPSAddr {
 		t.Fatalf("states[0] = %q, want %q", got, desc.APIHTTPSAddr)
@@ -90,9 +102,9 @@ func TestApplyRelayDiscoveryResponseCollectsHintsWhenTargetDescriptorIsMissing(t
 		t.Fatal("expected hinted relay to still be collected")
 	}
 
-	states := set.AggregateRelays()
+	states := relayStates(set)
 	if len(states) != 1 {
-		t.Fatalf("len(AggregateRelays()) = %d, want 1", len(states))
+		t.Fatalf("len(relayStates()) = %d, want 1", len(states))
 	}
 	if got := states[0].Descriptor.APIHTTPSAddr; got != hinted.APIHTTPSAddr {
 		t.Fatalf("states[0] = %q, want %q", got, hinted.APIHTTPSAddr)
@@ -216,5 +228,32 @@ func TestUnconfirmRelayURLClearsLocalConfirmationOnly(t *testing.T) {
 	set.mu.RUnlock()
 	if unconfirmed.Confirmed {
 		t.Fatal("relay should lose local confirmation after listener failure")
+	}
+}
+
+func TestPlanRoutesExplicitPathReturnsSingleRouteToExit(t *testing.T) {
+	const (
+		entry = "https://entry.example"
+		mid   = "https://middle.example"
+		exit  = "https://exit.example"
+	)
+
+	routes, err := NewRelaySet(nil).PlanRoutes([]string{entry, mid, exit}, RouteState{})
+	if err != nil {
+		t.Fatalf("PlanRoutes() error = %v", err)
+	}
+	if len(routes) != 1 {
+		t.Fatalf("len(routes) = %d, want 1", len(routes))
+	}
+	route := routes[0]
+	if !route.Explicit() {
+		t.Fatal("route.Explicit() = false, want true")
+	}
+	if got := route.ListenerRelayURL(); got != exit {
+		t.Fatalf("ListenerRelayURL() = %q, want %q", got, exit)
+	}
+	path := route.MultiHop()
+	if len(path) != 3 || path[0] != entry || path[1] != mid || path[2] != exit {
+		t.Fatalf("MultiHop() = %v, want [%q %q %q]", path, entry, mid, exit)
 	}
 }

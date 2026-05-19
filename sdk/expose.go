@@ -101,12 +101,13 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 		return nil, errors.New("multi-hop currently supports only the default SNI TLS stream transport")
 	}
 
-	var listenerRelayURLs []string
+	var initialRouteCount int
 	var relaySetURLs []string
 	if len(multiHop) > 0 {
-		listenerRelayURLs = []string{multiHop[len(multiHop)-1]}
+		initialRouteCount = 1
 		relaySetURLs = append([]string(nil), multiHop...)
 	} else if cfg.MultiHopDepth > 1 {
+		initialRouteCount = 1
 		relaySetURLs, err = utils.ResolvePortalRelayURLs(ctx, explicitRelayURLs, cfg.Discovery)
 		if err != nil {
 			return nil, err
@@ -116,7 +117,7 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 		if err != nil {
 			return nil, err
 		}
-		listenerRelayURLs = append([]string(nil), explicitRelayURLs...)
+		initialRouteCount = len(explicitRelayURLs)
 	}
 
 	identity, createdIdentity, err := utils.ResolveListenerIdentity(
@@ -160,10 +161,10 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 		banMITM:         cfg.BanMITM,
 		maxActiveRelays: cfg.MaxActiveRelays,
 		metadata:        cfg.Metadata,
-		accepted:        make(chan net.Conn, max(initialRouteCapacity(listenerRelayURLs, cfg.MultiHopDepth)*defaultReadyTarget*2, 1)),
-		datagrams:       make(chan types.DatagramFrame, max(initialRouteCapacity(listenerRelayURLs, cfg.MultiHopDepth)*32, 1)),
+		accepted:        make(chan net.Conn, max(initialRouteCount*defaultReadyTarget*2, 1)),
+		datagrams:       make(chan types.DatagramFrame, max(initialRouteCount*32, 1)),
 		relaySet:        discovery.NewRelaySet(relaySetURLs),
-		relayListeners:  make(map[string]*listener, initialRouteCapacity(listenerRelayURLs, cfg.MultiHopDepth)),
+		relayListeners:  make(map[string]*listener, initialRouteCount),
 	}
 
 	if cfg.Discovery || len(multiHop) > 0 || cfg.MultiHopDepth > 1 {
@@ -174,7 +175,7 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 		}
 	}
 
-	if len(listenerRelayURLs) > 0 || cfg.Discovery || cfg.MultiHopDepth > 1 {
+	if initialRouteCount > 0 || cfg.Discovery {
 		if err := exposure.reconcileRelayListeners(true); err != nil {
 			_ = exposure.Close()
 			return nil, err
@@ -191,13 +192,6 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 	}()
 
 	return exposure, nil
-}
-
-func initialRouteCapacity(listenerRelayURLs []string, multiHopDepth int) int {
-	if multiHopDepth > 1 {
-		return 1
-	}
-	return len(listenerRelayURLs)
 }
 
 func (e *Exposure) ActiveRelayURLs() []string {
@@ -438,56 +432,52 @@ func (e *Exposure) runDiscoveryLoop(ctx context.Context) {
 }
 
 func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
-	var listenerRelayURLs []string
-	var multiHop []string
-	if len(e.multiHop) > 0 {
-		listenerRelayURLs = []string{e.multiHop[len(e.multiHop)-1]}
-		multiHop = append([]string(nil), e.multiHop...)
-	} else if e.multiHopDepth > 1 {
-		multiHop = e.relaySet.PriorityMultiHop(discovery.ClientState{
-			MultiHopDepth: e.multiHopDepth,
-			LocalAddress:  e.identity.Address,
-		})
-		if len(multiHop) < e.multiHopDepth {
-			return fmt.Errorf("multi-hop-depth %d requires %d overlay relay candidates, got %d", e.multiHopDepth, e.multiHopDepth, len(multiHop))
+	if e.relaySet == nil {
+		return errors.New("relay set is unavailable")
+	}
+	routes, err := e.relaySet.PlanRoutes(append([]string(nil), e.multiHop...), discovery.RouteState{
+		ExplicitRelayURLs: append([]string(nil), e.explicitRelays...),
+		MaxActiveRelays:   e.maxActiveRelays,
+		MultiHopDepth:     e.multiHopDepth,
+		RequireUDP:        e.udpEnabled,
+		RequireTCP:        e.tcpEnabled,
+		LocalAddress:      e.identity.Address,
+	})
+	if err != nil {
+		return err
+	}
+
+	routesByRelay := make(map[string]discovery.Route, len(routes))
+	for _, route := range routes {
+		relayURL := route.ListenerRelayURL()
+		if relayURL == "" {
+			continue
 		}
-		listenerRelayURLs = []string{multiHop[len(multiHop)-1]}
-	} else {
-		listenerRelayURLs = e.relaySet.PriorityRelays(discovery.ClientState{
-			ExplicitRelayURLs: append([]string(nil), e.explicitRelays...),
-			MaxActiveRelays:   e.maxActiveRelays,
-			RequireUDP:        e.udpEnabled,
-			RequireTCP:        e.tcpEnabled,
-			LocalAddress:      e.identity.Address,
-		})
+		routesByRelay[relayURL] = route
 	}
 
 	e.listenerMu.Lock()
-	staleRelayListeners := make(map[string]*listener)
-	removedRelayURLs := make([]string, 0)
+	staleListeners := make(map[string]*listener)
 	for relayURL, listener := range e.relayListeners {
-		if slices.Contains(listenerRelayURLs, relayURL) && slices.Equal(listener.multiHop, multiHop) {
+		route, wanted := routesByRelay[relayURL]
+		if wanted && listener != nil && listener.route.Equal(route) {
 			continue
 		}
-		staleRelayListeners[relayURL] = listener
-		removedRelayURLs = append(removedRelayURLs, relayURL)
+		staleListeners[relayURL] = listener
 		delete(e.relayListeners, relayURL)
 	}
-
-	missingRelayURLs := make([]string, 0, len(listenerRelayURLs))
-	for _, relayURL := range listenerRelayURLs {
-		if _, ok := e.relayListeners[relayURL]; ok {
+	missingRoutes := make([]discovery.Route, 0)
+	for _, route := range routes {
+		relayURL := route.ListenerRelayURL()
+		if _, exists := e.relayListeners[relayURL]; exists {
 			continue
 		}
-		missingRelayURLs = append(missingRelayURLs, relayURL)
+		missingRoutes = append(missingRoutes, route)
 	}
 	e.listenerMu.Unlock()
-	if len(removedRelayURLs) > 1 {
-		slices.Sort(removedRelayURLs)
-	}
 
-	addedRelayURLs := make([]string, 0, len(missingRelayURLs))
-	for relayURL, listener := range staleRelayListeners {
+	addedRelayURLs := make([]string, 0, len(missingRoutes))
+	for relayURL, listener := range staleListeners {
 		if listener == nil {
 			continue
 		}
@@ -495,16 +485,16 @@ func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
 			log.Warn().Err(err).Str("relay_url", relayURL).Msg("close stale relay listener")
 		}
 	}
-	for _, relayURL := range missingRelayURLs {
+	for _, route := range missingRoutes {
+		relayURL := route.ListenerRelayURL()
 		retryCount := 10
-		if len(multiHop) > 0 || slices.Contains(e.explicitRelays, relayURL) {
+		if route.Explicit() || len(route.MultiHop()) > 0 {
 			retryCount = 0
 		}
-		listener, err := newListener(context.Background(), relayURL, listenerConfig{
+		listener, err := newListener(context.Background(), route, listenerConfig{
 			Identity:   e.identity,
 			UDPEnabled: e.udpEnabled,
 			TCPEnabled: e.tcpEnabled,
-			MultiHop:   multiHop,
 			BanMITM:    e.banMITM,
 			RetryCount: retryCount,
 			Metadata:   e.metadata,
@@ -538,7 +528,18 @@ func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
 		go e.runListenerAcceptLoop(listener)
 	}
 
-	if len(removedRelayURLs) > 0 || len(addedRelayURLs) > 0 {
+	if len(staleListeners) > 0 || len(addedRelayURLs) > 0 {
+		removedRelayURLs := make([]string, 0, len(staleListeners))
+		for relayURL := range staleListeners {
+			removedRelayURLs = append(removedRelayURLs, relayURL)
+		}
+		if len(removedRelayURLs) > 1 {
+			slices.Sort(removedRelayURLs)
+		}
+		listenerRelayURLs := make([]string, 0, len(routes))
+		for _, route := range routes {
+			listenerRelayURLs = append(listenerRelayURLs, route.ListenerRelayURL())
+		}
 		log.Info().
 			Strs("added_relays", addedRelayURLs).
 			Strs("removed_relays", removedRelayURLs).

@@ -57,7 +57,7 @@ func (state RelayState) hasObservedDescriptor() bool {
 	return !state.LastSeenAt.IsZero()
 }
 
-type ClientState struct {
+type RouteState struct {
 	ExplicitRelayURLs []string
 	// MaxActiveRelays caps auto-selected relays. Zero or negative values use
 	// the policy default of 3.
@@ -65,7 +65,7 @@ type ClientState struct {
 	MultiHopDepth   int
 	RequireUDP      bool
 	RequireTCP      bool
-	// LocalAddress is the ingress identity address used by MOLSRelayPolicy to
+	// LocalAddress is the ingress identity address used by MOLS route selection to
 	// derive a deterministic row index into the GF(64) MOLS grid.
 	LocalAddress string
 }

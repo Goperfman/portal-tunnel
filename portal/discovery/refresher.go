@@ -252,7 +252,7 @@ func (r *Refresher) refreshOverlay(ctx context.Context) error {
 }
 
 func (r *Refresher) logDiscoveryFailure(targetRelayURL, sourceURL string, recoveryFailures int, err error) {
-	backedOff, backoffReason, failureCount := r.relaySet.RecordDiscoveryFailure(targetRelayURL, err, recoveryFailures)
+	backedOff, backoffReason, failureCount := r.relaySet.RecordDiscoveryFailure(targetRelayURL, recoveryFailures)
 	if !backedOff {
 		return
 	}

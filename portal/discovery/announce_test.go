@@ -53,8 +53,8 @@ func TestInsertAnnouncedAcceptsValidDescriptor(t *testing.T) {
 	if err := set.InsertAnnounced(desc, now); err != nil {
 		t.Fatalf("InsertAnnounced() error = %v", err)
 	}
-	if got := set.AggregateRelays(); len(got) != 1 {
-		t.Fatalf("len(AggregateRelays()) = %d, want 1", len(got))
+	if got := relayStates(set); len(got) != 1 {
+		t.Fatalf("len(relayStates()) = %d, want 1", len(got))
 	}
 }
 
@@ -82,9 +82,9 @@ func TestInsertAnnouncedIgnoresSupersededRollback(t *testing.T) {
 		t.Fatalf("superseded insert error = %v", err)
 	}
 
-	states := set.AggregateRelays()
+	states := relayStates(set)
 	if len(states) != 1 {
-		t.Fatalf("len(AggregateRelays()) = %d, want 1", len(states))
+		t.Fatalf("len(relayStates()) = %d, want 1", len(states))
 	}
 	if got := states[0].Descriptor.IssuedAt; !got.Equal(newer.IssuedAt) {
 		t.Fatalf("stored issued_at = %v, want %v", got, newer.IssuedAt)
@@ -122,9 +122,9 @@ func TestInsertAnnouncedBlocksCrossIdentityTakeover(t *testing.T) {
 		t.Fatal("expected takeover reject")
 	}
 
-	states := set.AggregateRelays()
+	states := relayStates(set)
 	if len(states) != 1 {
-		t.Fatalf("len(AggregateRelays()) = %d, want 1", len(states))
+		t.Fatalf("len(relayStates()) = %d, want 1", len(states))
 	}
 	if got := states[0].Descriptor.Address; got != owner.Address {
 		t.Fatalf("retained address = %q, want %q", got, owner.Address)

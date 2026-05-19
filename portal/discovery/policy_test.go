@@ -1,7 +1,6 @@
 package discovery
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -60,7 +59,6 @@ func confirmedPolicyRelayStateWithRTT(t *testing.T, relayURL string, rtt time.Du
 }
 
 func TestSelectPriorityMathematicalOrdering(t *testing.T) {
-	policy := MOLSRelayPolicy{}
 	clientAddr := "192.168.0.10"
 	ingressIdx := hashToGF64(clientAddr)
 
@@ -75,7 +73,7 @@ func TestSelectPriorityMathematicalOrdering(t *testing.T) {
 		states = append(states, confirmedPolicyRelayState(t, url))
 	}
 
-	selected := policy.SelectPriority(states, ClientState{LocalAddress: clientAddr})
+	selected := selectPriority(states, RouteState{LocalAddress: clientAddr})
 
 	for i := 0; i < len(selected)-1; i++ {
 		scoreA := molsScore(ingressIdx, hashToGF64(selected[i]), molsBaseM1, molsBaseM2)
@@ -87,16 +85,15 @@ func TestSelectPriorityMathematicalOrdering(t *testing.T) {
 }
 
 func TestSelectPriorityKeepsExplicitRelaysOutsideAutoLimit(t *testing.T) {
-	policy := MOLSRelayPolicy{}
 	explicitRelay := "https://relay-explicit.example"
 	relayA := "https://relay-a.example"
 	relayB := "https://relay-b.example"
 
-	selected := policy.SelectPriority([]RelayState{
+	selected := selectPriority([]RelayState{
 		bootstrapPolicyRelayState(explicitRelay),
 		confirmedPolicyRelayState(t, relayA),
 		confirmedPolicyRelayState(t, relayB),
-	}, ClientState{
+	}, RouteState{
 		LocalAddress:      "127.0.0.1",
 		ExplicitRelayURLs: []string{explicitRelay},
 		MaxActiveRelays:   1,
@@ -111,7 +108,6 @@ func TestSelectPriorityKeepsExplicitRelaysOutsideAutoLimit(t *testing.T) {
 }
 
 func TestSelectPriorityCongestionInversion(t *testing.T) {
-	policy := MOLSRelayPolicy{}
 	clientAddr := "10.0.0.1"
 	ingressIdx := hashToGF64(clientAddr)
 
@@ -121,7 +117,7 @@ func TestSelectPriorityCongestionInversion(t *testing.T) {
 		confirmedPolicyRelayStateWithRTT(t, r2, 800*time.Millisecond),
 	}
 
-	selected := policy.SelectPriority(states, ClientState{LocalAddress: clientAddr})
+	selected := selectPriority(states, RouteState{LocalAddress: clientAddr})
 
 	if len(selected) == 2 {
 		s1 := molsCongestionScore(ingressIdx, hashToGF64(selected[0]), molsBaseM1, molsBaseM2)
@@ -132,48 +128,39 @@ func TestSelectPriorityCongestionInversion(t *testing.T) {
 	}
 }
 
-func TestSelectAggregateKeepsBootstrapRelayWhenDescriptorExpired(t *testing.T) {
-	policy := MOLSRelayPolicy{}
-	relayURL := "https://relay-bootstrap.example"
-
-	state := bootstrapPolicyRelayState(relayURL)
-	state.LastSeenAt = time.Now().UTC().Add(-time.Minute)
-	state.Descriptor.ExpiresAt = time.Now().UTC().Add(-time.Second)
-
-	selected := policy.SelectAggregate([]RelayState{state})
-
-	if len(selected) != 1 {
-		t.Fatalf("len(selected) = %d, want 1", len(selected))
-	}
-	if got := selected[0].Descriptor.APIHTTPSAddr; got != relayURL {
-		t.Fatalf("selected[0] = %q, want %q", got, relayURL)
-	}
-}
-
 func TestSelectPriorityFallbackPromotion(t *testing.T) {
-	policy := MOLSRelayPolicy{}
 	states := []RelayState{
 		confirmedPolicyRelayStateWithRTT(t, "https://f1.com", 3*time.Second),
 		confirmedPolicyRelayStateWithRTT(t, "https://f2.com", 4*time.Second),
 	}
 
-	selected := policy.SelectPriority(states, ClientState{LocalAddress: "1.1.1.1"})
+	selected := selectPriority(states, RouteState{LocalAddress: "1.1.1.1"})
 
 	if len(selected) < molsMinActiveNodes {
 		t.Errorf("Fallback promotion failed: got %d, want %d", len(selected), molsMinActiveNodes)
 	}
 }
 
-func TestOnActiveConfirmedResetsActiveFailures(t *testing.T) {
-	policy := MOLSRelayPolicy{}
+func TestConfirmRelayURLResetsActiveFailures(t *testing.T) {
+	relayURL := "https://error.io"
+	set := NewRelaySet(nil)
 	state := RelayState{
+		Descriptor: types.RelayDescriptor{
+			APIHTTPSAddr: relayURL,
+		},
 		activeFailures:      5,
 		suppressActiveUntil: time.Now().UTC().Add(time.Minute),
 		Confirmed:           false,
 	}
+	set.mu.Lock()
+	set.relays[relayURL] = state
+	set.mu.Unlock()
 
-	state = policy.OnActiveConfirmed(state)
+	set.ConfirmRelayURL(relayURL)
 
+	set.mu.RLock()
+	state = set.relays[relayURL]
+	set.mu.RUnlock()
 	if !state.Confirmed {
 		t.Fatal("Confirmed should be true")
 	}
@@ -185,20 +172,25 @@ func TestOnActiveConfirmedResetsActiveFailures(t *testing.T) {
 	}
 }
 
-func TestOnDiscoveryFailureBackoff(t *testing.T) {
-	policy := MOLSRelayPolicy{}
-	state := confirmedPolicyRelayState(t, "https://error.io")
+func TestRecordDiscoveryFailureBackoff(t *testing.T) {
+	relayURL := "https://error.io"
+	set := NewRelaySet(nil)
+	set.mu.Lock()
+	set.relays[relayURL] = confirmedPolicyRelayState(t, relayURL)
+	set.mu.Unlock()
 	budget := 3
 
 	start := time.Now()
 	for i := 0; i < budget; i++ {
-		var backed bool
-		state, backed, _ = policy.OnDiscoveryFailure(state, errors.New("err"), budget)
+		backed, _, _ := set.RecordDiscoveryFailure(relayURL, budget)
 		if i < budget-1 && backed {
 			t.Fatal("Premature backoff")
 		}
 	}
 
+	set.mu.RLock()
+	state := set.relays[relayURL]
+	set.mu.RUnlock()
 	if !state.nextDiscoveryRefreshAt.After(start) {
 		t.Fatal("discovery retry timer not scheduled")
 	}
@@ -207,16 +199,21 @@ func TestOnDiscoveryFailureBackoff(t *testing.T) {
 	}
 }
 
-func TestOnActiveFailureBackoff(t *testing.T) {
-	policy := MOLSRelayPolicy{}
-	state := confirmedPolicyRelayState(t, "https://error.io")
+func TestRecordActiveFailureBackoff(t *testing.T) {
+	relayURL := "https://error.io"
+	set := NewRelaySet(nil)
+	set.mu.Lock()
+	set.relays[relayURL] = confirmedPolicyRelayState(t, relayURL)
+	set.mu.Unlock()
 	start := time.Now()
 
-	var backed bool
-	state, backed, _ = policy.OnActiveFailure(state, errors.New("err"), 1)
+	backed, _, _ := set.RecordActiveFailure(relayURL, 1)
 	if !backed {
 		t.Fatal("active failure should back off at budget")
 	}
+	set.mu.RLock()
+	state := set.relays[relayURL]
+	set.mu.RUnlock()
 	if !state.suppressActiveUntil.After(start) {
 		t.Fatal("active suppression timer not scheduled")
 	}

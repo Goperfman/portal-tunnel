@@ -36,11 +36,13 @@ func TestExposureReconcileRemovesBannedRelayFromActiveSet(t *testing.T) {
 	exposure.relayListeners = map[string]*listener{
 		relayA: {
 			relayURL: relayURL,
+			route:    discovery.NewRoute([]string{relayA}, true),
 			cancel:   func() { close(relayAClosed) },
 			doneCh:   relayAClosed,
 		},
 		relayB: {
 			relayURL: relayBURL,
+			route:    discovery.NewRoute([]string{relayB}, true),
 		},
 	}
 
@@ -91,11 +93,13 @@ func TestExposureReconcileRemovesStaleListener(t *testing.T) {
 	exposure.relayListeners = map[string]*listener{
 		relayA: {
 			relayURL: relayAURL,
+			route:    discovery.NewRoute([]string{relayA}, true),
 			cancel:   func() { close(relayAClosed) },
 			doneCh:   relayAClosed,
 		},
 		relayB: {
 			relayURL: relayBURL,
+			route:    discovery.NewRoute([]string{relayB}, true),
 		},
 	}
 

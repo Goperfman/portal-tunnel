@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -46,7 +47,6 @@ type RelaySet struct {
 	mu       sync.RWMutex
 	relays   map[string]RelayState
 	keyIndex map[string]keyIndexEntry
-	policy   MOLSRelayPolicy
 }
 
 // keyIndexEntry records the rollback anchor for a signing identity.
@@ -71,7 +71,6 @@ func NewRelaySet(bootstrapRelayURLs []string) *RelaySet {
 	set := &RelaySet{
 		relays:   make(map[string]RelayState),
 		keyIndex: make(map[string]keyIndexEntry),
-		policy:   MOLSRelayPolicy{},
 	}
 	set.SetBootstrapRelayURLs(bootstrapRelayURLs)
 	return set
@@ -154,15 +153,6 @@ func (s *RelaySet) upsertDescriptorLocked(record RelayState, now time.Time, allo
 	return upsertAccepted
 }
 
-func (s *RelaySet) SetRelayPolicy(policy MOLSRelayPolicy) {
-	if policy == (MOLSRelayPolicy{}) {
-		policy = MOLSRelayPolicy{}
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.policy = policy
-}
-
 func (s *RelaySet) SetBootstrapRelayURLs(inputs []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -196,52 +186,78 @@ func (s *RelaySet) SetBootstrapRelayURLs(inputs []string) {
 	}
 }
 
-func (s *RelaySet) AggregateRelays() []RelayState {
-	s.mu.RLock()
-	states := make([]RelayState, 0, len(s.relays))
-	for _, state := range s.relays {
-		states = append(states, state)
-	}
-	policy := s.policy
-	s.mu.RUnlock()
-
-	return policy.SelectAggregate(states)
+type Route struct {
+	path     []string
+	explicit bool
 }
 
-func (s *RelaySet) ConfirmedRelays() []RelayState {
-	s.mu.RLock()
-	states := make([]RelayState, 0, len(s.relays))
-	for _, state := range s.relays {
-		states = append(states, state)
+func NewRoute(path []string, explicit bool) Route {
+	return Route{
+		path:     append([]string(nil), path...),
+		explicit: explicit,
 	}
-	policy := s.policy
-	s.mu.RUnlock()
-
-	return policy.SelectConfirmed(states)
 }
 
-func (s *RelaySet) PriorityRelays(clientState ClientState) []string {
-	s.mu.RLock()
-	states := make([]RelayState, 0, len(s.relays))
-	for _, state := range s.relays {
-		states = append(states, state)
-	}
-	policy := s.policy
-	s.mu.RUnlock()
-
-	return policy.SelectPriority(states, clientState)
+func (r Route) Explicit() bool {
+	return r.explicit
 }
 
-func (s *RelaySet) PriorityMultiHop(clientState ClientState) []string {
+func (r Route) ListenerRelayURL() string {
+	if len(r.path) == 0 {
+		return ""
+	}
+	return r.path[len(r.path)-1]
+}
+
+func (r Route) MultiHop() []string {
+	if len(r.path) <= 1 {
+		return nil
+	}
+	return append([]string(nil), r.path...)
+}
+
+func (r Route) Equal(other Route) bool {
+	return r.explicit == other.explicit && slices.Equal(r.path, other.path)
+}
+
+func (r Route) WithListenerRelayURL(relayURL string) Route {
+	if len(r.path) == 0 {
+		return NewRoute([]string{relayURL}, r.explicit)
+	}
+	path := append([]string(nil), r.path...)
+	path[len(path)-1] = relayURL
+	return NewRoute(path, r.explicit)
+}
+
+func (s *RelaySet) PlanRoutes(explicitPath []string, routeState RouteState) ([]Route, error) {
+	if len(explicitPath) > 0 {
+		if len(explicitPath) == 1 {
+			return nil, fmt.Errorf("multi-hop requires at least entry and exit relay urls")
+		}
+		return []Route{NewRoute(explicitPath, true)}, nil
+	}
+
 	s.mu.RLock()
 	states := make([]RelayState, 0, len(s.relays))
 	for _, state := range s.relays {
 		states = append(states, state)
 	}
-	policy := s.policy
 	s.mu.RUnlock()
 
-	return policy.SelectMultiHop(states, clientState)
+	if routeState.MultiHopDepth > 1 {
+		path := selectMultiHop(states, routeState)
+		if len(path) < routeState.MultiHopDepth {
+			return nil, fmt.Errorf("multi-hop-depth %d requires %d overlay relay candidates, got %d", routeState.MultiHopDepth, routeState.MultiHopDepth, len(path))
+		}
+		return []Route{NewRoute(path, false)}, nil
+	}
+
+	relayURLs := selectPriority(states, routeState)
+	routes := make([]Route, 0, len(relayURLs))
+	for _, relayURL := range relayURLs {
+		routes = append(routes, NewRoute([]string{relayURL}, slices.Contains(routeState.ExplicitRelayURLs, relayURL)))
+	}
+	return routes, nil
 }
 
 func (s *RelaySet) OverlayPeerStates() []RelayState {
@@ -344,7 +360,7 @@ func (s *RelaySet) BanRelayURL(relayURL string) {
 	if !ok {
 		state = newRelayState(relayURL)
 	}
-	state = s.policy.OnBanned(state)
+	state.Banned = true
 	s.relays[relayURL] = state
 }
 
@@ -356,7 +372,9 @@ func (s *RelaySet) ConfirmRelayURL(relayURL string) {
 	if !ok {
 		state = newRelayState(relayURL)
 	}
-	state = s.policy.OnActiveConfirmed(state)
+	state.Confirmed = true
+	state.activeFailures = 0
+	state.suppressActiveUntil = time.Time{}
 	s.relays[relayURL] = state
 }
 
@@ -368,7 +386,7 @@ func (s *RelaySet) UnconfirmRelayURL(relayURL string) {
 	if !ok {
 		return
 	}
-	state = s.policy.OnUnconfirmed(state)
+	state.Confirmed = false
 	s.relays[relayURL] = state
 }
 
@@ -442,7 +460,8 @@ func (s *RelaySet) ApplyRelayDiscoveryResponse(targetURL string, resp types.Disc
 
 		isAuthoritativeTarget := !protocolMismatch && !missingTarget && authoritative && relayURL == targetURL
 		if isAuthoritativeTarget {
-			record = s.policy.OnDiscoveryConfirmed(record)
+			record.discoveryFailures = 0
+			record.nextDiscoveryRefreshAt = time.Time{}
 		}
 
 		if upsert := s.upsertDescriptorLocked(record, now, isAuthoritativeTarget); upsert != upsertAccepted {
@@ -454,7 +473,8 @@ func (s *RelaySet) ApplyRelayDiscoveryResponse(targetURL string, resp types.Disc
 			// existing URL slot.
 			if isAuthoritativeTarget && hasExistingAtURL {
 				if existingAtURL.discoveryFailures != 0 || !existingAtURL.nextDiscoveryRefreshAt.IsZero() {
-					existingAtURL = s.policy.OnDiscoveryConfirmed(existingAtURL)
+					existingAtURL.discoveryFailures = 0
+					existingAtURL.nextDiscoveryRefreshAt = time.Time{}
 					s.relays[relayURL] = existingAtURL
 					relaySetChanged = true
 				}
@@ -634,7 +654,7 @@ func (s *RelaySet) enforceCapLocked() {
 	}
 }
 
-func (s *RelaySet) RecordDiscoveryFailure(relayURL string, err error, recoveryFailures int) (backedOff bool, backoffReason string, failureCount int) {
+func (s *RelaySet) RecordDiscoveryFailure(relayURL string, recoveryFailures int) (backedOff bool, backoffReason string, failureCount int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -642,12 +662,25 @@ func (s *RelaySet) RecordDiscoveryFailure(relayURL string, err error, recoveryFa
 	if !ok {
 		return false, "", 0
 	}
-	state, backedOff, backoffReason = s.policy.OnDiscoveryFailure(state, err, recoveryFailures)
+	state.discoveryFailures++
+
+	if recoveryFailures <= 0 || state.discoveryFailures < recoveryFailures {
+		s.relays[relayURL] = state
+		return false, "retry", state.discoveryFailures
+	}
+	failuresOverBudget := state.discoveryFailures - recoveryFailures
+	backoff := defaultDirectRecoveryBackoff << min(failuresOverBudget, 3)
+	if backoff > maxDirectRecoveryBackoff {
+		backoff = maxDirectRecoveryBackoff
+	}
+	state.nextDiscoveryRefreshAt = time.Now().Add(backoff)
+	backedOff = true
+	backoffReason = "discovery"
 	s.relays[relayURL] = state
 	return backedOff, backoffReason, state.discoveryFailures
 }
 
-func (s *RelaySet) RecordActiveFailure(relayURL string, err error, recoveryFailures int) (backedOff bool, backoffReason string, failureCount int) {
+func (s *RelaySet) RecordActiveFailure(relayURL string, recoveryFailures int) (backedOff bool, backoffReason string, failureCount int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -655,7 +688,20 @@ func (s *RelaySet) RecordActiveFailure(relayURL string, err error, recoveryFailu
 	if !ok {
 		return false, "", 0
 	}
-	state, backedOff, backoffReason = s.policy.OnActiveFailure(state, err, recoveryFailures)
+	state.activeFailures++
+
+	if recoveryFailures <= 0 || state.activeFailures < recoveryFailures {
+		s.relays[relayURL] = state
+		return false, "retry", state.activeFailures
+	}
+	failuresOverBudget := state.activeFailures - recoveryFailures
+	backoff := defaultDirectRecoveryBackoff << min(failuresOverBudget, 3)
+	if backoff > maxDirectRecoveryBackoff {
+		backoff = maxDirectRecoveryBackoff
+	}
+	state.suppressActiveUntil = time.Now().Add(backoff)
+	backedOff = true
+	backoffReason = "active"
 	s.relays[relayURL] = state
 	return backedOff, backoffReason, state.activeFailures
 }

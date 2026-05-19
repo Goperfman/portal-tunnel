@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gosuda/portal-tunnel/v2/portal/discovery"
 	"github.com/gosuda/portal-tunnel/v2/types"
 )
 
@@ -223,8 +224,12 @@ func TestMITMProbeDetectionBansListener(t *testing.T) {
 		Reason:   types.MITMProbeReasonExporterMismatch,
 	}, nil)
 
-	for _, state := range listener.relaySet.AggregateRelays() {
-		if state.Descriptor.APIHTTPSAddr == relayURL.String() {
+	routes, err := listener.relaySet.PlanRoutes(nil, discovery.RouteState{})
+	if err != nil {
+		t.Fatalf("PlanRoutes() error = %v", err)
+	}
+	for _, route := range routes {
+		if route.ListenerRelayURL() == relayURL.String() {
 			t.Fatal("relay still active after mitm detection")
 		}
 	}
@@ -255,9 +260,13 @@ func TestMITMProbeDetectionWarnsWithoutBanningListener(t *testing.T) {
 		Reason:   types.MITMProbeReasonExporterMismatch,
 	}, nil)
 
-	activeRelayURLs := make([]string, 0)
-	for _, state := range listener.relaySet.AggregateRelays() {
-		activeRelayURLs = append(activeRelayURLs, state.Descriptor.APIHTTPSAddr)
+	routes, err := listener.relaySet.PlanRoutes(nil, discovery.RouteState{})
+	if err != nil {
+		t.Fatalf("PlanRoutes() error = %v", err)
+	}
+	activeRelayURLs := make([]string, 0, len(routes))
+	for _, route := range routes {
+		activeRelayURLs = append(activeRelayURLs, route.ListenerRelayURL())
 	}
 	if len(activeRelayURLs) != 1 || activeRelayURLs[0] != relayURL.String() {
 		t.Fatalf("ActiveRelayURLs() = %v, want [%q]", activeRelayURLs, relayURL.String())

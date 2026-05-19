@@ -90,8 +90,9 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 	var publicHostname string
 	var keylessURL string
 	var hopRoutes []types.HopRoute
-	if len(l.multiHop) > 0 {
-		if len(l.multiHop) < 2 {
+	multiHop := l.route.MultiHop()
+	if len(multiHop) > 0 {
+		if len(multiHop) < 2 {
 			return types.RegisterResponse{}, nil, errors.New("multi-hop requires at least entry and exit relay urls")
 		}
 		if l.relaySet == nil {
@@ -99,8 +100,8 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 		}
 
 		now := time.Now().UTC()
-		hopPath := make([]types.RelayDescriptor, 0, len(l.multiHop))
-		for i, relayURL := range l.multiHop {
+		hopPath := make([]types.RelayDescriptor, 0, len(multiHop))
+		for i, relayURL := range multiHop {
 			desc, ok := l.relaySet.OverlayRelayDescriptor(relayURL, now)
 			if !ok {
 				return types.RegisterResponse{}, nil, fmt.Errorf("multi-hop relay %d descriptor is unavailable", i)
@@ -108,12 +109,13 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 			hopPath = append(hopPath, desc)
 		}
 
+		entryRelayURL := hopPath[0].APIHTTPSAddr
 		var err error
-		publicHostname, err = utils.LeaseHostname(l.identity.Name, utils.PortalRootHost(hopPath[0].APIHTTPSAddr))
+		publicHostname, err = utils.LeaseHostname(l.identity.Name, utils.PortalRootHost(entryRelayURL))
 		if err != nil {
 			return types.RegisterResponse{}, nil, err
 		}
-		keylessURL = hopPath[0].APIHTTPSAddr
+		keylessURL = entryRelayURL
 
 		hopRoutes = make([]types.HopRoute, 0, len(hopPath)-1)
 		var previousHopToken string
@@ -136,7 +138,7 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 			}
 			if i == 0 {
 				route.MatchHostname = publicHostname
-				route.Metadata = l.metadata
+				route.Metadata = l.metadata.Copy()
 			} else {
 				route.MatchToken = previousHopToken
 			}

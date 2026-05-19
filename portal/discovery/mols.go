@@ -1,6 +1,6 @@
 package discovery
 
-// MOLSRelayPolicy uses a GF(64) MOLS-derived score as the primary
+// MOLS route selection uses a GF(64) MOLS-derived score as the primary
 // deterministic ordering for eligible relays. Health and freshness gates decide
 // eligibility before the MOLS score is applied.
 
@@ -131,86 +131,7 @@ func molsRTTStats(states []RelayState) (mean time.Duration, cv float64) {
 	return time.Duration(avg), cv
 }
 
-func isRelayFallback(state RelayState) bool {
-	return !state.DiscoveryRTTAt.IsZero() && state.DiscoveryRTT > molsFallbackRTTThreshold
-}
-
-type MOLSRelayPolicy struct{}
-
-func (p MOLSRelayPolicy) SelectAggregate(states []RelayState) []RelayState {
-	out := make([]RelayState, 0, len(states))
-	for _, s := range states {
-		if !s.Banned {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-func (p MOLSRelayPolicy) SelectConfirmed(states []RelayState) []RelayState {
-	out := make([]RelayState, 0)
-	for _, s := range states {
-		if s.Confirmed {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-func (p MOLSRelayPolicy) OnActiveConfirmed(state RelayState) RelayState {
-	state.Confirmed = true
-	state.activeFailures = 0
-	state.suppressActiveUntil = time.Time{}
-	return state
-}
-
-func (p MOLSRelayPolicy) OnUnconfirmed(state RelayState) RelayState {
-	state.Confirmed = false
-	return state
-}
-
-func (p MOLSRelayPolicy) OnDiscoveryConfirmed(state RelayState) RelayState {
-	state.discoveryFailures = 0
-	state.nextDiscoveryRefreshAt = time.Time{}
-	return state
-}
-
-func (p MOLSRelayPolicy) OnDiscoveryFailure(state RelayState, err error, recoveryFailures int) (RelayState, bool, string) {
-	state.discoveryFailures++
-
-	if recoveryFailures <= 0 || state.discoveryFailures < recoveryFailures {
-		return state, false, "retry"
-	}
-	failuresOverBudget := state.discoveryFailures - recoveryFailures
-	backoff := defaultDirectRecoveryBackoff << min(failuresOverBudget, 3)
-	if backoff > maxDirectRecoveryBackoff {
-		backoff = maxDirectRecoveryBackoff
-	}
-	state.nextDiscoveryRefreshAt = time.Now().Add(backoff)
-	return state, true, "discovery"
-}
-
-func (p MOLSRelayPolicy) OnActiveFailure(state RelayState, err error, recoveryFailures int) (RelayState, bool, string) {
-	state.activeFailures++
-
-	if recoveryFailures <= 0 || state.activeFailures < recoveryFailures {
-		return state, false, "retry"
-	}
-	failuresOverBudget := state.activeFailures - recoveryFailures
-	backoff := defaultDirectRecoveryBackoff << min(failuresOverBudget, 3)
-	if backoff > maxDirectRecoveryBackoff {
-		backoff = maxDirectRecoveryBackoff
-	}
-	state.suppressActiveUntil = time.Now().Add(backoff)
-	return state, true, "active"
-}
-
-func (p MOLSRelayPolicy) OnBanned(state RelayState) RelayState {
-	state.Banned = true
-	return state
-}
-
-func (p MOLSRelayPolicy) rankRelayPool(autoPool []RelayState, localAddress string) []string {
+func rankRelayPool(autoPool []RelayState, localAddress string) []string {
 	if len(autoPool) == 0 {
 		return nil
 	}
@@ -228,7 +149,7 @@ func (p MOLSRelayPolicy) rankRelayPool(autoPool []RelayState, localAddress strin
 	active := make([]RelayState, 0, len(autoPool))
 	fallbacks := make([]RelayState, 0)
 	for _, state := range autoPool {
-		if isRelayFallback(state) {
+		if !state.DiscoveryRTTAt.IsZero() && state.DiscoveryRTT > molsFallbackRTTThreshold {
 			fallbacks = append(fallbacks, state)
 		} else {
 			active = append(active, state)
@@ -297,23 +218,21 @@ func (p MOLSRelayPolicy) rankRelayPool(autoPool []RelayState, localAddress strin
 	return autoURLs
 }
 
-func (p MOLSRelayPolicy) SelectPriority(states []RelayState, clientState ClientState) []string {
-	selected := p.SelectAggregate(states)
-	if len(selected) == 0 {
-		return nil
-	}
-
+func selectPriority(states []RelayState, routeState RouteState) []string {
 	now := time.Now().UTC()
 	explicit := make([]string, 0)
-	autoPool := make([]RelayState, 0, len(selected))
-	for _, state := range selected {
+	autoPool := make([]RelayState, 0, len(states))
+	for _, state := range states {
+		if state.Banned {
+			continue
+		}
 		relayURL := state.Descriptor.APIHTTPSAddr
-		if slices.Contains(clientState.ExplicitRelayURLs, relayURL) {
+		if slices.Contains(routeState.ExplicitRelayURLs, relayURL) {
 			if state.hasObservedDescriptor() && state.Descriptor.ExpiresAt.After(now) {
-				if clientState.RequireUDP && !state.Descriptor.SupportsUDP {
+				if routeState.RequireUDP && !state.Descriptor.SupportsUDP {
 					continue
 				}
-				if clientState.RequireTCP && !state.Descriptor.SupportsTCP {
+				if routeState.RequireTCP && !state.Descriptor.SupportsTCP {
 					continue
 				}
 			}
@@ -325,10 +244,10 @@ func (p MOLSRelayPolicy) SelectPriority(states []RelayState, clientState ClientS
 			if !state.Descriptor.ExpiresAt.After(now) {
 				continue
 			}
-			if clientState.RequireUDP && !state.Descriptor.SupportsUDP {
+			if routeState.RequireUDP && !state.Descriptor.SupportsUDP {
 				continue
 			}
-			if clientState.RequireTCP && !state.Descriptor.SupportsTCP {
+			if routeState.RequireTCP && !state.Descriptor.SupportsTCP {
 				continue
 			}
 		}
@@ -338,8 +257,8 @@ func (p MOLSRelayPolicy) SelectPriority(states []RelayState, clientState ClientS
 		autoPool = append(autoPool, state)
 	}
 
-	autoURLs := p.rankRelayPool(autoPool, clientState.LocalAddress)
-	maxActiveRelays := clientState.MaxActiveRelays
+	autoURLs := rankRelayPool(autoPool, routeState.LocalAddress)
+	maxActiveRelays := routeState.MaxActiveRelays
 	if maxActiveRelays <= 0 {
 		maxActiveRelays = defaultMaxActiveRelays
 	}
@@ -349,26 +268,30 @@ func (p MOLSRelayPolicy) SelectPriority(states []RelayState, clientState ClientS
 	return append(explicit, autoURLs...)
 }
 
-func (p MOLSRelayPolicy) SelectMultiHop(states []RelayState, clientState ClientState) []string {
-	if clientState.MultiHopDepth <= 1 {
-		return nil
-	}
-
-	selected := p.SelectAggregate(states)
-	if len(selected) == 0 {
+func selectMultiHop(states []RelayState, routeState RouteState) []string {
+	if routeState.MultiHopDepth <= 1 {
 		return nil
 	}
 
 	now := time.Now().UTC()
-	autoPool := make([]RelayState, 0, len(selected))
-	for _, state := range selected {
-		if clientState.RequireUDP && state.hasObservedDescriptor() && !state.Descriptor.SupportsUDP {
+	autoPool := make([]RelayState, 0, len(states))
+	for _, state := range states {
+		if state.Banned {
 			continue
 		}
-		if clientState.RequireTCP && state.hasObservedDescriptor() && !state.Descriptor.SupportsTCP {
+		if !state.hasObservedDescriptor() {
 			continue
 		}
-		if !state.hasObservedDescriptor() || !state.Descriptor.ExpiresAt.After(now) || !state.Descriptor.HasOverlayPeer() {
+		if routeState.RequireUDP && !state.Descriptor.SupportsUDP {
+			continue
+		}
+		if routeState.RequireTCP && !state.Descriptor.SupportsTCP {
+			continue
+		}
+		if !state.Descriptor.ExpiresAt.After(now) {
+			continue
+		}
+		if !state.Descriptor.HasOverlayPeer() {
 			continue
 		}
 		if !state.suppressActiveUntil.IsZero() && state.suppressActiveUntil.After(now) {
@@ -377,9 +300,9 @@ func (p MOLSRelayPolicy) SelectMultiHop(states []RelayState, clientState ClientS
 		autoPool = append(autoPool, state)
 	}
 
-	multiHop := p.rankRelayPool(autoPool, clientState.LocalAddress)
-	if len(multiHop) > clientState.MultiHopDepth {
-		multiHop = multiHop[:clientState.MultiHopDepth]
+	multiHop := rankRelayPool(autoPool, routeState.LocalAddress)
+	if len(multiHop) > routeState.MultiHopDepth {
+		multiHop = multiHop[:routeState.MultiHopDepth]
 	}
 	return multiHop
 }
