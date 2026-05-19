@@ -12,6 +12,7 @@ const (
 	DiscoveryDescriptorTTL       = 5 * time.Minute
 	defaultDirectRecoveryBackoff = 1 * time.Minute
 	maxDirectRecoveryBackoff     = 5 * time.Minute
+	relayPoolBanTTL              = 72 * time.Hour
 
 	// MaxAnnouncedRelays is the hard ceiling on the number of relay entries
 	// the local set will retain. When exceeded, eviction prefers the oldest
@@ -75,6 +76,7 @@ type RelayState struct {
 
 	discoveryFailures      int
 	activeFailures         int
+	unhealthySince         time.Time
 	nextDiscoveryRefreshAt time.Time
 	suppressActiveUntil    time.Time
 }
@@ -160,15 +162,15 @@ func (state RelayState) hasObservedDescriptor() bool {
 	return !state.LastSeenAt.IsZero()
 }
 
-type ClientState struct {
+type RouteState struct {
 	ExplicitRelayURLs []string
 	// MaxActiveRelays caps auto-selected relays. Zero or negative values use
-	// the policy default of 3.
+	// the selection default of 3.
 	MaxActiveRelays int
 	MultiHopDepth   int
 	RequireUDP      bool
 	RequireTCP      bool
-	// LocalAddress is the ingress identity address used by MOLSRelayPolicy to
+	// LocalAddress is the ingress identity address used by MOLS route selection to
 	// derive a deterministic row index into the GF(64) MOLS grid.
 	LocalAddress string
 }

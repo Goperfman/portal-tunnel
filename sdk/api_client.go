@@ -132,14 +132,15 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 	var routeHostname string
 	var rootHostname string
 	var hopRoutes []types.HopRoute
+	multiHop := l.route.MultiHop()
 	var hopPath []types.RelayDescriptor
 	streamLease := !udpEnabled && !tcpEnabled
 	registerIdentity := l.identity
-	if len(l.multiHop) > 0 {
+	if len(multiHop) > 0 {
 		if !streamLease {
 			return types.RegisterResponse{}, nil, "", "", errors.New("multi-hop requires stream lease")
 		}
-		if len(l.multiHop) < 2 {
+		if len(multiHop) < 2 {
 			return types.RegisterResponse{}, nil, "", "", errors.New("multi-hop requires at least entry and exit relay urls")
 		}
 		if l.relaySet == nil {
@@ -147,8 +148,8 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 		}
 
 		now := time.Now().UTC()
-		hopPath = make([]types.RelayDescriptor, 0, len(l.multiHop))
-		for i, relayURL := range l.multiHop {
+		hopPath = make([]types.RelayDescriptor, 0, len(multiHop))
+		for i, relayURL := range multiHop {
 			desc, ok := l.relaySet.OverlayRelayDescriptor(relayURL, now)
 			if !ok {
 				return types.RegisterResponse{}, nil, "", "", fmt.Errorf("multi-hop relay %d descriptor is unavailable", i)
@@ -186,7 +187,7 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 		}
 	}
 
-	if len(l.multiHop) > 0 {
+	if len(multiHop) > 0 {
 		var err error
 		hopRoutes, exitHopToken, err = l.buildHopRoutes(hopPath, publicHostname, routeHostname, echConfigList)
 		if err != nil {
@@ -202,7 +203,7 @@ func (l *listener) registerLease(ctx context.Context, ttl time.Duration, udpEnab
 		TCPEnabled: tcpEnabled,
 		HopToken:   exitHopToken,
 	}
-	if streamLease && len(l.multiHop) == 0 {
+	if streamLease && len(multiHop) == 0 {
 		registerReq.RouteHostname = routeHostname
 		registerReq.HostnameHash = utils.HostnameHash(publicHostname)
 		registerReq.ECHConfigList = bytes.Clone(echConfigList)

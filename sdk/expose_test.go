@@ -79,11 +79,13 @@ func TestExposureReconcileRemovesBannedRelayFromActiveSet(t *testing.T) {
 	exposure.relayListeners = map[string]*listener{
 		relayA: {
 			relayURL: relayURL,
+			route:    discovery.NewRoute([]string{relayA}, true),
 			cancel:   func() { close(relayAClosed) },
 			doneCh:   relayAClosed,
 		},
 		relayB: {
 			relayURL: relayBURL,
+			route:    discovery.NewRoute([]string{relayB}, true),
 		},
 	}
 
@@ -134,11 +136,13 @@ func TestExposureReconcileRemovesStaleListener(t *testing.T) {
 	exposure.relayListeners = map[string]*listener{
 		relayA: {
 			relayURL: relayAURL,
+			route:    discovery.NewRoute([]string{relayA}, true),
 			cancel:   func() { close(relayAClosed) },
 			doneCh:   relayAClosed,
 		},
 		relayB: {
 			relayURL: relayBURL,
+			route:    discovery.NewRoute([]string{relayB}, true),
 		},
 	}
 
@@ -204,7 +208,7 @@ func TestExposureRemoveRelayStopsRunningListener(t *testing.T) {
 	if got := exposure.Config().RelayURLs; len(got) != 0 {
 		t.Fatalf("RelayURLs = %v, want empty", got)
 	}
-	if got := exposure.relaySet.PriorityRelays(discovery.ClientState{}); len(got) != 0 {
+	if got := exposure.relaySet.PriorityRelays(discovery.RouteState{}); len(got) != 0 {
 		t.Fatalf("PriorityRelays() = %v, want empty", got)
 	}
 	relays := exposure.relaySet.AllRelays()

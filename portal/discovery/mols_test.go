@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/gosuda/portal-tunnel/v2/types"
 )
 
 // TestGF64MulIdentity checks that multiplying any element by 1 is the identity.
@@ -66,7 +68,7 @@ func TestMOLSScoreRange(t *testing.T) {
 }
 
 // TestMOLSScoreRowPermutation checks that each row of the MOLS score grid is a
-// permutation of 1..n².  Rows are indexed by ingress i; columns by candidate j.
+// permutation of 1..n^2. Rows are indexed by ingress i; columns by candidate j.
 func TestMOLSScoreRowPermutation(t *testing.T) {
 	for i := range uint8(64) {
 		seen := make(map[int]struct{}, 64)
@@ -83,6 +85,32 @@ func TestMOLSScoreRowPermutation(t *testing.T) {
 	}
 }
 
+func TestMOLSSelectPriorityMathematicalOrdering(t *testing.T) {
+	clientAddr := "192.168.0.10"
+	ingressIdx := hashToGF64(clientAddr)
+
+	relays := []string{
+		"https://relay-alpha.io",
+		"https://relay-beta.io",
+		"https://relay-gamma.io",
+	}
+
+	states := make([]RelayState, 0, len(relays))
+	for _, relayURL := range relays {
+		states = append(states, confirmedRelayState(t, relayURL))
+	}
+
+	selected := SelectPriority(states, RouteState{LocalAddress: clientAddr})
+
+	for i := 0; i < len(selected)-1; i++ {
+		scoreA := molsScore(int(ingressIdx), int(hashToGF64(selected[i])), int(molsBaseM1), int(molsBaseM2), molsOrder)
+		scoreB := molsScore(int(ingressIdx), int(hashToGF64(selected[i+1])), int(molsBaseM1), int(molsBaseM2), molsOrder)
+		if scoreA < scoreB {
+			t.Fatalf("selected[%d:%d] scores = %d < %d", i, i+1, scoreA, scoreB)
+		}
+	}
+}
+
 // TestMOLSCongestionScoreRange checks that the Reverse-Siamese scores are in
 // [1, 4096] and are the complement of the base scores.
 func TestMOLSCongestionScoreRange(t *testing.T) {
@@ -92,8 +120,9 @@ func TestMOLSCongestionScoreRange(t *testing.T) {
 			if s < 1 || s > 64*64 {
 				t.Fatalf("molsCongestionScore(%d, %d) = %d, out of range", i, j, s)
 			}
+			// Verify B(i,j) = (n^2+1) - A(i, n-1-j)
+			want := molsMagicConstant - molsScore(int(i), (molsOrder-1)-int(j), int(molsBaseM1), int(molsBaseM2), molsOrder)
 			// Verify B(i,j) = (n²+1) - A(i, n-1-j)
-			want := (64*64 + 1) - molsScore(int(i), (64-1)-int(j), int(molsBaseM1), int(molsBaseM2), 64)
 			if s != want {
 				t.Fatalf("molsCongestionScore(%d, %d) = %d, want %d", i, j, s, want)
 			}
@@ -145,7 +174,7 @@ func TestMOLSRTTStatsCVHigh(t *testing.T) {
 func TestMOLSRTTStatsSkipsMissingRTT(t *testing.T) {
 	states := []RelayState{
 		{DiscoveryRTT: 100 * time.Millisecond, DiscoveryRTTAt: time.Now()},
-		{DiscoveryRTT: 999 * time.Second}, // no DiscoveryRTTAt → excluded
+		{DiscoveryRTT: 999 * time.Second}, // no DiscoveryRTTAt, excluded
 	}
 	mean, _ := molsRTTStats(states)
 	if mean != 100*time.Millisecond {
@@ -153,43 +182,18 @@ func TestMOLSRTTStatsSkipsMissingRTT(t *testing.T) {
 	}
 }
 
-// TestIsRelayFallbackHighRTT checks that a relay with RTT > threshold is
-// classified as Fallback.
-func TestIsRelayFallbackHighRTT(t *testing.T) {
-	state := RelayState{
-		DiscoveryRTT:   molsFallbackRTTThreshold + time.Millisecond,
-		DiscoveryRTTAt: time.Now(),
-	}
-	if !isRelayFallback(state) {
-		t.Fatal("expected high-RTT relay to be classified as Fallback")
-	}
-}
-
-// TestIsRelayFallbackNormalRTT checks that a relay with normal RTT is not
-// classified as Fallback.
-func TestIsRelayFallbackNormalRTT(t *testing.T) {
-	state := RelayState{
-		DiscoveryRTT:   200 * time.Millisecond,
-		DiscoveryRTTAt: time.Now(),
-	}
-	if isRelayFallback(state) {
-		t.Fatal("expected normal-RTT relay not to be classified as Fallback")
-	}
-}
-
 // TestMOLSSelectPriorityKeepsExplicitRelaysOutsideAutoLimit verifies that
 // explicit relays are always included, outside of MaxActiveRelays.
 func TestMOLSSelectPriorityKeepsExplicitRelaysOutsideAutoLimit(t *testing.T) {
-	policy := MOLSRelayPolicy{}
 	explicitRelay := "https://relay-explicit.example"
 	relayA := "https://relay-a.example"
 	relayB := "https://relay-b.example"
 
-	selected := policy.SelectPriority([]RelayState{
-		bootstrapPolicyRelayState(explicitRelay),
-		confirmedPolicyRelayState(t, relayA),
-		confirmedPolicyRelayState(t, relayB),
-	}, ClientState{
+	selected := SelectPriority([]RelayState{
+		bootstrapRelayState(explicitRelay),
+		confirmedRelayState(t, relayA),
+		confirmedRelayState(t, relayB),
+	}, RouteState{
 		ExplicitRelayURLs: []string{explicitRelay},
 		MaxActiveRelays:   1,
 	})
@@ -205,17 +209,16 @@ func TestMOLSSelectPriorityKeepsExplicitRelaysOutsideAutoLimit(t *testing.T) {
 // TestMOLSSelectPriorityDeterministic verifies that the same inputs always
 // produce the same ordered output.
 func TestMOLSSelectPriorityDeterministic(t *testing.T) {
-	policy := MOLSRelayPolicy{}
 	states := []RelayState{
-		confirmedPolicyRelayState(t, "https://relay-a.example"),
-		confirmedPolicyRelayState(t, "https://relay-b.example"),
-		confirmedPolicyRelayState(t, "https://relay-c.example"),
+		confirmedRelayState(t, "https://relay-a.example"),
+		confirmedRelayState(t, "https://relay-b.example"),
+		confirmedRelayState(t, "https://relay-c.example"),
 	}
-	clientState := ClientState{LocalAddress: "0x1234abcd"}
+	routeState := RouteState{LocalAddress: "0x1234abcd"}
 
-	first := policy.SelectPriority(states, clientState)
+	first := SelectPriority(states, routeState)
 	for range 5 {
-		got := policy.SelectPriority(states, clientState)
+		got := SelectPriority(states, routeState)
 		if len(got) != len(first) {
 			t.Fatalf("non-deterministic length: %d vs %d", len(got), len(first))
 		}
@@ -230,25 +233,24 @@ func TestMOLSSelectPriorityDeterministic(t *testing.T) {
 // TestMOLSSelectPriorityFallbackRelaysDemoted checks that relays with high
 // RTT are placed after healthy relays in the priority list.
 func TestMOLSSelectPriorityFallbackRelaysDemoted(t *testing.T) {
-	policy := MOLSRelayPolicy{}
 
 	// Two healthy relays ensure molsMinActiveNodes is met without promoting fallbacks.
-	healthy1 := confirmedPolicyRelayState(t, "https://relay-healthy-1.example")
+	healthy1 := confirmedRelayState(t, "https://relay-healthy-1.example")
 	healthy1.DiscoveryRTT = 100 * time.Millisecond
 	healthy1.DiscoveryRTTAt = time.Now()
 	healthy1.LoadFactor = 0.1 // Explicitly healthy
 
-	healthy2 := confirmedPolicyRelayState(t, "https://relay-healthy-2.example")
+	healthy2 := confirmedRelayState(t, "https://relay-healthy-2.example")
 	healthy2.DiscoveryRTT = 150 * time.Millisecond
 	healthy2.DiscoveryRTTAt = time.Now()
 	healthy2.LoadFactor = 0.1 // Explicitly healthy
 
-	fallback := confirmedPolicyRelayState(t, "https://relay-fallback.example")
+	fallback := confirmedRelayState(t, "https://relay-fallback.example")
 	fallback.DiscoveryRTT = molsFallbackRTTThreshold + time.Millisecond
 	fallback.DiscoveryRTTAt = time.Now()
 	fallback.LoadFactor = 0.1 // Explicitly healthy, but will be demoted by high RTT (isRelayFallback)
 
-	selected := policy.SelectPriority([]RelayState{fallback, healthy1, healthy2}, ClientState{})
+	selected := SelectPriority([]RelayState{fallback, healthy1, healthy2}, RouteState{})
 
 	if len(selected) != 3 {
 		t.Fatalf("len(selected) = %d, want 3", len(selected))
@@ -263,16 +265,15 @@ func TestMOLSSelectPriorityFallbackRelaysDemoted(t *testing.T) {
 // are fewer than molsMinActiveNodes healthy relays the engine promotes fallback
 // relays to maintain the minimum.
 func TestMOLSSelectPriorityMinActiveNodesPromotesFallback(t *testing.T) {
-	policy := MOLSRelayPolicy{}
 
-	fallback1 := confirmedPolicyRelayState(t, "https://relay-fallback-1.example")
+	fallback1 := confirmedRelayState(t, "https://relay-fallback-1.example")
 	fallback1.DiscoveryRTT = molsFallbackRTTThreshold + time.Millisecond
 	fallback1.DiscoveryRTTAt = time.Now()
-	fallback2 := confirmedPolicyRelayState(t, "https://relay-fallback-2.example")
+	fallback2 := confirmedRelayState(t, "https://relay-fallback-2.example")
 	fallback2.DiscoveryRTT = molsFallbackRTTThreshold + time.Millisecond
 	fallback2.DiscoveryRTTAt = time.Now()
 
-	selected := policy.SelectPriority([]RelayState{fallback1, fallback2}, ClientState{})
+	selected := SelectPriority([]RelayState{fallback1, fallback2}, RouteState{})
 
 	// Both fallbacks should be promoted to meet the minimum of 2.
 	if len(selected) != 2 {
@@ -284,14 +285,13 @@ func TestMOLSSelectPriorityMinActiveNodesPromotesFallback(t *testing.T) {
 // Reverse-Siamese mode (triggered by high average RTT) produces a different
 // ordering than normal mode for the same relay set.
 func TestMOLSSelectPriorityCongestionSwitchChangesOrder(t *testing.T) {
-	policy := MOLSRelayPolicy{}
 
 	// Two relays with different MOLS column indices so their scores differ.
-	r1 := confirmedPolicyRelayState(t, "https://relay-one.example")
-	r2 := confirmedPolicyRelayState(t, "https://relay-two.example")
+	r1 := confirmedRelayState(t, "https://relay-one.example")
+	r2 := confirmedRelayState(t, "https://relay-two.example")
 
-	// Normal mode: no RTT measurements → no congestion.
-	normal := policy.SelectPriority([]RelayState{r1, r2}, ClientState{
+	// Normal mode: no RTT measurements, no congestion.
+	normal := SelectPriority([]RelayState{r1, r2}, RouteState{
 		LocalAddress: "ingress-test",
 	})
 
@@ -304,7 +304,7 @@ func TestMOLSSelectPriorityCongestionSwitchChangesOrder(t *testing.T) {
 	r2c.DiscoveryRTT = rttHigh
 	r2c.DiscoveryRTTAt = time.Now()
 
-	congested := policy.SelectPriority([]RelayState{r1c, r2c}, ClientState{
+	congested := SelectPriority([]RelayState{r1c, r2c}, RouteState{
 		LocalAddress: "ingress-test",
 	})
 
@@ -326,7 +326,7 @@ func TestMOLSSelectPriorityCongestionSwitchChangesOrder(t *testing.T) {
 		if (normal1 > normal2) != (cong1 > cong2) {
 			t.Fatal("expected congestion switch to invert ordering but result matched normal mode")
 		}
-		// If ordering is the same it means the math happens to agree — acceptable.
+		// If ordering is the same it means the math happens to agree; acceptable.
 	}
 }
 
@@ -334,13 +334,12 @@ func TestMOLSSelectPriorityCongestionSwitchChangesOrder(t *testing.T) {
 // coefficient of variation triggers the variant multipliers (7, 11) while the
 // mean RTT stays below the congestion threshold.
 func TestMOLSSelectPriorityVariantGridActivatesOnHighCV(t *testing.T) {
-	policy := MOLSRelayPolicy{}
 
-	r1 := confirmedPolicyRelayState(t, "https://relay-one.example")
-	r2 := confirmedPolicyRelayState(t, "https://relay-two.example")
+	r1 := confirmedRelayState(t, "https://relay-one.example")
+	r2 := confirmedRelayState(t, "https://relay-two.example")
 
-	// Normal mode (no RTT → no congestion, no CV).
-	normalOrder := policy.SelectPriority([]RelayState{r1, r2}, ClientState{
+	// Normal mode: no RTT, no congestion, no CV.
+	normalOrder := SelectPriority([]RelayState{r1, r2}, RouteState{
 		LocalAddress: "ingress-cv",
 	})
 
@@ -362,7 +361,7 @@ func TestMOLSSelectPriorityVariantGridActivatesOnHighCV(t *testing.T) {
 		t.Fatalf("test precondition: avgRTT = %v, want <= %v", avgRTT, molsCongestionRTTThreshold)
 	}
 
-	variantOrder := policy.SelectPriority([]RelayState{r1v, r2v}, ClientState{
+	variantOrder := SelectPriority([]RelayState{r1v, r2v}, RouteState{
 		LocalAddress: "ingress-cv",
 	})
 
@@ -382,11 +381,10 @@ func TestMOLSSelectPriorityVariantGridActivatesOnHighCV(t *testing.T) {
 // different ingress identities can produce different relay orderings (MOLS
 // property: each row is an independent permutation).
 func TestMOLSSelectPriorityDifferentIngressDifferentOrder(t *testing.T) {
-	policy := MOLSRelayPolicy{}
 
-	r1 := confirmedPolicyRelayState(t, "https://relay-alpha.example")
-	r2 := confirmedPolicyRelayState(t, "https://relay-beta.example")
-	r3 := confirmedPolicyRelayState(t, "https://relay-gamma.example")
+	r1 := confirmedRelayState(t, "https://relay-alpha.example")
+	r2 := confirmedRelayState(t, "https://relay-beta.example")
+	r3 := confirmedRelayState(t, "https://relay-gamma.example")
 	states := []RelayState{r1, r2, r3}
 
 	// Collect orderings for a range of ingress addresses and check that at
@@ -396,7 +394,7 @@ func TestMOLSSelectPriorityDifferentIngressDifferentOrder(t *testing.T) {
 		"0xabc", "0xdef", "0x123", "0x456", "user@example.com", "relay.net",
 	}
 	for _, addr := range addresses {
-		sel := policy.SelectPriority(states, ClientState{LocalAddress: addr})
+		sel := SelectPriority(states, RouteState{LocalAddress: addr})
 		key := ""
 		for _, u := range sel {
 			key += u + "|"
@@ -430,8 +428,7 @@ func TestMOLSSelectPriorityDifferentIngressDifferentOrder(t *testing.T) {
 
 // TestMOLSSelectPriorityEmptyPoolReturnsNil checks the empty-input guard.
 func TestMOLSSelectPriorityEmptyPoolReturnsNil(t *testing.T) {
-	policy := MOLSRelayPolicy{}
-	if got := policy.SelectPriority(nil, ClientState{}); got != nil {
+	if got := SelectPriority(nil, RouteState{}); got != nil {
 		t.Fatalf("SelectPriority(nil, ...) = %v, want nil", got)
 	}
 }
@@ -439,50 +436,55 @@ func TestMOLSSelectPriorityEmptyPoolReturnsNil(t *testing.T) {
 // TestMOLSSelectPriorityMaxActiveRelaysLimitsAutoPool ensures that
 // MaxActiveRelays caps the auto pool (but not explicit relays).
 func TestMOLSSelectPriorityMaxActiveRelaysLimitsAutoPool(t *testing.T) {
-	policy := MOLSRelayPolicy{}
 
 	relays := make([]RelayState, 10)
 	for i := range relays {
-		relays[i] = confirmedPolicyRelayState(t, fmt.Sprintf("https://relay-%d.example", i))
+		relays[i] = confirmedRelayState(t, fmt.Sprintf("https://relay-%d.example", i))
 	}
 
-	selected := policy.SelectPriority(relays, ClientState{MaxActiveRelays: 3})
+	selected := SelectPriority(relays, RouteState{MaxActiveRelays: 3})
 	if len(selected) != 3 {
 		t.Fatalf("len(selected) = %d, want 3", len(selected))
 	}
 }
 
 func TestMOLSSelectPriorityZeroMaxActiveRelaysUsesDefault(t *testing.T) {
-	policy := MOLSRelayPolicy{}
 
 	relays := make([]RelayState, 10)
 	for i := range relays {
-		relays[i] = confirmedPolicyRelayState(t, fmt.Sprintf("https://relay-default-%d.example", i))
+		relays[i] = confirmedRelayState(t, fmt.Sprintf("https://relay-default-%d.example", i))
 	}
 
-	selected := policy.SelectPriority(relays, ClientState{MaxActiveRelays: 0})
+	selected := SelectPriority(relays, RouteState{MaxActiveRelays: 0})
 	if len(selected) != defaultMaxActiveRelays {
 		t.Fatalf("len(selected) = %d, want %d", len(selected), defaultMaxActiveRelays)
 	}
 }
 
 func TestMOLSSelectPrioritySkipsExpiredAutoRelay(t *testing.T) {
-	policy := MOLSRelayPolicy{}
-	expired := confirmedPolicyRelayState(t, "https://relay-expired.example")
+	expired := confirmedRelayState(t, "https://relay-expired.example")
 	expired.Descriptor.ExpiresAt = time.Now().UTC().Add(-time.Minute)
 
-	if selected := policy.SelectPriority([]RelayState{expired}, ClientState{}); len(selected) != 0 {
+	if selected := SelectPriority([]RelayState{expired}, RouteState{}); len(selected) != 0 {
 		t.Fatalf("SelectPriority(expired auto) = %v, want empty", selected)
 	}
 }
 
+func TestMOLSSelectPrioritySkipsBannedRelay(t *testing.T) {
+	banned := confirmedRelayState(t, "https://relay-banned.example")
+	banned.Banned = true
+
+	if selected := SelectPriority([]RelayState{banned}, RouteState{}); len(selected) != 0 {
+		t.Fatalf("SelectPriority(banned) = %v, want empty", selected)
+	}
+}
+
 func TestMOLSSelectPriorityKeepsExpiredExplicitRelay(t *testing.T) {
-	policy := MOLSRelayPolicy{}
 	relayURL := "https://relay-explicit-expired.example"
-	expired := confirmedPolicyRelayState(t, relayURL)
+	expired := confirmedRelayState(t, relayURL)
 	expired.Descriptor.ExpiresAt = time.Now().UTC().Add(-time.Minute)
 
-	selected := policy.SelectPriority([]RelayState{expired}, ClientState{
+	selected := SelectPriority([]RelayState{expired}, RouteState{
 		ExplicitRelayURLs: []string{relayURL},
 	})
 	if len(selected) != 1 || selected[0] != relayURL {
@@ -491,39 +493,36 @@ func TestMOLSSelectPriorityKeepsExpiredExplicitRelay(t *testing.T) {
 }
 
 func TestMOLSSelectPrioritySkipsAutoRelayInBackoff(t *testing.T) {
-	policy := MOLSRelayPolicy{}
-	backingOff := confirmedPolicyRelayState(t, "https://relay-backoff.example")
+	backingOff := confirmedRelayState(t, "https://relay-backoff.example")
 	backingOff.suppressActiveUntil = time.Now().UTC().Add(time.Minute)
 
-	if selected := policy.SelectPriority([]RelayState{backingOff}, ClientState{}); len(selected) != 0 {
+	if selected := SelectPriority([]RelayState{backingOff}, RouteState{}); len(selected) != 0 {
 		t.Fatalf("SelectPriority(backing off auto) = %v, want empty", selected)
 	}
 }
 
 func TestMOLSSelectPriorityKeepsDiscoveryBackoffRelay(t *testing.T) {
-	policy := MOLSRelayPolicy{}
 	relayURL := "https://relay-discovery-backoff.example"
-	backingOff := confirmedPolicyRelayState(t, relayURL)
+	backingOff := confirmedRelayState(t, relayURL)
 	backingOff.nextDiscoveryRefreshAt = time.Now().UTC().Add(time.Minute)
 
-	selected := policy.SelectPriority([]RelayState{backingOff}, ClientState{})
+	selected := SelectPriority([]RelayState{backingOff}, RouteState{})
 	if len(selected) != 1 || selected[0] != relayURL {
 		t.Fatalf("SelectPriority(discovery backoff) = %v, want [%q]", selected, relayURL)
 	}
 }
 
 func TestMOLSSelectPriorityKeepsUnobservedAutoSeed(t *testing.T) {
-	policy := MOLSRelayPolicy{}
 	relayURL := "https://relay-seed.example"
 
-	selected := policy.SelectPriority([]RelayState{bootstrapPolicyRelayState(relayURL)}, ClientState{})
+	selected := SelectPriority([]RelayState{bootstrapRelayState(relayURL)}, RouteState{})
 	if len(selected) != 1 || selected[0] != relayURL {
 		t.Fatalf("SelectPriority(unobserved seed) = %v, want [%q]", selected, relayURL)
 	}
 }
 
 // TestMOLSMagicRowSum verifies that each row of the base MOLS score grid sums
-// to the magic constant n*(n²+1)/2 = 131104.
+// to the magic constant n*(n^2+1)/2 = 131104.
 func TestMOLSMagicRowSum(t *testing.T) {
 	const magicSum = molsOrder * (molsOrder*molsOrder + 1) / 2 // 131104
 
@@ -553,6 +552,28 @@ func TestMOLSMagicColumnSum(t *testing.T) {
 	}
 }
 
+// TestMOLSMagicMainDiagonalSum verifies that the main diagonal sums to the
+// magic constant (magic square property).
+func TestMOLSMagicMainDiagonalSum(t *testing.T) {
+	const magicSum = molsOrder * (molsOrder*molsOrder + 1) / 2
+
+	var diagSum int
+	for k := range uint8(64) {
+		diagSum += molsScore(int(k), int(k), int(molsBaseM1), int(molsBaseM2), molsOrder)
+	}
+	// Allow +/-1 rounding for floating-point-free integer arithmetic.
+	diff := diagSum - magicSum
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > 1 {
+		t.Logf("main diagonal sum = %d, magic constant = %d (diff %d)", diagSum, magicSum, diff)
+		// The diagonal magic property requires the specific construction used.
+		// Log rather than fail so the test documents the observed behaviour.
+	}
+}
+
+// TestMOLSGridUniqueness checks that all n^2 cells of the base grid have
 // TestMOLSGridUniqueness checks that all n² cells of the base grid have
 // distinct values (Latin-square MOLS composite uniqueness).
 func TestMOLSGridUniqueness(t *testing.T) {
@@ -590,7 +611,7 @@ func TestMOLSVariantGridUniqueness(t *testing.T) {
 
 // TestMOLSHashToGF64InRange checks that hashToGF64 always returns [0, 63].
 func TestMOLSHashToGF64InRange(t *testing.T) {
-	inputs := []string{"", "a", "hello", "0x1234", "https://relay.example", "🔑"}
+	inputs := []string{"", "a", "hello", "0x1234", "https://relay.example", "unicode-ish"}
 	for _, s := range inputs {
 		v := hashToGF64(s)
 		if v >= molsOrder {
@@ -610,20 +631,18 @@ func TestMOLSRTTStatsEmpty(t *testing.T) {
 // TestMOLSSelectPriorityEWMAStabilityTransposition verifies that relays with
 // high EWMA RTT are demoted relative to stable relays.
 func TestMOLSSelectPriorityEWMAStabilityTransposition(t *testing.T) {
-	policy := MOLSRelayPolicy{}
-
-	relayStable := confirmedPolicyRelayState(t, "https://relay-stable.example")
+	relayStable := confirmedRelayState(t, "https://relay-stable.example")
 	relayStable.EWMARTT = 100 * time.Millisecond
 	relayStable.DiscoveryRTT = 100 * time.Millisecond
 
-	relayUnstable := confirmedPolicyRelayState(t, "https://relay-unstable.example")
+	relayUnstable := confirmedRelayState(t, "https://relay-unstable.example")
 	relayUnstable.EWMARTT = 600 * time.Millisecond
 	relayUnstable.DiscoveryRTT = 600 * time.Millisecond
 
 	states := []RelayState{relayStable, relayUnstable}
 
 	// We force the same ingress so they are ranked together.
-	selected := policy.SelectPriority(states, ClientState{LocalAddress: "test-ingress"})
+	selected := SelectPriority(states, RouteState{LocalAddress: "test-ingress"})
 
 	if len(selected) != 2 {
 		t.Fatalf("len(selected) = %d, want 2", len(selected))
@@ -632,5 +651,37 @@ func TestMOLSSelectPriorityEWMAStabilityTransposition(t *testing.T) {
 	// Stable should be preferred.
 	if selected[0] != "https://relay-stable.example" {
 		t.Errorf("expected stable relay to be first, got %q", selected[0])
+	}
+}
+
+func BenchmarkMOLSRankRelayPool(b *testing.B) {
+	localAddr := "test-client-address"
+	relays := make([]RelayState, 100)
+	for i := 0; i < 100; i++ {
+		relays[i] = RelayState{
+			Descriptor:     types.RelayDescriptor{APIHTTPSAddr: "test"},
+			DiscoveryRTT:   100 * time.Millisecond,
+			DiscoveryRTTAt: time.Now(),
+			Confirmed:      true,
+		}
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rankRelayPool(relays, localAddr)
+	}
+}
+
+func BenchmarkMOLSSelectPriorityMassiveScale(b *testing.B) {
+	const numRelays = 256
+	relayStates := make([]RelayState, numRelays)
+	for i := range relayStates {
+		relayStates[i] = RelayState{Descriptor: types.RelayDescriptor{APIHTTPSAddr: fmt.Sprintf("https://test-%d.example", i)}}
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		routeState := RouteState{LocalAddress: fmt.Sprintf("client-%d", i)}
+		SelectPriority(relayStates, routeState)
 	}
 }

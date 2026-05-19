@@ -41,7 +41,6 @@ type listenerConfig struct {
 	ReadyTarget      int
 	RetryCount       int
 	RetryWait        time.Duration
-	MultiHop         []string
 	relaySet         *discovery.RelaySet
 }
 
@@ -53,10 +52,10 @@ type listener struct {
 	closeOnce sync.Once
 
 	relayURL       *url.URL
+	route          discovery.Route
 	metadata       func() types.LeaseMetadata
 	identity       types.Identity
 	relaySet       *discovery.RelaySet
-	multiHop       []string
 	udpEnabled     bool
 	tcpEnabled     bool
 	dialTimeout    time.Duration
@@ -83,7 +82,7 @@ type listener struct {
 
 // newListener creates one relay listener and its dedicated relay transport for one relay URL.
 // Only local config validation fails immediately; relay startup runs in the background until ready.
-func newListener(ctx context.Context, relayURL string, cfg listenerConfig) (*listener, error) {
+func newListener(ctx context.Context, route discovery.Route, cfg listenerConfig) (*listener, error) {
 	listenerCtx, cancel := context.WithCancel(ctx)
 	readyTarget := utils.IntOrDefault(cfg.ReadyTarget, defaultReadyTarget)
 	leaseTTL := utils.DurationOrDefault(cfg.LeaseTTL, defaultLeaseTTL)
@@ -93,7 +92,7 @@ func newListener(ctx context.Context, relayURL string, cfg listenerConfig) (*lis
 	renewBefore := utils.DurationOrDefault(cfg.RenewBefore, defaultRenewBefore)
 	retryWait := utils.DurationOrDefault(cfg.RetryWait, defaultRetryWait)
 
-	normalizedRelayURL, err := utils.NormalizeRelayURL(relayURL)
+	normalizedRelayURL, err := utils.NormalizeRelayURL(route.ListenerRelayURL())
 	if err != nil {
 		cancel()
 		return nil, err
@@ -107,10 +106,10 @@ func newListener(ctx context.Context, relayURL string, cfg listenerConfig) (*lis
 		cancel:         cancel,
 		doneCh:         listenerCtx.Done(),
 		relayURL:       relayurl,
+		route:          route.WithListenerRelayURL(normalizedRelayURL),
 		metadata:       cfg.Metadata,
 		identity:       cfg.Identity.Copy(),
 		relaySet:       cfg.relaySet,
-		multiHop:       append([]string(nil), cfg.MultiHop...),
 		udpEnabled:     cfg.UDPEnabled,
 		tcpEnabled:     cfg.TCPEnabled,
 		dialTimeout:    dialTimeout,
@@ -162,7 +161,7 @@ func (l *listener) run(ctx context.Context) {
 				relayURL := l.relayURL.String()
 				if l.relaySet != nil && relayURL != "" {
 					l.relaySet.UnconfirmRelayURL(relayURL)
-					l.relaySet.RecordActiveFailure(relayURL, err, 1)
+					l.relaySet.RecordActiveFailure(relayURL, 1)
 				}
 				log.Error().
 					Err(err).
@@ -779,8 +778,8 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 		}
 	}
 	keylessURL := l.relayURL.String()
-	if len(l.multiHop) > 0 {
-		keylessURL = l.multiHop[0]
+	if multiHop := l.route.MultiHop(); len(multiHop) > 0 {
+		keylessURL = multiHop[0]
 	}
 	publicURLBase := l.relayURL
 	if normalizedKeylessURL, err := utils.NormalizeRelayURL(keylessURL); err == nil {
@@ -892,7 +891,7 @@ func (l *listener) waitRetry(ctx context.Context, operation string, err error, r
 	if l.retryCount > 0 && retries > l.retryCount {
 		if l.relaySet != nil && relayURL != "" {
 			l.relaySet.UnconfirmRelayURL(relayURL)
-			l.relaySet.RecordActiveFailure(relayURL, err, 1)
+			l.relaySet.RecordActiveFailure(relayURL, 1)
 		}
 		logger.Error().
 			Err(err).

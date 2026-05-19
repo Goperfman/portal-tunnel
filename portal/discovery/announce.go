@@ -11,8 +11,8 @@ import (
 // represent multiple relays behind the same NAT or proxy, so the default
 // receiver budget leaves room for shared egress while still bounding abuse.
 const (
-	DefaultAnnounceRatePerMinute = 30
-	DefaultAnnounceBurst         = 60
+	defaultAnnounceRatePerMinute = 30
+	defaultAnnounceBurst         = 60
 	announceLimiterPruneInterval = 10 * time.Minute
 	announceLimiterIdleTTL       = 30 * time.Minute
 )
@@ -49,10 +49,10 @@ type announceBucket struct {
 // to the defaults so the zero-config path is safe.
 func NewAnnounceLimiter(ratePerMinute, burst int) *AnnounceLimiter {
 	if ratePerMinute <= 0 {
-		ratePerMinute = DefaultAnnounceRatePerMinute
+		ratePerMinute = defaultAnnounceRatePerMinute
 	}
 	if burst <= 0 {
-		burst = DefaultAnnounceBurst
+		burst = defaultAnnounceBurst
 	}
 	return &AnnounceLimiter{
 		buckets:        make(map[string]*announceBucket),

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -49,7 +50,6 @@ type RelaySet struct {
 	mu       sync.RWMutex
 	relays   map[string]RelayState
 	keyIndex map[string]keyIndexEntry
-	policy   MOLSRelayPolicy
 }
 
 // keyIndexEntry records the rollback anchor for a signing identity.
@@ -74,10 +74,114 @@ func NewRelaySet(bootstrapRelayURLs []string) *RelaySet {
 	set := &RelaySet{
 		relays:   make(map[string]RelayState),
 		keyIndex: make(map[string]keyIndexEntry),
-		policy:   MOLSRelayPolicy{},
 	}
 	set.SetBootstrapRelayURLs(bootstrapRelayURLs)
 	return set
+}
+
+// currentRelayStates returns a copy of the set after expiring temporary pool bans.
+func (s *RelaySet) currentRelayStates(now time.Time) []RelayState {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.clearExpiredPoolBansLocked(now)
+	states := make([]RelayState, 0, len(s.relays))
+	for _, state := range s.relays {
+		states = append(states, state)
+	}
+	return states
+}
+
+// refreshCandidates returns relays worth directly polling after applying local
+// pool-ban expiry. The refresher owns HTTP; RelaySet owns pool eligibility.
+func (s *RelaySet) refreshCandidates(now time.Time) []RelayState {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	states := s.currentRelayStates(now)
+	out := make([]RelayState, 0, len(states))
+	for _, state := range states {
+		if state.Banned {
+			continue
+		}
+		if !state.hasObservedDescriptor() {
+			if !state.Bootstrap {
+				continue
+			}
+		} else if !state.Bootstrap {
+			if !state.nextDiscoveryRefreshAt.IsZero() && state.nextDiscoveryRefreshAt.After(now) {
+				continue
+			}
+		}
+		if state.Descriptor.APIHTTPSAddr == "" {
+			continue
+		}
+		out = append(out, state)
+	}
+	return out
+}
+
+func (s *RelaySet) clearExpiredPoolBansLocked(now time.Time) {
+	for relayURL, state := range s.relays {
+		if !state.Banned || state.suppressActiveUntil.IsZero() || state.suppressActiveUntil.After(now) {
+			continue
+		}
+		if !state.Bootstrap {
+			delete(s.relays, relayURL)
+			continue
+		}
+		state.Banned = false
+		state.suppressActiveUntil = time.Time{}
+		state.unhealthySince = time.Time{}
+		s.relays[relayURL] = state
+	}
+}
+
+func (s *RelaySet) banFromPoolLocked(relayURL string, now time.Time) {
+	if relayURL == "" {
+		return
+	}
+	bootstrap := false
+	state, ok := s.relays[relayURL]
+	if ok {
+		bootstrap = state.Bootstrap
+	}
+	state = newRelayState(relayURL)
+	state.Bootstrap = bootstrap
+	state.Banned = true
+	state.suppressActiveUntil = now.Add(relayPoolBanTTL)
+	s.relays[relayURL] = state
+}
+
+func mergeLocalRelayState(record, existing RelayState) RelayState {
+	record.Bootstrap = record.Bootstrap || existing.Bootstrap
+	record.Confirmed = record.Confirmed || existing.Confirmed
+	record.Banned = record.Banned || existing.Banned
+	if record.discoveryFailures < existing.discoveryFailures {
+		record.discoveryFailures = existing.discoveryFailures
+	}
+	if record.activeFailures < existing.activeFailures {
+		record.activeFailures = existing.activeFailures
+	}
+	record.unhealthySince = existing.unhealthySince
+	record.nextDiscoveryRefreshAt = existing.nextDiscoveryRefreshAt
+	record.suppressActiveUntil = existing.suppressActiveUntil
+	if record.DiscoveryRTTAt.IsZero() || (!existing.DiscoveryRTTAt.IsZero() && existing.DiscoveryRTTAt.After(record.DiscoveryRTTAt)) {
+		record.DiscoveryRTT = existing.DiscoveryRTT
+		record.DiscoveryRTTAt = existing.DiscoveryRTTAt
+	}
+	record.inheritAdaptiveTelemetry(existing)
+	return record
+}
+
+func markDiscoveryConfirmed(state RelayState) RelayState {
+	state.discoveryFailures = 0
+	state.nextDiscoveryRefreshAt = time.Time{}
+	state.unhealthySince = time.Time{}
+	return state
 }
 
 // upsertDescriptorLocked applies a fully-merged RelayState to s.relays and
@@ -105,6 +209,9 @@ func NewRelaySet(bootstrapRelayURLs []string) *RelaySet {
 func (s *RelaySet) upsertDescriptorLocked(record RelayState, now time.Time, allowCrossIdentityTakeover bool) upsertResult {
 	relayURL := record.Descriptor.APIHTTPSAddr
 	if relayURL == "" {
+		return upsertRejected
+	}
+	if existing, ok := s.relays[relayURL]; ok && existing.Banned {
 		return upsertRejected
 	}
 	address := strings.ToLower(strings.TrimSpace(record.Descriptor.Address))
@@ -157,18 +264,12 @@ func (s *RelaySet) upsertDescriptorLocked(record RelayState, now time.Time, allo
 	return upsertAccepted
 }
 
-func (s *RelaySet) SetRelayPolicy(policy MOLSRelayPolicy) {
-	if policy == (MOLSRelayPolicy{}) {
-		policy = MOLSRelayPolicy{}
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.policy = policy
-}
-
 func (s *RelaySet) SetBootstrapRelayURLs(inputs []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	now := time.Now().UTC()
+	s.clearExpiredPoolBansLocked(now)
 
 	keep := make(map[string]struct{}, len(inputs))
 	for _, relayURL := range inputs {
@@ -187,7 +288,9 @@ func (s *RelaySet) SetBootstrapRelayURLs(inputs []string) {
 	}
 
 	for _, relayURL := range inputs {
-		if _, ok := s.relays[relayURL]; ok {
+		if state, ok := s.relays[relayURL]; ok {
+			state.Bootstrap = true
+			s.relays[relayURL] = state
 			continue
 		}
 
@@ -232,37 +335,84 @@ func disposableRelayState(state RelayState) bool {
 }
 
 func (s *RelaySet) AggregateRelays() []RelayState {
-	s.mu.RLock()
-	states := make([]RelayState, 0, len(s.relays))
-	for _, state := range s.relays {
-		states = append(states, state)
-	}
-	policy := s.policy
-	s.mu.RUnlock()
-
-	return policy.SelectAggregate(states)
+	return selectAggregate(s.currentRelayStates(time.Now().UTC()))
 }
 
 func (s *RelaySet) AllRelays() []RelayState {
-	s.mu.RLock()
-	states := make([]RelayState, 0, len(s.relays))
-	for _, state := range s.relays {
-		states = append(states, state)
-	}
-	s.mu.RUnlock()
-	return states
+	return s.currentRelayStates(time.Now().UTC())
 }
 
 func (s *RelaySet) ConfirmedRelays() []RelayState {
-	s.mu.RLock()
-	states := make([]RelayState, 0, len(s.relays))
-	for _, state := range s.relays {
-		states = append(states, state)
-	}
-	policy := s.policy
-	s.mu.RUnlock()
+	return selectConfirmed(s.currentRelayStates(time.Now().UTC()))
+}
 
-	return policy.SelectConfirmed(states)
+type Route struct {
+	path     []string
+	explicit bool
+}
+
+func NewRoute(path []string, explicit bool) Route {
+	return Route{
+		path:     append([]string(nil), path...),
+		explicit: explicit,
+	}
+}
+
+func (r Route) Explicit() bool {
+	return r.explicit
+}
+
+func (r Route) ListenerRelayURL() string {
+	if len(r.path) == 0 {
+		return ""
+	}
+	return r.path[len(r.path)-1]
+}
+
+func (r Route) MultiHop() []string {
+	if len(r.path) <= 1 {
+		return nil
+	}
+	return append([]string(nil), r.path...)
+}
+
+func (r Route) Equal(other Route) bool {
+	return r.explicit == other.explicit && slices.Equal(r.path, other.path)
+}
+
+func (r Route) WithListenerRelayURL(relayURL string) Route {
+	if len(r.path) == 0 {
+		return NewRoute([]string{relayURL}, r.explicit)
+	}
+	path := append([]string(nil), r.path...)
+	path[len(path)-1] = relayURL
+	return NewRoute(path, r.explicit)
+}
+
+func (s *RelaySet) PlanRoutes(explicitPath []string, routeState RouteState) ([]Route, error) {
+	if len(explicitPath) > 0 {
+		if len(explicitPath) == 1 {
+			return nil, fmt.Errorf("multi-hop requires at least entry and exit relay urls")
+		}
+		return []Route{NewRoute(explicitPath, true)}, nil
+	}
+
+	states := s.currentRelayStates(time.Now().UTC())
+
+	if routeState.MultiHopDepth > 1 {
+		path := SelectMultiHop(states, routeState)
+		if len(path) < routeState.MultiHopDepth {
+			return nil, fmt.Errorf("multi-hop-depth %d requires %d overlay relay candidates, got %d", routeState.MultiHopDepth, routeState.MultiHopDepth, len(path))
+		}
+		return []Route{NewRoute(path, false)}, nil
+	}
+
+	relayURLs := SelectPriority(states, routeState)
+	routes := make([]Route, 0, len(relayURLs))
+	for _, relayURL := range relayURLs {
+		routes = append(routes, NewRoute([]string{relayURL}, slices.Contains(routeState.ExplicitRelayURLs, relayURL)))
+	}
+	return routes, nil
 }
 
 // PriorityRelaysWithTrace returns the same ordered relay-URL list as
@@ -270,16 +420,10 @@ func (s *RelaySet) ConfirmedRelays() []RelayState {
 // eligibility classification, and the scoring parameters used. Prometheus
 // metrics are emitted from the trace before returning, and a sampled zerolog
 // debug entry is written.
-func (s *RelaySet) PriorityRelaysWithTrace(clientState ClientState) ([]string, telemetry.SelectionTrace) {
-	s.mu.RLock()
-	states := make([]RelayState, 0, len(s.relays))
-	for _, state := range s.relays {
-		states = append(states, state)
-	}
-	policy := s.policy
-	s.mu.RUnlock()
+func (s *RelaySet) PriorityRelaysWithTrace(routeState RouteState) ([]string, telemetry.SelectionTrace) {
+	states := s.currentRelayStates(time.Now().UTC())
 
-	result, trace := policy.SelectPriorityWithTrace(states, clientState)
+	result, trace := selectPriorityWithTrace(states, routeState)
 	telemetry.EmitFromTrace(trace)
 	log.Debug().
 		Uint8("client_hash", trace.ClientHash).
@@ -293,10 +437,9 @@ func (s *RelaySet) PriorityRelaysWithTrace(clientState ClientState) ([]string, t
 }
 
 // PriorityRelays returns the ordered list of relay URLs for a client. It
-// delegates to PriorityRelaysWithTrace and discards the trace. The public
-// signature is unchanged through all phases.
-func (s *RelaySet) PriorityRelays(clientState ClientState) []string {
-	out, _ := s.PriorityRelaysWithTrace(clientState)
+// delegates to PriorityRelaysWithTrace and discards the trace.
+func (s *RelaySet) PriorityRelays(routeState RouteState) []string {
+	out, _ := s.PriorityRelaysWithTrace(routeState)
 	return out
 }
 
@@ -305,16 +448,10 @@ func (s *RelaySet) PriorityRelays(clientState ClientState) []string {
 // eligibility classification, and the scoring parameters used. Prometheus
 // metrics are emitted from the trace before returning, and a sampled zerolog
 // debug entry is written.
-func (s *RelaySet) PriorityMultiHopWithTrace(clientState ClientState) ([]string, telemetry.SelectionTrace) {
-	s.mu.RLock()
-	states := make([]RelayState, 0, len(s.relays))
-	for _, state := range s.relays {
-		states = append(states, state)
-	}
-	policy := s.policy
-	s.mu.RUnlock()
+func (s *RelaySet) PriorityMultiHopWithTrace(routeState RouteState) ([]string, telemetry.SelectionTrace) {
+	states := s.currentRelayStates(time.Now().UTC())
 
-	result, trace := policy.SelectMultiHopWithTrace(states, clientState)
+	result, trace := selectMultiHopWithTrace(states, routeState)
 	telemetry.EmitFromTrace(trace)
 	log.Debug().
 		Uint8("client_hash", trace.ClientHash).
@@ -329,23 +466,45 @@ func (s *RelaySet) PriorityMultiHopWithTrace(clientState ClientState) ([]string,
 
 // PriorityMultiHop returns the ordered list of relay URLs for multi-hop
 // routing. It delegates to PriorityMultiHopWithTrace and discards the trace.
-// The public signature is unchanged through all phases.
-func (s *RelaySet) PriorityMultiHop(clientState ClientState) []string {
-	out, _ := s.PriorityMultiHopWithTrace(clientState)
+func (s *RelaySet) PriorityMultiHop(routeState RouteState) []string {
+	out, _ := s.PriorityMultiHopWithTrace(routeState)
 	return out
 }
 
-func (s *RelaySet) overlayPeerRelayStates() []RelayState {
-	now := time.Now().UTC()
-	s.mu.RLock()
-	out := make([]RelayState, 0, len(s.relays))
-	for _, state := range s.relays {
+func (s *RelaySet) overlayRefreshCandidates(now time.Time) []RelayState {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
+	}
+	states := s.overlayPeerRelayStates(now)
+	out := make([]RelayState, 0, len(states))
+	for _, state := range states {
+		if !state.nextDiscoveryRefreshAt.IsZero() && state.nextDiscoveryRefreshAt.After(now) {
+			continue
+		}
+		out = append(out, state)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (s *RelaySet) overlayPeerRelayStates(now time.Time) []RelayState {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
+	}
+	states := s.currentRelayStates(now)
+	out := make([]RelayState, 0, len(states))
+	for _, state := range states {
 		if state.Banned || !state.hasObservedDescriptor() || !state.Descriptor.ExpiresAt.After(now) || !state.Descriptor.HasOverlayPeer() {
 			continue
 		}
 		out = append(out, state)
 	}
-	s.mu.RUnlock()
 	if len(out) == 0 {
 		return nil
 	}
@@ -353,7 +512,7 @@ func (s *RelaySet) overlayPeerRelayStates() []RelayState {
 }
 
 func (s *RelaySet) OverlayPeerDescriptor() []types.RelayDescriptor {
-	states := s.overlayPeerRelayStates()
+	states := s.overlayPeerRelayStates(time.Now().UTC())
 	if len(states) == 0 {
 		return nil
 	}
@@ -384,9 +543,9 @@ func (s *RelaySet) OverlayRelayDescriptor(relayURL string, now time.Time) (types
 // BootstrapRelayURLs returns configured bootstrap discovery endpoints that
 // can receive this relay's periodic self-announce.
 func (s *RelaySet) BootstrapRelayURLs() []string {
-	s.mu.RLock()
-	out := make([]string, 0, len(s.relays))
-	for _, state := range s.relays {
+	states := s.currentRelayStates(time.Now().UTC())
+	out := make([]string, 0, len(states))
+	for _, state := range states {
 		if state.Banned || !state.Bootstrap {
 			continue
 		}
@@ -396,7 +555,6 @@ func (s *RelaySet) BootstrapRelayURLs() []string {
 		}
 		out = append(out, relayURL)
 	}
-	s.mu.RUnlock()
 	if len(out) == 0 {
 		return nil
 	}
@@ -425,14 +583,12 @@ func (s *RelaySet) Descriptors(self types.RelayDescriptor) []types.RelayDescript
 	if self.APIHTTPSAddr != "" && self.ExpiresAt.After(now) {
 		add(self)
 	}
-	s.mu.RLock()
-	for _, state := range s.relays {
+	for _, state := range s.currentRelayStates(now) {
 		if state.Banned || !state.hasObservedDescriptor() {
 			continue
 		}
 		add(state.Descriptor)
 	}
-	s.mu.RUnlock()
 	if len(out) == 0 {
 		return nil
 	}
@@ -447,7 +603,8 @@ func (s *RelaySet) BanRelayURL(relayURL string) {
 	if !ok {
 		state = newRelayState(relayURL)
 	}
-	state = s.policy.OnBanned(state)
+	state.suppressActiveUntil = time.Time{}
+	state.Banned = true
 	s.relays[relayURL] = state
 }
 
@@ -460,6 +617,8 @@ func (s *RelaySet) AllowRelayURL(relayURL string) {
 		state = newRelayState(relayURL)
 	}
 	state.Banned = false
+	state.suppressActiveUntil = time.Time{}
+	state.unhealthySince = time.Time{}
 	s.relays[relayURL] = state
 }
 
@@ -467,11 +626,19 @@ func (s *RelaySet) ConfirmRelayURL(relayURL string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	now := time.Now().UTC()
+	s.clearExpiredPoolBansLocked(now)
 	state, ok := s.relays[relayURL]
 	if !ok {
 		state = newRelayState(relayURL)
 	}
-	state = s.policy.OnActiveConfirmed(state)
+	if state.Banned {
+		s.relays[relayURL] = state
+		return
+	}
+	state.Confirmed = true
+	state.activeFailures = 0
+	state.suppressActiveUntil = time.Time{}
 	s.relays[relayURL] = state
 }
 
@@ -483,7 +650,7 @@ func (s *RelaySet) UnconfirmRelayURL(relayURL string) {
 	if !ok {
 		return
 	}
-	state = s.policy.OnUnconfirmed(state)
+	state.Confirmed = false
 	s.relays[relayURL] = state
 }
 
@@ -497,7 +664,7 @@ func (s *RelaySet) DeactivateRelayURL(relayURL string) {
 	if !ok {
 		return
 	}
-	state = s.policy.OnUnconfirmed(state)
+	state.Confirmed = false
 	state.suppressActiveUntil = time.Now().Add(defaultDirectRecoveryBackoff)
 	s.relays[relayURL] = state
 }
@@ -513,6 +680,7 @@ func (s *RelaySet) ApplyRelayDiscoveryResponse(targetURL string, resp types.Disc
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.clearExpiredPoolBansLocked(now)
 
 	discoveredByURL := make(map[string]RelayState, len(resp.Relays))
 	discoveredOrder := make([]string, 0, len(resp.Relays)+1)
@@ -538,6 +706,9 @@ func (s *RelaySet) ApplyRelayDiscoveryResponse(targetURL string, resp types.Disc
 		if relayURL == "" {
 			return
 		}
+		if existing, ok := s.relays[relayURL]; ok && existing.Banned {
+			return
+		}
 		if authoritative && relayURL == targetURL {
 			targetFound = true
 		}
@@ -554,26 +725,11 @@ func (s *RelaySet) ApplyRelayDiscoveryResponse(targetURL string, resp types.Disc
 	for _, relayURL := range discoveredOrder {
 		record := discoveredByURL[relayURL]
 		existingAtURL, hasExistingAtURL := s.relays[relayURL]
-		record.Bootstrap = record.Bootstrap || existingAtURL.Bootstrap
-		record.Confirmed = record.Confirmed || existingAtURL.Confirmed
-		record.Banned = record.Banned || existingAtURL.Banned
-		if record.discoveryFailures < existingAtURL.discoveryFailures {
-			record.discoveryFailures = existingAtURL.discoveryFailures
-		}
-		if record.activeFailures < existingAtURL.activeFailures {
-			record.activeFailures = existingAtURL.activeFailures
-		}
-		record.nextDiscoveryRefreshAt = existingAtURL.nextDiscoveryRefreshAt
-		record.suppressActiveUntil = existingAtURL.suppressActiveUntil
-		if record.DiscoveryRTTAt.IsZero() || (!existingAtURL.DiscoveryRTTAt.IsZero() && existingAtURL.DiscoveryRTTAt.After(record.DiscoveryRTTAt)) {
-			record.DiscoveryRTT = existingAtURL.DiscoveryRTT
-			record.DiscoveryRTTAt = existingAtURL.DiscoveryRTTAt
-		}
-		record.inheritAdaptiveTelemetry(existingAtURL)
+		record = mergeLocalRelayState(record, existingAtURL)
 
 		isAuthoritativeTarget := !protocolMismatch && !missingTarget && authoritative && relayURL == targetURL
 		if isAuthoritativeTarget {
-			record = s.policy.OnDiscoveryConfirmed(record)
+			record = markDiscoveryConfirmed(record)
 		}
 
 		if upsert := s.upsertDescriptorLocked(record, now, isAuthoritativeTarget); upsert != upsertAccepted {
@@ -584,8 +740,8 @@ func (s *RelaySet) ApplyRelayDiscoveryResponse(targetURL string, resp types.Disc
 			// authoritative target we should still credit it as alive on its
 			// existing URL slot.
 			if isAuthoritativeTarget && hasExistingAtURL {
-				if existingAtURL.discoveryFailures != 0 || !existingAtURL.nextDiscoveryRefreshAt.IsZero() {
-					existingAtURL = s.policy.OnDiscoveryConfirmed(existingAtURL)
+				if existingAtURL.discoveryFailures != 0 || !existingAtURL.nextDiscoveryRefreshAt.IsZero() || !existingAtURL.unhealthySince.IsZero() {
+					existingAtURL = markDiscoveryConfirmed(existingAtURL)
 					s.relays[relayURL] = existingAtURL
 					relaySetChanged = true
 				}
@@ -679,25 +835,14 @@ func (s *RelaySet) InsertAnnounced(desc types.RelayDescriptor, now time.Time) er
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.clearExpiredPoolBansLocked(now)
 
 	relayURL := record.Descriptor.APIHTTPSAddr
+	if existing, ok := s.relays[relayURL]; ok && existing.Banned {
+		return errors.New("relay banned from pool")
+	}
 	if existing, ok := s.relays[relayURL]; ok {
-		record.Bootstrap = record.Bootstrap || existing.Bootstrap
-		record.Confirmed = record.Confirmed || existing.Confirmed
-		record.Banned = record.Banned || existing.Banned
-		if record.discoveryFailures < existing.discoveryFailures {
-			record.discoveryFailures = existing.discoveryFailures
-		}
-		if record.activeFailures < existing.activeFailures {
-			record.activeFailures = existing.activeFailures
-		}
-		record.nextDiscoveryRefreshAt = existing.nextDiscoveryRefreshAt
-		record.suppressActiveUntil = existing.suppressActiveUntil
-		if record.DiscoveryRTTAt.IsZero() || (!existing.DiscoveryRTTAt.IsZero() && existing.DiscoveryRTTAt.After(record.DiscoveryRTTAt)) {
-			record.DiscoveryRTT = existing.DiscoveryRTT
-			record.DiscoveryRTTAt = existing.DiscoveryRTTAt
-		}
-		record.inheritAdaptiveTelemetry(existing)
+		record = mergeLocalRelayState(record, existing)
 	}
 
 	switch s.upsertDescriptorLocked(record, now, false) {
@@ -739,6 +884,7 @@ func validateRelayDescriptorFreshness(desc types.RelayDescriptor, now time.Time)
 // as a write lock.
 func (s *RelaySet) enforceCapLocked() {
 	now := time.Now().UTC()
+	s.clearExpiredPoolBansLocked(now)
 	for address, entry := range s.keyIndex {
 		if !entry.TombstoneUntil.IsZero() && now.After(entry.TombstoneUntil) {
 			delete(s.keyIndex, address)
@@ -754,7 +900,7 @@ func (s *RelaySet) enforceCapLocked() {
 	}
 	candidates := make([]ageEntry, 0, len(s.relays))
 	for url, state := range s.relays {
-		if state.Bootstrap {
+		if state.Bootstrap || state.Banned {
 			continue
 		}
 		candidates = append(candidates, ageEntry{
@@ -779,28 +925,61 @@ func (s *RelaySet) enforceCapLocked() {
 	}
 }
 
-func (s *RelaySet) RecordDiscoveryFailure(relayURL string, err error, recoveryFailures int) (backedOff bool, backoffReason string, failureCount int) {
+func (s *RelaySet) RecordDiscoveryFailure(relayURL string, recoveryFailures int) (backedOff bool, backoffReason string, failureCount int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	now := time.Now().UTC()
+	s.clearExpiredPoolBansLocked(now)
 	state, ok := s.relays[relayURL]
-	if !ok {
+	if !ok || state.Banned {
 		return false, "", 0
 	}
-	state, backedOff, backoffReason = s.policy.OnDiscoveryFailure(state, err, recoveryFailures)
+	state.discoveryFailures++
+	if state.unhealthySince.IsZero() {
+		state.unhealthySince = now
+	}
+	if !state.unhealthySince.Add(AnnounceMaxValidity).After(now) {
+		s.banFromPoolLocked(relayURL, now)
+		return true, "unhealthy", state.discoveryFailures
+	}
+
+	if recoveryFailures <= 0 || state.discoveryFailures < recoveryFailures {
+		s.relays[relayURL] = state
+		return false, "retry", state.discoveryFailures
+	}
+	failuresOverBudget := state.discoveryFailures - recoveryFailures
+	backoff := defaultDirectRecoveryBackoff << min(failuresOverBudget, 3)
+	if backoff > maxDirectRecoveryBackoff {
+		backoff = maxDirectRecoveryBackoff
+	}
+	state.nextDiscoveryRefreshAt = now.Add(backoff)
 	s.relays[relayURL] = state
-	return backedOff, backoffReason, state.discoveryFailures
+	return true, "discovery", state.discoveryFailures
 }
 
-func (s *RelaySet) RecordActiveFailure(relayURL string, err error, recoveryFailures int) (backedOff bool, backoffReason string, failureCount int) {
+func (s *RelaySet) RecordActiveFailure(relayURL string, recoveryFailures int) (backedOff bool, backoffReason string, failureCount int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	now := time.Now().UTC()
+	s.clearExpiredPoolBansLocked(now)
 	state, ok := s.relays[relayURL]
-	if !ok {
+	if !ok || state.Banned {
 		return false, "", 0
 	}
-	state, backedOff, backoffReason = s.policy.OnActiveFailure(state, err, recoveryFailures)
+	state.activeFailures++
+
+	if recoveryFailures <= 0 || state.activeFailures < recoveryFailures {
+		s.relays[relayURL] = state
+		return false, "retry", state.activeFailures
+	}
+	failuresOverBudget := state.activeFailures - recoveryFailures
+	backoff := defaultDirectRecoveryBackoff << min(failuresOverBudget, 3)
+	if backoff > maxDirectRecoveryBackoff {
+		backoff = maxDirectRecoveryBackoff
+	}
+	state.suppressActiveUntil = now.Add(backoff)
 	s.relays[relayURL] = state
-	return backedOff, backoffReason, state.activeFailures
+	return true, "active", state.activeFailures
 }
