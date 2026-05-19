@@ -136,31 +136,9 @@ func (r *Refresher) shouldLogAnnounce(relayURL string, success bool) bool {
 }
 
 func (r *Refresher) refreshHTTPS(ctx context.Context) error {
-	r.relaySet.mu.RLock()
-	states := make([]RelayState, 0, len(r.relaySet.relays))
-	for _, state := range r.relaySet.relays {
-		states = append(states, state)
-	}
-	r.relaySet.mu.RUnlock()
-
 	now := time.Now().UTC()
-	for _, state := range states {
-		if state.Banned {
-			continue
-		}
-		if !state.hasObservedDescriptor() {
-			if !state.Bootstrap {
-				continue
-			}
-		} else if !state.Bootstrap {
-			if !state.nextDiscoveryRefreshAt.IsZero() && state.nextDiscoveryRefreshAt.After(now) {
-				continue
-			}
-		}
+	for _, state := range r.relaySet.refreshCandidates(now) {
 		relayURL := state.Descriptor.APIHTTPSAddr
-		if relayURL == "" {
-			continue
-		}
 
 		recoveryFailures := r.directRecoveryFailures
 		if state.Bootstrap {
@@ -264,6 +242,10 @@ func (r *Refresher) logDiscoveryFailure(targetRelayURL, sourceURL string, recove
 		Str("reason", backoffReason)
 	if failureCount > 0 {
 		event = event.Int("discovery_failures", failureCount)
+	}
+	if backoffReason == "unhealthy" {
+		event.Msg("discovery source removed from relay pool")
+		return
 	}
 	event.Msg("discovery source retry delayed")
 }

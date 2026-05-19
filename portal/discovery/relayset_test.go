@@ -231,6 +231,120 @@ func TestUnconfirmRelayURLClearsLocalConfirmationOnly(t *testing.T) {
 	}
 }
 
+func TestRecordDiscoveryFailurePoolBansLongUnhealthyRelay(t *testing.T) {
+	set := NewRelaySet(nil)
+
+	relayURL := "https://relay-unhealthy.example"
+	state := confirmedPolicyRelayState(t, relayURL)
+	state.unhealthySince = time.Now().UTC().Add(-AnnounceMaxValidity - time.Minute)
+
+	set.mu.Lock()
+	set.relays[relayURL] = state
+	set.mu.Unlock()
+
+	backedOff, reason, failures := set.RecordDiscoveryFailure(relayURL, 1)
+	if !backedOff || reason != "unhealthy" {
+		t.Fatalf("RecordDiscoveryFailure() = (%v, %q), want unhealthy pool ban", backedOff, reason)
+	}
+	if failures != 1 {
+		t.Fatalf("failure count = %d, want 1", failures)
+	}
+
+	set.mu.RLock()
+	quarantined := set.relays[relayURL]
+	set.mu.RUnlock()
+	if !quarantined.Banned {
+		t.Fatal("unhealthy relay was not pool-banned")
+	}
+	if quarantined.hasObservedDescriptor() {
+		t.Fatal("unhealthy relay descriptor should be removed from active relay pool")
+	}
+	if !quarantined.suppressActiveUntil.After(time.Now().UTC().Add(relayPoolBanTTL - time.Minute)) {
+		t.Fatalf("pool ban until = %v, want about %v from now", quarantined.suppressActiveUntil, relayPoolBanTTL)
+	}
+}
+
+func TestRecordActiveFailureDoesNotPoolBanLongUnhealthyRelay(t *testing.T) {
+	set := NewRelaySet(nil)
+
+	relayURL := "https://relay-active-unhealthy.example"
+	state := confirmedPolicyRelayState(t, relayURL)
+	state.unhealthySince = time.Now().UTC().Add(-AnnounceMaxValidity - time.Minute)
+
+	set.mu.Lock()
+	set.relays[relayURL] = state
+	set.mu.Unlock()
+
+	backedOff, reason, failures := set.RecordActiveFailure(relayURL, 1)
+	if !backedOff || reason != "active" {
+		t.Fatalf("RecordActiveFailure() = (%v, %q), want active backoff", backedOff, reason)
+	}
+	if failures != 1 {
+		t.Fatalf("failure count = %d, want 1", failures)
+	}
+
+	set.mu.RLock()
+	activeBackoff := set.relays[relayURL]
+	set.mu.RUnlock()
+	if activeBackoff.Banned {
+		t.Fatal("active failure should not pool-ban relay")
+	}
+	if !activeBackoff.hasObservedDescriptor() {
+		t.Fatal("active failure should not remove relay descriptor")
+	}
+	if activeBackoff.suppressActiveUntil.IsZero() {
+		t.Fatal("active failure should schedule active suppression")
+	}
+}
+
+func TestPoolBanRejectsDiscoveryUntilExpiry(t *testing.T) {
+	set := NewRelaySet(nil)
+
+	relayURL := "https://relay-quarantined.example"
+	desc := mustPolicyRelayDescriptor(t, relayURL)
+
+	set.mu.Lock()
+	state := newRelayState(relayURL)
+	state.Banned = true
+	state.suppressActiveUntil = time.Now().UTC().Add(time.Hour)
+	set.relays[relayURL] = state
+	set.mu.Unlock()
+
+	changed, err := set.ApplyRelayDiscoveryResponse("", types.DiscoveryResponse{
+		ProtocolVersion: types.DiscoveryVersion,
+		Relays:          []types.RelayDescriptor{desc},
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("ApplyRelayDiscoveryResponse() error = %v", err)
+	}
+	if changed {
+		t.Fatal("pool-banned relay should not change relay set")
+	}
+	if got := relayStates(set); len(got) != 0 {
+		t.Fatalf("len(relayStates()) = %d, want 0", len(got))
+	}
+
+	set.mu.Lock()
+	state = set.relays[relayURL]
+	state.suppressActiveUntil = time.Now().UTC().Add(-time.Second)
+	set.relays[relayURL] = state
+	set.mu.Unlock()
+
+	changed, err = set.ApplyRelayDiscoveryResponse("", types.DiscoveryResponse{
+		ProtocolVersion: types.DiscoveryVersion,
+		Relays:          []types.RelayDescriptor{desc},
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("ApplyRelayDiscoveryResponse() after expiry error = %v", err)
+	}
+	if !changed {
+		t.Fatal("expired pool ban should allow relay set update")
+	}
+	if got := relayStates(set); len(got) != 1 || got[0].Descriptor.APIHTTPSAddr != relayURL {
+		t.Fatalf("relayStates() = %v, want relay %q", got, relayURL)
+	}
+}
+
 func TestPlanRoutesExplicitPathReturnsSingleRouteToExit(t *testing.T) {
 	const (
 		entry = "https://entry.example"

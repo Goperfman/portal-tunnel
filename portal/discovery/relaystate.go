@@ -10,6 +10,7 @@ const (
 	DiscoveryDescriptorTTL       = 5 * time.Minute
 	defaultDirectRecoveryBackoff = 1 * time.Minute
 	maxDirectRecoveryBackoff     = 5 * time.Minute
+	relayPoolBanTTL              = 72 * time.Hour
 
 	// MaxAnnouncedRelays is the hard ceiling on the number of relay entries
 	// the local set will retain. When exceeded, eviction prefers the oldest
@@ -41,6 +42,7 @@ type RelayState struct {
 
 	discoveryFailures      int
 	activeFailures         int
+	unhealthySince         time.Time
 	nextDiscoveryRefreshAt time.Time
 	suppressActiveUntil    time.Time
 }
