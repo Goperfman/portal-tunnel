@@ -398,6 +398,25 @@ func (s *RelaySet) PlanRoutes(explicitPath []string, routeState RouteState) ([]R
 	}
 
 	states := s.currentRelayStates(time.Now().UTC())
+	if len(routeState.ExplicitRelayURLs) > 0 {
+		seen := make(map[string]struct{}, len(states))
+		for _, state := range states {
+			if relayURL := strings.TrimSpace(state.Descriptor.APIHTTPSAddr); relayURL != "" {
+				seen[relayURL] = struct{}{}
+			}
+		}
+		for _, relayURL := range routeState.ExplicitRelayURLs {
+			relayURL = strings.TrimSpace(relayURL)
+			if relayURL == "" {
+				continue
+			}
+			if _, ok := seen[relayURL]; ok {
+				continue
+			}
+			states = append(states, newRelayState(relayURL))
+			seen[relayURL] = struct{}{}
+		}
+	}
 
 	if routeState.MultiHopDepth > 1 {
 		path := SelectMultiHop(states, routeState)
@@ -605,6 +624,21 @@ func (s *RelaySet) BanRelayURL(relayURL string) {
 	}
 	state.suppressActiveUntil = time.Time{}
 	state.Banned = true
+	s.relays[relayURL] = state
+}
+
+func (s *RelaySet) DropRelayURLFromActivePool(relayURL string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().UTC()
+	s.clearExpiredPoolBansLocked(now)
+	state, ok := s.relays[relayURL]
+	if !ok || state.Banned {
+		return
+	}
+	state.Confirmed = false
+	state.suppressActiveUntil = now.Add(activeDropTTL)
 	s.relays[relayURL] = state
 }
 

@@ -892,6 +892,7 @@ func (l *listener) waitRetry(ctx context.Context, operation string, err error, r
 		if l.relaySet != nil && relayURL != "" {
 			l.relaySet.UnconfirmRelayURL(relayURL)
 			l.relaySet.RecordActiveFailure(relayURL, 1)
+			l.relaySet.DropRelayURLFromActivePool(relayURL)
 		}
 		logger.Error().
 			Err(err).

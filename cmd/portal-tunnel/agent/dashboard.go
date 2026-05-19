@@ -974,11 +974,12 @@ func (m agentDashboardModel) openRelayTunnelURL(tunnelID, relayURL string) (tea.
 		m.selectRelay(relayURL)
 	}
 	_, relay, ok := m.selectedTunnelRelay()
-	if !ok || strings.TrimSpace(relay.PublicURL) == "" {
+	publicURL := relayDashboardPublicURL(relay.PublicURL)
+	if !ok || publicURL == "" {
 		return m, nil
 	}
 	return m, agentDashboardRun(func(context.Context) error {
-		return openDashboardURL(relay.PublicURL)
+		return openDashboardURL(publicURL)
 	})
 }
 
@@ -1688,10 +1689,49 @@ func relayDashboardVersion(relay types.AgentRelayStatus) string {
 }
 
 func relayDashboardURL(relay types.AgentRelayStatus) string {
-	if publicURL := strings.TrimSpace(relay.PublicURL); publicURL != "" {
+	if publicURL := relayDashboardPublicURL(relay.PublicURL); publicURL != "" {
 		return publicURL
 	}
-	return relay.RelayURL
+	return relayDashboardRelayLabel(relay.RelayURL)
+}
+
+func relayDashboardPublicURL(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return rawURL
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		host = parsed.Host
+	}
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		host = "[" + host + "]"
+	}
+	parsed.Host = host
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+func relayDashboardRelayLabel(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return "-"
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" {
+		return rawURL
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		return strings.TrimSpace(parsed.Host)
+	}
+	return host
 }
 
 func (m agentDashboardModel) relayDashboardMode(tunnel types.AgentTunnelStatus, relay types.AgentRelayStatus) string {
@@ -1778,12 +1818,14 @@ func agentDashboardRelayWindow(selected, total, rows int) (int, int) {
 
 func agentDashboardRelayRow(width int, mode, version, features, displayURL string) string {
 	if width < 28 {
-		return agentDashboardFit(mode+" "+displayURL, width)
+		modeW := lipgloss.Width(mode)
+		urlW := max(1, width-modeW-1)
+		return agentDashboardFit(mode+" "+agentDashboardURLCell(displayURL, urlW), width)
 	}
 	if width < 56 {
 		modeW := 13
 		return agentDashboardCell(mode, modeW) + " " +
-			agentDashboardFit(displayURL, width-modeW-1)
+			agentDashboardURLCell(displayURL, width-modeW-1)
 	}
 	modeW := 13
 	versionW := 8
@@ -1792,7 +1834,28 @@ func agentDashboardRelayRow(width int, mode, version, features, displayURL strin
 	return agentDashboardCell(mode, modeW) + " " +
 		agentDashboardCell(version, versionW) + " " +
 		agentDashboardCell(features, featuresW) + " " +
-		agentDashboardFit(displayURL, relayW)
+		agentDashboardURLCell(displayURL, relayW)
+}
+
+func agentDashboardURLCell(value string, width int) string {
+	value = strings.TrimSpace(value)
+	if value == "" || width <= 0 {
+		return ""
+	}
+	if lipgloss.Width(value) <= width {
+		return value
+	}
+	parsed, err := url.Parse(value)
+	if err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		host := strings.TrimSpace(parsed.Hostname())
+		if host == "" {
+			host = strings.TrimSpace(parsed.Host)
+		}
+		if host != "" {
+			return agentDashboardFit("open "+host, width)
+		}
+	}
+	return agentDashboardFit(value, width)
 }
 
 func openDashboardURL(rawURL string) error {

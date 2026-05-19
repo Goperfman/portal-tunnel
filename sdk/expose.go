@@ -829,32 +829,11 @@ func (e *Exposure) runListenerAcceptLoop(listener *listener) {
 		}()
 	}
 	defer func() {
-		removed := false
 		e.mu.Lock()
 		if current, ok := e.relayListeners[relayURL]; ok && current == listener {
 			delete(e.relayListeners, relayURL)
-			removed = true
 		}
 		e.mu.Unlock()
-		if !removed || e.closed() {
-			return
-		}
-
-		removedExplicit := false
-		if e.cfg != nil {
-			_, removedExplicit = e.cfg.UpdateIf(func(cfg ExposeConfig) (ExposeConfig, bool) {
-				if !slices.Contains(cfg.RelayURLs, relayURL) {
-					return cfg, false
-				}
-				cfg.RelayURLs = utils.RemoveRelayURL(cfg.RelayURLs, relayURL)
-				return cfg, true
-			})
-		}
-
-		if removedExplicit && e.relaySet != nil {
-			e.relaySet.DeactivateRelayURL(relayURL)
-			e.relaySet.RemoveBootstrapRelayURL(relayURL)
-		}
 	}()
 
 	for {

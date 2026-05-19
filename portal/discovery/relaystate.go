@@ -12,6 +12,7 @@ const (
 	DiscoveryDescriptorTTL       = 5 * time.Minute
 	defaultDirectRecoveryBackoff = 1 * time.Minute
 	maxDirectRecoveryBackoff     = 5 * time.Minute
+	activeDropTTL                = 72 * time.Hour
 	relayPoolBanTTL              = 72 * time.Hour
 
 	// MaxAnnouncedRelays is the hard ceiling on the number of relay entries
