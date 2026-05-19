@@ -6,6 +6,7 @@ import (
 
 	"github.com/gosuda/portal-tunnel/v2/portal/discovery"
 	"github.com/gosuda/portal-tunnel/v2/types"
+	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
 func mustRelaySet(t *testing.T, relayURLs ...string) *discovery.RelaySet {
@@ -15,7 +16,7 @@ func mustRelaySet(t *testing.T, relayURLs ...string) *discovery.RelaySet {
 
 func TestExposureConfigSnapshotsDoNotShareMutableState(t *testing.T) {
 	exposure := &Exposure{
-		cfg: ExposeConfig{
+		cfg: utils.NewSnapshot(ExposeConfig{
 			RelayURLs: []string{"https://relay-a.example"},
 			Identity: types.Identity{
 				Name:    "svc",
@@ -24,7 +25,7 @@ func TestExposureConfigSnapshotsDoNotShareMutableState(t *testing.T) {
 			Metadata: types.LeaseMetadata{
 				Tags: []string{"initial"},
 			},
-		},
+		}, ExposeConfig.snapshot),
 	}
 
 	snapshot := exposure.Config()
@@ -39,15 +40,15 @@ func TestExposureConfigSnapshotsDoNotShareMutableState(t *testing.T) {
 		t.Fatalf("Metadata.Tags[0] = %q, want original tag", got)
 	}
 
-	exposure.cfgMu.Lock()
-	exposure.cfg.MaxActiveRelays = 2
-	exposure.cfg.Metadata = types.LeaseMetadata{Tags: []string{"updated"}}
-	exposure.cfgMu.Unlock()
+	exposure.cfg.UpdateCopy(func(cfg *ExposeConfig) {
+		cfg.MaxActiveRelays = 2
+		cfg.Metadata = types.LeaseMetadata{Tags: []string{"updated"}}
+	})
 
-	metadata := exposure.metadata()
+	metadata := exposure.Config().Metadata
 	metadata.Tags[0] = "mutated"
-	if got := exposure.metadata().Tags[0]; got != "updated" {
-		t.Fatalf("MetadataSnapshot().Tags[0] = %q, want updated", got)
+	if got := exposure.Config().Metadata.Tags[0]; got != "updated" {
+		t.Fatalf("Metadata.Tags[0] = %q, want updated", got)
 	}
 	if got := exposure.Config().MaxActiveRelays; got != 2 {
 		t.Fatalf("MaxActiveRelays = %d, want 2", got)
@@ -70,7 +71,7 @@ func TestExposureReconcileRemovesBannedRelayFromActiveSet(t *testing.T) {
 	}
 
 	exposure := &Exposure{
-		cfg:            ExposeConfig{RelayURLs: []string{relayA, relayB}},
+		cfg:            utils.NewSnapshot(ExposeConfig{RelayURLs: []string{relayA, relayB}}, ExposeConfig.snapshot),
 		relaySet:       mustRelaySet(t, relayA, relayB),
 		relayListeners: make(map[string]*listener, 2),
 	}
@@ -126,7 +127,7 @@ func TestExposureReconcileRemovesStaleListener(t *testing.T) {
 
 	relayAClosed := make(chan struct{})
 	exposure := &Exposure{
-		cfg:            ExposeConfig{RelayURLs: []string{relayA, relayB}},
+		cfg:            utils.NewSnapshot(ExposeConfig{RelayURLs: []string{relayA, relayB}}, ExposeConfig.snapshot),
 		relaySet:       mustRelaySet(t, relayA, relayB),
 		relayListeners: make(map[string]*listener, 2),
 	}
@@ -178,7 +179,7 @@ func TestExposureRemoveRelayStopsRunningListener(t *testing.T) {
 
 	relayAClosed := make(chan struct{})
 	exposure := &Exposure{
-		cfg:            ExposeConfig{RelayURLs: []string{relayA}},
+		cfg:            utils.NewSnapshot(ExposeConfig{RelayURLs: []string{relayA}}, ExposeConfig.snapshot),
 		relaySet:       mustRelaySet(t, relayA),
 		relayListeners: make(map[string]*listener, 1),
 	}
