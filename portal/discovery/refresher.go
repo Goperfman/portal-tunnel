@@ -184,7 +184,8 @@ func (r *Refresher) refreshHTTPS(ctx context.Context) error {
 }
 
 func (r *Refresher) refreshOverlay(ctx context.Context) error {
-	states := r.relaySet.overlayPeerRelayStates()
+	now := time.Now().UTC()
+	states := r.relaySet.overlayPeerRelayStates(now)
 	if len(states) == 0 {
 		return nil
 	}
@@ -196,10 +197,7 @@ func (r *Refresher) refreshOverlay(ctx context.Context) error {
 		return err
 	}
 	relaySetChanged := false
-	for _, state := range states {
-		if !state.nextDiscoveryRefreshAt.IsZero() && state.nextDiscoveryRefreshAt.After(time.Now().UTC()) {
-			continue
-		}
+	for _, state := range r.relaySet.overlayRefreshCandidates(now) {
 		relay := state.Descriptor
 		recoveryFailures := r.directRecoveryFailures
 		if state.Bootstrap {

@@ -165,7 +165,7 @@ func (state RelayState) hasObservedDescriptor() bool {
 type RouteState struct {
 	ExplicitRelayURLs []string
 	// MaxActiveRelays caps auto-selected relays. Zero or negative values use
-	// the policy default of 3.
+	// the selection default of 3.
 	MaxActiveRelays int
 	MultiHopDepth   int
 	RequireUDP      bool
@@ -174,5 +174,3 @@ type RouteState struct {
 	// derive a deterministic row index into the GF(64) MOLS grid.
 	LocalAddress string
 }
-
-type ClientState = RouteState

@@ -19,10 +19,31 @@ func relayStates(set *RelaySet) []RelayState {
 	return states
 }
 
+func mustRelayDescriptor(t *testing.T, relayURL string) types.RelayDescriptor {
+	t.Helper()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	return mustSignedDescriptor(t, mustSigningIdentity(t), relayURL, now)
+}
+
+func confirmedRelayState(t *testing.T, relayURL string) RelayState {
+	t.Helper()
+	return RelayState{
+		Descriptor: mustRelayDescriptor(t, relayURL),
+		Confirmed:  true,
+		LastSeenAt: time.Now().UTC(),
+	}
+}
+
+func bootstrapRelayState(relayURL string) RelayState {
+	state := newRelayState(relayURL)
+	state.Bootstrap = true
+	return state
+}
+
 func TestApplyRelayDiscoveryResponsePreservesBootstrapFlag(t *testing.T) {
 	set := NewRelaySet([]string{"https://relay-a.example"})
 
-	desc := mustPolicyRelayDescriptor(t, "https://relay-a.example")
+	desc := mustRelayDescriptor(t, "https://relay-a.example")
 	if _, err := set.ApplyRelayDiscoveryResponse(desc.APIHTTPSAddr, types.DiscoveryResponse{
 		ProtocolVersion: types.DiscoveryVersion,
 		Relays:          []types.RelayDescriptor{desc},
@@ -44,7 +65,7 @@ func TestDescriptorsDropsExpiredSignedRelayDescriptor(t *testing.T) {
 
 	now := time.Now().UTC()
 	relayURL := "https://relay-stale.example"
-	state := confirmedPolicyRelayState(t, relayURL)
+	state := confirmedRelayState(t, relayURL)
 	state.Descriptor.ExpiresAt = now.Add(-time.Minute)
 	state.LastSeenAt = now.Add(-6 * time.Hour)
 	state.Descriptor.SupportsUDP = true
@@ -63,7 +84,7 @@ func TestDescriptorsDropsExpiredSignedRelayDescriptor(t *testing.T) {
 func TestApplyRelayDiscoveryResponseCollectsRelaysDespiteProtocolMismatch(t *testing.T) {
 	set := NewRelaySet(nil)
 
-	desc := mustPolicyRelayDescriptor(t, "https://relay-mismatch.example")
+	desc := mustRelayDescriptor(t, "https://relay-mismatch.example")
 	changed, err := set.ApplyRelayDiscoveryResponse("", types.DiscoveryResponse{
 		ProtocolVersion: "5",
 		Relays:          []types.RelayDescriptor{desc},
@@ -90,7 +111,7 @@ func TestApplyRelayDiscoveryResponseCollectsRelaysDespiteProtocolMismatch(t *tes
 func TestApplyRelayDiscoveryResponseCollectsHintsWhenTargetDescriptorIsMissing(t *testing.T) {
 	set := NewRelaySet(nil)
 
-	hinted := mustPolicyRelayDescriptor(t, "https://relay-hinted.example")
+	hinted := mustRelayDescriptor(t, "https://relay-hinted.example")
 	changed, err := set.ApplyRelayDiscoveryResponse("https://relay-source.example", types.DiscoveryResponse{
 		ProtocolVersion: "5",
 		Relays:          []types.RelayDescriptor{hinted},
@@ -118,7 +139,7 @@ func TestApplyRelayDiscoveryResponseClearsDiscoveryRetryOnAuthoritativeSuccess(t
 	set := NewRelaySet(nil)
 
 	relayURL := "https://relay-source.example"
-	desc := mustPolicyRelayDescriptor(t, relayURL)
+	desc := mustRelayDescriptor(t, relayURL)
 	set.mu.Lock()
 	state := RelayState{
 		Descriptor:             desc,
@@ -159,7 +180,7 @@ func TestApplyRelayDiscoveryResponsePreservesDiscoveryRetryOnHint(t *testing.T) 
 	set := NewRelaySet(nil)
 
 	relayURL := "https://relay-hinted.example"
-	desc := mustPolicyRelayDescriptor(t, relayURL)
+	desc := mustRelayDescriptor(t, relayURL)
 	nextDiscoveryRefreshAt := time.Now().UTC().Add(time.Minute)
 	set.mu.Lock()
 	state := RelayState{
@@ -190,7 +211,7 @@ func TestConfirmRelayURLMarksRelayConfirmedWithoutChangingAggregateDescriptor(t 
 
 	relayURL := "https://relay-confirmed.example"
 	state := RelayState{
-		Descriptor: mustPolicyRelayDescriptor(t, relayURL),
+		Descriptor: mustRelayDescriptor(t, relayURL),
 		LastSeenAt: time.Now().UTC(),
 	}
 
@@ -211,11 +232,41 @@ func TestConfirmRelayURLMarksRelayConfirmedWithoutChangingAggregateDescriptor(t 
 	}
 }
 
+func TestConfirmRelayURLResetsActiveFailures(t *testing.T) {
+	relayURL := "https://error.io"
+	set := NewRelaySet(nil)
+	state := RelayState{
+		Descriptor: types.RelayDescriptor{
+			APIHTTPSAddr: relayURL,
+		},
+		activeFailures:      5,
+		suppressActiveUntil: time.Now().UTC().Add(time.Minute),
+	}
+	set.mu.Lock()
+	set.relays[relayURL] = state
+	set.mu.Unlock()
+
+	set.ConfirmRelayURL(relayURL)
+
+	set.mu.RLock()
+	state = set.relays[relayURL]
+	set.mu.RUnlock()
+	if !state.Confirmed {
+		t.Fatal("relay should be confirmed")
+	}
+	if state.activeFailures != 0 {
+		t.Fatalf("activeFailures = %d, want 0", state.activeFailures)
+	}
+	if !state.suppressActiveUntil.IsZero() {
+		t.Fatalf("suppressActiveUntil = %v, want zero", state.suppressActiveUntil)
+	}
+}
+
 func TestUnconfirmRelayURLClearsLocalConfirmationOnly(t *testing.T) {
 	set := NewRelaySet(nil)
 
 	relayURL := "https://relay-confirmed.example"
-	state := confirmedPolicyRelayState(t, relayURL)
+	state := confirmedRelayState(t, relayURL)
 
 	set.mu.Lock()
 	set.relays[relayURL] = state
@@ -231,11 +282,61 @@ func TestUnconfirmRelayURLClearsLocalConfirmationOnly(t *testing.T) {
 	}
 }
 
+func TestRecordDiscoveryFailureBackoff(t *testing.T) {
+	relayURL := "https://discovery-error.example"
+	set := NewRelaySet(nil)
+	set.mu.Lock()
+	set.relays[relayURL] = confirmedRelayState(t, relayURL)
+	set.mu.Unlock()
+	budget := 3
+
+	start := time.Now()
+	for i := 0; i < budget; i++ {
+		backedOff, _, _ := set.RecordDiscoveryFailure(relayURL, budget)
+		if i < budget-1 && backedOff {
+			t.Fatal("discovery failure backed off before budget")
+		}
+	}
+
+	set.mu.RLock()
+	state := set.relays[relayURL]
+	set.mu.RUnlock()
+	if !state.nextDiscoveryRefreshAt.After(start) {
+		t.Fatal("discovery retry timer was not scheduled")
+	}
+	if !state.suppressActiveUntil.IsZero() {
+		t.Fatalf("suppressActiveUntil = %v, want zero", state.suppressActiveUntil)
+	}
+}
+
+func TestRecordActiveFailureBackoff(t *testing.T) {
+	relayURL := "https://active-error.example"
+	set := NewRelaySet(nil)
+	set.mu.Lock()
+	set.relays[relayURL] = confirmedRelayState(t, relayURL)
+	set.mu.Unlock()
+	start := time.Now()
+
+	backedOff, _, _ := set.RecordActiveFailure(relayURL, 1)
+	if !backedOff {
+		t.Fatal("active failure should back off at budget")
+	}
+	set.mu.RLock()
+	state := set.relays[relayURL]
+	set.mu.RUnlock()
+	if !state.suppressActiveUntil.After(start) {
+		t.Fatal("active suppression timer was not scheduled")
+	}
+	if !state.nextDiscoveryRefreshAt.IsZero() {
+		t.Fatalf("nextDiscoveryRefreshAt = %v, want zero", state.nextDiscoveryRefreshAt)
+	}
+}
+
 func TestRecordDiscoveryFailurePoolBansLongUnhealthyRelay(t *testing.T) {
 	set := NewRelaySet(nil)
 
 	relayURL := "https://relay-unhealthy.example"
-	state := confirmedPolicyRelayState(t, relayURL)
+	state := confirmedRelayState(t, relayURL)
 	state.unhealthySince = time.Now().UTC().Add(-AnnounceMaxValidity - time.Minute)
 
 	set.mu.Lock()
@@ -268,7 +369,7 @@ func TestRecordActiveFailureDoesNotPoolBanLongUnhealthyRelay(t *testing.T) {
 	set := NewRelaySet(nil)
 
 	relayURL := "https://relay-active-unhealthy.example"
-	state := confirmedPolicyRelayState(t, relayURL)
+	state := confirmedRelayState(t, relayURL)
 	state.unhealthySince = time.Now().UTC().Add(-AnnounceMaxValidity - time.Minute)
 
 	set.mu.Lock()
@@ -301,7 +402,7 @@ func TestPoolBanRejectsDiscoveryUntilExpiry(t *testing.T) {
 	set := NewRelaySet(nil)
 
 	relayURL := "https://relay-quarantined.example"
-	desc := mustPolicyRelayDescriptor(t, relayURL)
+	desc := mustRelayDescriptor(t, relayURL)
 
 	set.mu.Lock()
 	state := newRelayState(relayURL)

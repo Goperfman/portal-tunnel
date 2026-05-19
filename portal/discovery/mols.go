@@ -1,6 +1,6 @@
 package discovery
 
-// MOLSRelayPolicy ranks relays using a GF(64)-based MOLS grid with a
+// MOLS selection ranks relays using a GF(64)-based MOLS grid with a
 // non-invasive adaptive partition over local load telemetry.
 //
 // Ordering Pipeline:
@@ -123,8 +123,6 @@ func isRelayFallback(state RelayState) bool {
 	return !state.DiscoveryRTTAt.IsZero() && state.DiscoveryRTT > molsFallbackRTTThreshold
 }
 
-type MOLSRelayPolicy struct{}
-
 type molsCandidate struct {
 	state RelayState
 	score int
@@ -146,7 +144,7 @@ func betterMOLSCandidate(a, b molsCandidate) bool {
 	return a.seq < b.seq
 }
 
-func (p MOLSRelayPolicy) SelectAggregate(states []RelayState) []RelayState {
+func selectAggregate(states []RelayState) []RelayState {
 	out := make([]RelayState, 0, len(states))
 	for _, state := range states {
 		if !state.Banned {
@@ -156,7 +154,7 @@ func (p MOLSRelayPolicy) SelectAggregate(states []RelayState) []RelayState {
 	return out
 }
 
-func (p MOLSRelayPolicy) SelectConfirmed(states []RelayState) []RelayState {
+func selectConfirmed(states []RelayState) []RelayState {
 	out := make([]RelayState, 0)
 	for _, state := range states {
 		if state.Confirmed {
@@ -166,31 +164,7 @@ func (p MOLSRelayPolicy) SelectConfirmed(states []RelayState) []RelayState {
 	return out
 }
 
-func (p MOLSRelayPolicy) OnActiveConfirmed(state RelayState) RelayState {
-	state.Confirmed = true
-	state.activeFailures = 0
-	state.suppressActiveUntil = time.Time{}
-	return state
-}
-
-func (p MOLSRelayPolicy) OnUnconfirmed(state RelayState) RelayState {
-	state.Confirmed = false
-	return state
-}
-
-func (p MOLSRelayPolicy) OnDiscoveryConfirmed(state RelayState) RelayState {
-	state.discoveryFailures = 0
-	state.nextDiscoveryRefreshAt = time.Time{}
-	state.unhealthySince = time.Time{}
-	return state
-}
-
-func (p MOLSRelayPolicy) OnBanned(state RelayState) RelayState {
-	state.Banned = true
-	return state
-}
-
-func (p MOLSRelayPolicy) rankRelayPool(autoPool []RelayState, localAddress string) []string {
+func rankRelayPool(autoPool []RelayState, localAddress string) []string {
 	if len(autoPool) == 0 {
 		return nil
 	}
@@ -289,9 +263,9 @@ func (p MOLSRelayPolicy) rankRelayPool(autoPool []RelayState, localAddress strin
 	return append(activeURLs, fallbackURLs...)
 }
 
-// SelectPriorityWithTrace is the telemetry-instrumented sibling of
+// selectPriorityWithTrace is the telemetry-instrumented sibling of
 // SelectPriority. It returns the same ordered relay list plus a SelectionTrace.
-func (p MOLSRelayPolicy) SelectPriorityWithTrace(states []RelayState, cs ClientState) ([]string, telemetry.SelectionTrace) {
+func selectPriorityWithTrace(states []RelayState, cs RouteState) ([]string, telemetry.SelectionTrace) {
 	start := time.Now()
 	now := start.UTC()
 
@@ -311,7 +285,7 @@ func (p MOLSRelayPolicy) SelectPriorityWithTrace(states []RelayState, cs ClientS
 		}
 	}
 
-	selected := p.SelectAggregate(states)
+	selected := selectAggregate(states)
 	if len(selected) == 0 {
 		trace.SelectionTook = time.Since(start)
 		return nil, trace
@@ -404,7 +378,7 @@ func (p MOLSRelayPolicy) SelectPriorityWithTrace(states []RelayState, cs ClientS
 		})
 	}
 
-	autoURLs := p.rankRelayPool(autoPool, cs.LocalAddress)
+	autoURLs := rankRelayPool(autoPool, cs.LocalAddress)
 	maxActiveRelays := cs.MaxActiveRelays
 	if maxActiveRelays <= 0 {
 		maxActiveRelays = defaultMaxActiveRelays
@@ -440,15 +414,15 @@ func relayURLSet(states []RelayState) map[string]bool {
 }
 
 // SelectPriority returns the ordered list of relay URLs for a client using the
-// MOLS policy. It delegates to SelectPriorityWithTrace and discards the trace.
-func (p MOLSRelayPolicy) SelectPriority(states []RelayState, clientState ClientState) []string {
-	out, _ := p.SelectPriorityWithTrace(states, clientState)
+// MOLS selection. It delegates to selectPriorityWithTrace and discards the trace.
+func SelectPriority(states []RelayState, routeState RouteState) []string {
+	out, _ := selectPriorityWithTrace(states, routeState)
 	return out
 }
 
-// SelectMultiHopWithTrace is the telemetry-instrumented sibling of
+// selectMultiHopWithTrace is the telemetry-instrumented sibling of
 // SelectMultiHop. It returns the same ordered relay list plus a SelectionTrace.
-func (p MOLSRelayPolicy) SelectMultiHopWithTrace(states []RelayState, cs ClientState) ([]string, telemetry.SelectionTrace) {
+func selectMultiHopWithTrace(states []RelayState, cs RouteState) ([]string, telemetry.SelectionTrace) {
 	start := time.Now()
 	now := start.UTC()
 
@@ -473,7 +447,7 @@ func (p MOLSRelayPolicy) SelectMultiHopWithTrace(states []RelayState, cs ClientS
 		}
 	}
 
-	selected := p.SelectAggregate(states)
+	selected := selectAggregate(states)
 	if len(selected) == 0 {
 		trace.SelectionTook = time.Since(start)
 		return nil, trace
@@ -557,7 +531,7 @@ func (p MOLSRelayPolicy) SelectMultiHopWithTrace(states []RelayState, cs ClientS
 		})
 	}
 
-	multiHop := p.rankRelayPool(autoPool, cs.LocalAddress)
+	multiHop := rankRelayPool(autoPool, cs.LocalAddress)
 	if len(multiHop) > cs.MultiHopDepth {
 		multiHop = multiHop[:cs.MultiHopDepth]
 	}
@@ -567,20 +541,8 @@ func (p MOLSRelayPolicy) SelectMultiHopWithTrace(states []RelayState, cs ClientS
 }
 
 // SelectMultiHop returns the ordered list of relay URLs for multi-hop routing.
-// It delegates to SelectMultiHopWithTrace and discards the trace.
-func (p MOLSRelayPolicy) SelectMultiHop(states []RelayState, clientState ClientState) []string {
-	out, _ := p.SelectMultiHopWithTrace(states, clientState)
+// It delegates to selectMultiHopWithTrace and discards the trace.
+func SelectMultiHop(states []RelayState, routeState RouteState) []string {
+	out, _ := selectMultiHopWithTrace(states, routeState)
 	return out
-}
-
-func rankRelayPool(autoPool []RelayState, localAddress string) []string {
-	return MOLSRelayPolicy{}.rankRelayPool(autoPool, localAddress)
-}
-
-func selectPriority(states []RelayState, routeState RouteState) []string {
-	return MOLSRelayPolicy{}.SelectPriority(states, routeState)
-}
-
-func selectMultiHop(states []RelayState, routeState RouteState) []string {
-	return MOLSRelayPolicy{}.SelectMultiHop(states, routeState)
 }

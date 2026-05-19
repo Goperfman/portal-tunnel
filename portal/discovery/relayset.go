@@ -335,7 +335,7 @@ func disposableRelayState(state RelayState) bool {
 }
 
 func (s *RelaySet) AggregateRelays() []RelayState {
-	return MOLSRelayPolicy{}.SelectAggregate(s.currentRelayStates(time.Now().UTC()))
+	return selectAggregate(s.currentRelayStates(time.Now().UTC()))
 }
 
 func (s *RelaySet) AllRelays() []RelayState {
@@ -343,7 +343,7 @@ func (s *RelaySet) AllRelays() []RelayState {
 }
 
 func (s *RelaySet) ConfirmedRelays() []RelayState {
-	return MOLSRelayPolicy{}.SelectConfirmed(s.currentRelayStates(time.Now().UTC()))
+	return selectConfirmed(s.currentRelayStates(time.Now().UTC()))
 }
 
 type Route struct {
@@ -400,14 +400,14 @@ func (s *RelaySet) PlanRoutes(explicitPath []string, routeState RouteState) ([]R
 	states := s.currentRelayStates(time.Now().UTC())
 
 	if routeState.MultiHopDepth > 1 {
-		path := selectMultiHop(states, routeState)
+		path := SelectMultiHop(states, routeState)
 		if len(path) < routeState.MultiHopDepth {
 			return nil, fmt.Errorf("multi-hop-depth %d requires %d overlay relay candidates, got %d", routeState.MultiHopDepth, routeState.MultiHopDepth, len(path))
 		}
 		return []Route{NewRoute(path, false)}, nil
 	}
 
-	relayURLs := selectPriority(states, routeState)
+	relayURLs := SelectPriority(states, routeState)
 	routes := make([]Route, 0, len(relayURLs))
 	for _, relayURL := range relayURLs {
 		routes = append(routes, NewRoute([]string{relayURL}, slices.Contains(routeState.ExplicitRelayURLs, relayURL)))
@@ -420,10 +420,10 @@ func (s *RelaySet) PlanRoutes(explicitPath []string, routeState RouteState) ([]R
 // eligibility classification, and the scoring parameters used. Prometheus
 // metrics are emitted from the trace before returning, and a sampled zerolog
 // debug entry is written.
-func (s *RelaySet) PriorityRelaysWithTrace(clientState ClientState) ([]string, telemetry.SelectionTrace) {
+func (s *RelaySet) PriorityRelaysWithTrace(routeState RouteState) ([]string, telemetry.SelectionTrace) {
 	states := s.currentRelayStates(time.Now().UTC())
 
-	result, trace := MOLSRelayPolicy{}.SelectPriorityWithTrace(states, clientState)
+	result, trace := selectPriorityWithTrace(states, routeState)
 	telemetry.EmitFromTrace(trace)
 	log.Debug().
 		Uint8("client_hash", trace.ClientHash).
@@ -437,10 +437,9 @@ func (s *RelaySet) PriorityRelaysWithTrace(clientState ClientState) ([]string, t
 }
 
 // PriorityRelays returns the ordered list of relay URLs for a client. It
-// delegates to PriorityRelaysWithTrace and discards the trace. The public
-// signature is unchanged through all phases.
-func (s *RelaySet) PriorityRelays(clientState ClientState) []string {
-	out, _ := s.PriorityRelaysWithTrace(clientState)
+// delegates to PriorityRelaysWithTrace and discards the trace.
+func (s *RelaySet) PriorityRelays(routeState RouteState) []string {
+	out, _ := s.PriorityRelaysWithTrace(routeState)
 	return out
 }
 
@@ -449,10 +448,10 @@ func (s *RelaySet) PriorityRelays(clientState ClientState) []string {
 // eligibility classification, and the scoring parameters used. Prometheus
 // metrics are emitted from the trace before returning, and a sampled zerolog
 // debug entry is written.
-func (s *RelaySet) PriorityMultiHopWithTrace(clientState ClientState) ([]string, telemetry.SelectionTrace) {
+func (s *RelaySet) PriorityMultiHopWithTrace(routeState RouteState) ([]string, telemetry.SelectionTrace) {
 	states := s.currentRelayStates(time.Now().UTC())
 
-	result, trace := MOLSRelayPolicy{}.SelectMultiHopWithTrace(states, clientState)
+	result, trace := selectMultiHopWithTrace(states, routeState)
 	telemetry.EmitFromTrace(trace)
 	log.Debug().
 		Uint8("client_hash", trace.ClientHash).
@@ -467,14 +466,37 @@ func (s *RelaySet) PriorityMultiHopWithTrace(clientState ClientState) ([]string,
 
 // PriorityMultiHop returns the ordered list of relay URLs for multi-hop
 // routing. It delegates to PriorityMultiHopWithTrace and discards the trace.
-// The public signature is unchanged through all phases.
-func (s *RelaySet) PriorityMultiHop(clientState ClientState) []string {
-	out, _ := s.PriorityMultiHopWithTrace(clientState)
+func (s *RelaySet) PriorityMultiHop(routeState RouteState) []string {
+	out, _ := s.PriorityMultiHopWithTrace(routeState)
 	return out
 }
 
-func (s *RelaySet) overlayPeerRelayStates() []RelayState {
-	now := time.Now().UTC()
+func (s *RelaySet) overlayRefreshCandidates(now time.Time) []RelayState {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
+	}
+	states := s.overlayPeerRelayStates(now)
+	out := make([]RelayState, 0, len(states))
+	for _, state := range states {
+		if !state.nextDiscoveryRefreshAt.IsZero() && state.nextDiscoveryRefreshAt.After(now) {
+			continue
+		}
+		out = append(out, state)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (s *RelaySet) overlayPeerRelayStates(now time.Time) []RelayState {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
+	}
 	states := s.currentRelayStates(now)
 	out := make([]RelayState, 0, len(states))
 	for _, state := range states {
@@ -490,7 +512,7 @@ func (s *RelaySet) overlayPeerRelayStates() []RelayState {
 }
 
 func (s *RelaySet) OverlayPeerDescriptor() []types.RelayDescriptor {
-	states := s.overlayPeerRelayStates()
+	states := s.overlayPeerRelayStates(time.Now().UTC())
 	if len(states) == 0 {
 		return nil
 	}

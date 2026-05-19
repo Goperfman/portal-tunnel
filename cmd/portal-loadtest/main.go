@@ -1,5 +1,5 @@
 // Command portal-loadtest is a Phase 1 uniformity probe that measures
-// how evenly the MOLS relay-selection policy distributes N synthetic clients
+// how evenly MOLS relay selection distributes N synthetic clients
 // across K synthetic relays. It runs entirely in-process — no running
 // portal-tunnel server is required.
 //
@@ -58,15 +58,15 @@ func main() {
 
 	// Build K synthetic relay states. We construct discovery.RelayState values
 	// directly (not via RelaySet.InsertAnnounced) because the public announce
-	// path requires real EVM-signed descriptors. MOLSRelayPolicy is called
+	// path requires real EVM-signed descriptors. Selection functions are called
 	// directly so that no signature gate runs.
 	//
 	// For priority mode: states without an observed descriptor (LastSeenAt zero)
-	// are accepted into the auto pool by SelectPriorityWithTrace — the
-	// expiry/protocol gates only fire when hasObservedDescriptor() is true.
+	// are accepted into the auto pool by SelectPriority; the expiry/protocol
+	// gates only fire when hasObservedDescriptor() is true.
 	//
-	// For multi-hop mode: SelectMultiHopWithTrace requires hasObservedDescriptor,
-	// a non-expired ExpiresAt, and HasOverlayPeer()==true. We populate those
+	// For multi-hop mode: SelectMultiHop requires hasObservedDescriptor, a
+	// non-expired ExpiresAt, and HasOverlayPeer()==true. We populate those
 	// fields with dummy-but-valid values using a far-future ExpiresAt and a
 	// syntactically valid WireGuard public key placeholder.
 	now := time.Now().UTC()
@@ -79,7 +79,7 @@ func main() {
 			},
 		}
 		if mode == "multihop" {
-			// Populate the fields required by SelectMultiHopWithTrace's eligibility
+			// Populate the fields required by SelectMultiHop's eligibility
 			// gates: hasObservedDescriptor (LastSeenAt non-zero), valid ExpiresAt,
 			// and HasOverlayPeer() = SupportsOverlay && WireGuardPublicKey != "" &&
 			// WireGuardPort in [1, 65535].
@@ -96,18 +96,17 @@ func main() {
 	// Generate N synthetic client states with UNIQUE LocalAddress values.
 	// MOLS is deterministic on (LocalAddress, relayURL): duplicate addresses
 	// would make all clients pick identically, falsely appearing as 100% imbalance.
-	policy := discovery.MOLSRelayPolicy{}
 	picks := make(map[string]int, *relays) // relay URL → count of clients that picked it first
 	for i := 0; i < *clients; i++ {
-		cs := discovery.ClientState{
+		cs := discovery.RouteState{
 			LocalAddress:  fmt.Sprintf("synthetic-client-%d", i),
 			MultiHopDepth: *multiHop,
 		}
 		var outputURLs []string
 		if mode == "multihop" {
-			outputURLs, _ = policy.SelectMultiHopWithTrace(relayStates, cs)
+			outputURLs = discovery.SelectMultiHop(relayStates, cs)
 		} else {
-			outputURLs, _ = policy.SelectPriorityWithTrace(relayStates, cs)
+			outputURLs = discovery.SelectPriority(relayStates, cs)
 		}
 		if len(outputURLs) == 0 {
 			// All relays were filtered; skip this client.
