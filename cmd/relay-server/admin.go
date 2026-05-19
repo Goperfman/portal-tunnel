@@ -1,17 +1,20 @@
 package main
 
 import (
-	"crypto/subtle"
 	"errors"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/gosuda/portal-tunnel/v2/portal"
+	"github.com/gosuda/portal-tunnel/v2/portal/auth"
+	"github.com/gosuda/portal-tunnel/v2/portal/identity"
 	"github.com/gosuda/portal-tunnel/v2/portal/policy"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
@@ -19,76 +22,7 @@ const (
 	adminBodyLimit = 1 << 16
 )
 
-type adminAuth struct {
-	sessions  map[string]time.Time
-	secretKey string
-	mu        sync.RWMutex
-}
-
-func newAdminAuth(secretKey string) (*adminAuth, error) {
-	secretKey = strings.TrimSpace(secretKey)
-	if secretKey == "" {
-		return nil, errors.New("admin secret key is required")
-	}
-
-	return &adminAuth{
-		secretKey: secretKey,
-		sessions:  make(map[string]time.Time),
-	}, nil
-}
-
-func (a *adminAuth) AuthEnabled() bool {
-	return a != nil && a.secretKey != ""
-}
-
-func (a *adminAuth) ValidateKey(key string) bool {
-	if !a.AuthEnabled() {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(a.secretKey), []byte(key)) == 1
-}
-
-func (a *adminAuth) CreateSession() (string, error) {
-	token, err := utils.RandomHex(32)
-	if err != nil {
-		return "", err
-	}
-
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.sessions[token] = time.Now().Add(24 * time.Hour)
-	a.cleanupExpiredSessionsLocked()
-	return token, nil
-}
-
-func (a *adminAuth) ValidateSession(token string) bool {
-	if token == "" {
-		return false
-	}
-
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	expiry, ok := a.sessions[token]
-	return ok && time.Now().Before(expiry)
-}
-
-func (a *adminAuth) DeleteSession(token string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	delete(a.sessions, token)
-}
-
-func (a *adminAuth) cleanupExpiredSessionsLocked() {
-	now := time.Now()
-	for token, expiry := range a.sessions {
-		if now.After(expiry) {
-			delete(a.sessions, token)
-		}
-	}
-}
-
-func loadAdminState(path string, runtime *policy.Runtime) (persistedAdminState, error) {
+func loadAdminState(path string, server *portal.Server) (persistedAdminState, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return persistedAdminState{}, nil
@@ -98,7 +32,7 @@ func loadAdminState(path string, runtime *policy.Runtime) (persistedAdminState, 
 	if _, err := utils.ReadJSONFileIfExists(path, &payload); err != nil {
 		return persistedAdminState{}, err
 	}
-	if err := payload.apply(runtime); err != nil {
+	if err := payload.apply(server); err != nil {
 		return persistedAdminState{}, err
 	}
 	return payload, nil
@@ -118,16 +52,17 @@ func (f *Frontend) serveAdmin(w http.ResponseWriter, r *http.Request) {
 		}
 		http.NotFound(w, r)
 		return
-	case types.PathAdminLogin:
-		if r.Method == http.MethodGet {
-			f.ServeAppStatic(w, r, "")
+	case types.PathAdminAuthChallenge:
+		if !utils.RequireMethod(w, r, http.MethodPost) {
 			return
 		}
-		if r.Method == http.MethodPost {
-			f.handleLogin(w, r)
+		f.handleWalletChallenge(w, r)
+		return
+	case types.PathAdminAuthLogin:
+		if !utils.RequireMethod(w, r, http.MethodPost) {
 			return
 		}
-		utils.MethodNotAllowedError().Write(w)
+		f.handleWalletLogin(w, r)
 		return
 	case types.PathAdminLogout:
 		if !utils.RequireMethod(w, r, http.MethodPost) {
@@ -151,9 +86,10 @@ func (f *Frontend) serveAdmin(w http.ResponseWriter, r *http.Request) {
 		if !utils.RequireMethod(w, r, http.MethodGet) {
 			return
 		}
-		utils.WriteAPIData(w, http.StatusOK, types.AdminAuthStatusResponse{
-			Authenticated: f.isAuthenticated(r),
-			AuthEnabled:   f.auth.AuthEnabled(),
+		walletAddress, authenticated := f.authenticatedWallet(r)
+		utils.WriteAPIData(w, http.StatusOK, types.WalletAuthStatusResponse{
+			Authenticated: authenticated,
+			WalletAddress: walletAddress,
 		})
 		return
 	}
@@ -168,6 +104,9 @@ func (f *Frontend) serveAdmin(w http.ResponseWriter, r *http.Request) {
 	invalidRequestBody := utils.InvalidRequestError(errors.New("invalid request body"))
 
 	switch path {
+	case "/admin/metrics":
+		promhttp.Handler().ServeHTTP(w, r)
+		return
 	case types.PathAdminSnapshot:
 		if !utils.RequireMethod(w, r, http.MethodGet) {
 			return
@@ -202,14 +141,14 @@ func (f *Frontend) serveAdmin(w http.ResponseWriter, r *http.Request) {
 		})
 	case types.PathAdminUDP:
 		f.handlePortSettings(w, r, invalidRequestBody, runtime,
-			runtime.SetUDPPolicy,
+			f.server.SetUDPPolicy,
 			func() any {
 				return types.AdminUDPSettingsResponse{Enabled: runtime.IsUDPEnabled(), MaxLeases: runtime.UDPMaxLeases()}
 			},
 		)
 	case types.PathAdminTCPPort:
 		f.handlePortSettings(w, r, invalidRequestBody, runtime,
-			runtime.SetTCPPortPolicy,
+			f.server.SetTCPPortPolicy,
 			func() any {
 				return types.AdminTCPPortSettingsResponse{Enabled: runtime.IsTCPPortEnabled(), MaxLeases: runtime.TCPPortMaxLeases()}
 			},
@@ -250,7 +189,7 @@ func (f *Frontend) serveAdmin(w http.ResponseWriter, r *http.Request) {
 				utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidAddress, "invalid address")
 				return
 			}
-			identity, err := utils.NormalizeIdentity(types.Identity{
+			normalizedIdentity, err := identity.NormalizeIdentity(types.Identity{
 				Name:    name,
 				Address: address,
 			})
@@ -258,7 +197,7 @@ func (f *Frontend) serveAdmin(w http.ResponseWriter, r *http.Request) {
 				utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, "invalid identity")
 				return
 			}
-			identityKey := identity.Key()
+			identityKey := normalizedIdentity.Key()
 			approver := runtime.Approver()
 
 			type identityAction struct {
@@ -373,26 +312,27 @@ func (f *Frontend) handlePortSettings(
 	utils.WriteAPIData(w, http.StatusOK, buildResponse())
 }
 
-func (f *Frontend) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if !utils.RequireMethod(w, r, http.MethodPost) {
-		return
-	}
-	if !f.auth.AuthEnabled() {
-		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeAuthDisabled, "admin authentication is not configured")
-		return
-	}
-
-	req, ok := utils.DecodeJSONRequestAs[types.AdminLoginRequest](w, r, adminBodyLimit, utils.InvalidRequestError(errors.New("invalid request body")))
+func (f *Frontend) handleWalletChallenge(w http.ResponseWriter, r *http.Request) {
+	req, ok := utils.DecodeJSONRequestAs[types.WalletAuthChallengeRequest](w, r, adminBodyLimit, utils.InvalidRequestError(errors.New("invalid request body")))
 	if !ok {
 		return
 	}
-	if !f.auth.ValidateKey(req.Key) {
-		utils.WriteAPIError(w, http.StatusUnauthorized, types.APIErrorCodeInvalidKey, "Invalid key")
+	resp, err := f.auth.IssueChallenge(req, adminAuthDomain(r, f.server.RelayIdentity().Name), adminAuthURI(r, types.PathAdminAuthLogin), time.Now().UTC())
+	if err != nil {
+		writeWalletAuthError(w, err)
 		return
 	}
-	token, err := f.auth.CreateSession()
+	utils.WriteAPIData(w, http.StatusCreated, resp)
+}
+
+func (f *Frontend) handleWalletLogin(w http.ResponseWriter, r *http.Request) {
+	req, ok := utils.DecodeJSONRequestAs[types.WalletAuthLoginRequest](w, r, adminBodyLimit, utils.InvalidRequestError(errors.New("invalid request body")))
+	if !ok {
+		return
+	}
+	token, walletAddress, err := f.auth.Login(req, time.Now().UTC())
 	if err != nil {
-		utils.WriteAPIError(w, http.StatusInternalServerError, types.APIErrorCodeSessionCreateFailed, "failed to create admin session")
+		writeWalletAuthError(w, err)
 		return
 	}
 
@@ -405,18 +345,54 @@ func (f *Frontend) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   86400,
 	})
-	utils.WriteAPIData(w, http.StatusOK, types.AdminLoginResponse{Success: true})
+	utils.WriteAPIData(w, http.StatusOK, types.WalletAuthLoginResponse{WalletAddress: walletAddress})
 }
 
 func (f *Frontend) isAuthenticated(r *http.Request) bool {
-	if !f.auth.AuthEnabled() {
-		return false
+	_, ok := f.authenticatedWallet(r)
+	return ok
+}
+
+func (f *Frontend) authenticatedWallet(r *http.Request) (string, bool) {
+	if f.auth == nil {
+		return "", false
 	}
 	cookie, err := r.Cookie(cookieName)
 	if err != nil {
-		return false
+		return "", false
 	}
 	return f.auth.ValidateSession(cookie.Value)
+}
+
+func adminAuthDomain(r *http.Request, fallback string) string {
+	domain := strings.TrimSpace(r.Host)
+	if domain != "" {
+		return domain
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func adminAuthURI(r *http.Request, endpointPath string) string {
+	scheme := "https"
+	if r.TLS == nil {
+		scheme = "http"
+	}
+	return (&url.URL{
+		Scheme: scheme,
+		Host:   adminAuthDomain(r, "localhost"),
+		Path:   endpointPath,
+	}).String()
+}
+
+func writeWalletAuthError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, auth.ErrWalletAuthUnauthorized):
+		utils.WriteAPIError(w, http.StatusForbidden, types.APIErrorCodeUnauthorized, err.Error())
+	case errors.Is(err, auth.ErrWalletAuthChallengeNotFound), errors.Is(err, auth.ErrWalletAuthChallengeExpired), errors.Is(err, auth.ErrWalletAuthInvalidSignature):
+		utils.WriteAPIError(w, http.StatusUnauthorized, types.APIErrorCodeUnauthorized, err.Error())
+	default:
+		utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, err.Error())
+	}
 }
 
 func saveAdminState(path string, runtime *policy.Runtime, landingPageEnabled bool) {
@@ -475,7 +451,11 @@ func applyOptionalPolicy(enabled *bool, maxLeases *int, getEnabled func() bool, 
 	set(e, m)
 }
 
-func (s persistedAdminState) apply(runtime *policy.Runtime) error {
+func (s persistedAdminState) apply(server *portal.Server) error {
+	if server == nil {
+		return nil
+	}
+	runtime := server.PolicyRuntime()
 	if runtime == nil {
 		return nil
 	}
@@ -485,13 +465,13 @@ func (s persistedAdminState) apply(runtime *policy.Runtime) error {
 		}
 	}
 	runtime.Approver().SetDecisions(
-		utils.NormalizeIdentityKeys(s.ApprovedIdentityKeys),
-		utils.NormalizeIdentityKeys(s.DeniedIdentityKeys),
+		identity.NormalizeIdentityKeys(s.ApprovedIdentityKeys),
+		identity.NormalizeIdentityKeys(s.DeniedIdentityKeys),
 	)
-	runtime.SetBannedIdentityKeys(utils.NormalizeIdentityKeys(s.BannedIdentityKeys))
+	runtime.SetBannedIdentityKeys(identity.NormalizeIdentityKeys(s.BannedIdentityKeys))
 	runtime.IPFilter().SetBannedIPs(s.BannedIPs)
-	runtime.BPSManager().SetIdentityBPSLimits(utils.NormalizeIdentityKeyBPS(s.IdentityBPS))
-	applyOptionalPolicy(s.UDPEnabled, s.UDPMaxLeases, runtime.IsUDPEnabled, runtime.UDPMaxLeases, runtime.SetUDPPolicy)
-	applyOptionalPolicy(s.TCPPortEnabled, s.TCPPortMaxLeases, runtime.IsTCPPortEnabled, runtime.TCPPortMaxLeases, runtime.SetTCPPortPolicy)
+	runtime.BPSManager().SetIdentityBPSLimits(identity.NormalizeIdentityKeyBPS(s.IdentityBPS))
+	applyOptionalPolicy(s.UDPEnabled, s.UDPMaxLeases, runtime.IsUDPEnabled, runtime.UDPMaxLeases, server.SetUDPPolicy)
+	applyOptionalPolicy(s.TCPPortEnabled, s.TCPPortMaxLeases, runtime.IsTCPPortEnabled, runtime.TCPPortMaxLeases, server.SetTCPPortPolicy)
 	return nil
 }

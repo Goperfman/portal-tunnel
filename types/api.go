@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -64,12 +65,15 @@ type RegisterRequest struct {
 }
 
 type RegisterChallengeRequest struct {
-	Identity   Identity      `json:"identity"`
-	Metadata   LeaseMetadata `json:"metadata"`
-	TTL        int           `json:"ttl,omitempty"`
-	UDPEnabled bool          `json:"udp_enabled,omitempty"`
-	TCPEnabled bool          `json:"tcp_enabled,omitempty"`
-	HopToken   string        `json:"hop_token,omitempty"`
+	Identity      Identity      `json:"identity"`
+	Metadata      LeaseMetadata `json:"metadata"`
+	TTL           int           `json:"ttl,omitempty"`
+	UDPEnabled    bool          `json:"udp_enabled,omitempty"`
+	TCPEnabled    bool          `json:"tcp_enabled,omitempty"`
+	HopToken      string        `json:"hop_token,omitempty"`
+	RouteHostname string        `json:"route_hostname,omitempty"`
+	HostnameHash  string        `json:"hostname_hash,omitempty"`
+	ECHConfigList []byte        `json:"ech_config_list,omitempty"`
 }
 
 type RegisterChallengeResponse struct {
@@ -81,9 +85,7 @@ type RegisterChallengeResponse struct {
 type RegisterResponse struct {
 	Identity    Identity  `json:"identity"`
 	ExpiresAt   time.Time `json:"expires_at"`
-	Hostname    string    `json:"hostname"`
 	AccessToken string    `json:"access_token"`
-	KeylessURL  string    `json:"keyless_url,omitempty"`
 	SNIPort     int       `json:"sni_port,omitempty"`
 	UDPAddr     string    `json:"udp_addr,omitempty"`
 	UDPEnabled  bool      `json:"udp_enabled,omitempty"`
@@ -107,19 +109,11 @@ type DiscoveryAnnounceResponse struct {
 	Accepted        bool   `json:"accepted"`
 }
 
-type QUICControlMessage struct {
-	AccessToken string `json:"access_token"`
-}
-
-type QUICControlResponse struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
-}
-
 type RenewRequest struct {
-	AccessToken string `json:"access_token"`
-	TTL         int    `json:"ttl,omitempty"`
-	ReportedIP  string `json:"reported_ip,omitempty"`
+	AccessToken string        `json:"access_token"`
+	TTL         int           `json:"ttl,omitempty"`
+	ReportedIP  string        `json:"reported_ip,omitempty"`
+	Metadata    LeaseMetadata `json:"metadata,omitempty"`
 }
 
 type RenewResponse struct {
@@ -134,13 +128,22 @@ type UnregisterRequest struct {
 type HopRoute struct {
 	OwnerPublicKey string          `json:"owner_public_key,omitempty"`
 	RelayURL       string          `json:"relay_url"`
-	MatchHostname  string          `json:"match_hostname,omitempty"`
+	PublicHostname string          `json:"public_hostname,omitempty"`
+	RouteHostname  string          `json:"route_hostname,omitempty"`
+	HostnameHash   string          `json:"hostname_hash,omitempty"`
+	ECHConfigList  []byte          `json:"ech_config_list,omitempty"`
 	MatchToken     string          `json:"match_token,omitempty"`
 	Metadata       LeaseMetadata   `json:"metadata,omitempty"`
 	ForwardRelay   RelayDescriptor `json:"forward_relay"`
 	ForwardToken   string          `json:"forward_token"`
+	FirstSeenAt    time.Time       `json:"first_seen_at,omitempty"`
 	ExpiresAt      time.Time       `json:"expires_at,omitempty"`
 	Signature      string          `json:"signature,omitempty"`
+}
+
+type HopRouteResponse struct {
+	AccessToken string `json:"access_token,omitempty"`
+	SNIPort     int    `json:"sni_port,omitempty"`
 }
 
 func HopRouteBytes(method string, route HopRoute) ([]byte, error) {
@@ -149,32 +152,52 @@ func HopRouteBytes(method string, route HopRoute) ([]byte, error) {
 		return nil, err
 	}
 	payload := struct {
-		Purpose           string          `json:"purpose"`
-		Method            string          `json:"method"`
-		OwnerPublicKey    string          `json:"owner_public_key"`
-		RelayURL          string          `json:"relay_url"`
-		MatchHostname     string          `json:"match_hostname"`
-		MatchToken        string          `json:"match_token"`
-		ForwardRelay      json.RawMessage `json:"forward_relay"`
-		ForwardToken      string          `json:"forward_token"`
-		ExpiresAtUnixNano int64           `json:"expires_at_unix_nano"`
+		Purpose             string          `json:"purpose"`
+		Method              string          `json:"method"`
+		OwnerPublicKey      string          `json:"owner_public_key"`
+		RelayURL            string          `json:"relay_url"`
+		PublicHostname      string          `json:"public_hostname"`
+		RouteHostname       string          `json:"route_hostname"`
+		HostnameHash        string          `json:"hostname_hash"`
+		ECHConfigList       string          `json:"ech_config_list"`
+		MatchToken          string          `json:"match_token"`
+		ForwardRelay        json.RawMessage `json:"forward_relay"`
+		ForwardToken        string          `json:"forward_token"`
+		FirstSeenAtUnixNano int64           `json:"first_seen_at_unix_nano"`
+		ExpiresAtUnixNano   int64           `json:"expires_at_unix_nano"`
 	}{
-		Purpose:           "portal hop route v1",
-		Method:            strings.ToUpper(strings.TrimSpace(method)),
-		OwnerPublicKey:    strings.TrimSpace(route.OwnerPublicKey),
-		RelayURL:          strings.TrimSpace(route.RelayURL),
-		MatchHostname:     strings.TrimSpace(route.MatchHostname),
-		MatchToken:        strings.TrimSpace(route.MatchToken),
-		ForwardRelay:      json.RawMessage(forwardRelay),
-		ForwardToken:      strings.TrimSpace(route.ForwardToken),
-		ExpiresAtUnixNano: route.ExpiresAt.UTC().UnixNano(),
+		Purpose:             "portal hop route v1",
+		Method:              strings.ToUpper(strings.TrimSpace(method)),
+		OwnerPublicKey:      strings.TrimSpace(route.OwnerPublicKey),
+		RelayURL:            strings.TrimSpace(route.RelayURL),
+		PublicHostname:      strings.TrimSpace(route.PublicHostname),
+		RouteHostname:       strings.TrimSpace(route.RouteHostname),
+		HostnameHash:        strings.TrimSpace(route.HostnameHash),
+		ECHConfigList:       base64.StdEncoding.EncodeToString(route.ECHConfigList),
+		MatchToken:          strings.TrimSpace(route.MatchToken),
+		ForwardRelay:        json.RawMessage(forwardRelay),
+		ForwardToken:        strings.TrimSpace(route.ForwardToken),
+		FirstSeenAtUnixNano: route.FirstSeenAt.UTC().UnixNano(),
+		ExpiresAtUnixNano:   route.ExpiresAt.UTC().UnixNano(),
 	}
 	return json.Marshal(payload)
 }
 
 type DomainResponse struct {
-	ProtocolVersion string `json:"protocol_version"`
-	ReleaseVersion  string `json:"release_version"`
+	ProtocolVersion string    `json:"protocol_version"`
+	ReleaseVersion  string    `json:"release_version"`
+	ENS             ENSStatus `json:"ens"`
+}
+
+type ENSStatus struct {
+	Enabled     bool   `json:"enabled"`
+	Verified    bool   `json:"verified"`
+	Provider    string `json:"provider,omitempty"`
+	Address     string `json:"address,omitempty"`
+	DNSSECState string `json:"dnssec_state,omitempty"`
+	DSRecord    string `json:"ds_record,omitempty"`
+	Message     string `json:"message,omitempty"`
+	LastError   string `json:"last_error,omitempty"`
 }
 
 type TunnelStatusResponse struct {
@@ -183,17 +206,29 @@ type TunnelStatusResponse struct {
 	ServiceAlive bool   `json:"service_alive"`
 }
 
-type AdminLoginRequest struct {
-	Key string `json:"key"`
+type WalletAuthChallengeRequest struct {
+	Address string `json:"address"`
 }
 
-type AdminLoginResponse struct {
-	Success bool `json:"success,omitempty"`
+type WalletAuthChallengeResponse struct {
+	ChallengeID string    `json:"challenge_id"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	SIWEMessage string    `json:"siwe_message"`
 }
 
-type AdminAuthStatusResponse struct {
-	Authenticated bool `json:"authenticated"`
-	AuthEnabled   bool `json:"auth_enabled"`
+type WalletAuthLoginRequest struct {
+	ChallengeID   string `json:"challenge_id"`
+	SIWEMessage   string `json:"siwe_message"`
+	SIWESignature string `json:"siwe_signature"`
+}
+
+type WalletAuthLoginResponse struct {
+	WalletAddress string `json:"wallet_address,omitempty"`
+}
+
+type WalletAuthStatusResponse struct {
+	Authenticated bool   `json:"authenticated"`
+	WalletAddress string `json:"wallet_address,omitempty"`
 }
 
 type AdminSnapshotResponse struct {

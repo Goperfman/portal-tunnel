@@ -10,7 +10,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/gosuda/portal-tunnel/v2/portal/auth"
+	"github.com/gosuda/portal-tunnel/v2/portal/telemetry"
 	"github.com/gosuda/portal-tunnel/v2/types"
 )
 
@@ -170,6 +173,7 @@ func mergeLocalRelayState(record, existing RelayState) RelayState {
 		record.DiscoveryRTT = existing.DiscoveryRTT
 		record.DiscoveryRTTAt = existing.DiscoveryRTTAt
 	}
+	record.inheritAdaptiveTelemetry(existing)
 	return record
 }
 
@@ -275,9 +279,7 @@ func (s *RelaySet) SetBootstrapRelayURLs(inputs []string) {
 	for key, state := range s.relays {
 		_, bootstrap := keep[key]
 		state.Bootstrap = bootstrap
-		if !state.Bootstrap && !state.hasObservedDescriptor() && !state.Banned &&
-			state.discoveryFailures == 0 && state.activeFailures == 0 &&
-			state.nextDiscoveryRefreshAt.IsZero() && state.suppressActiveUntil.IsZero() {
+		if disposableRelayState(state) {
 			delete(s.relays, key)
 			continue
 		}
@@ -296,6 +298,52 @@ func (s *RelaySet) SetBootstrapRelayURLs(inputs []string) {
 		state.Bootstrap = true
 		s.relays[relayURL] = state
 	}
+}
+
+func (s *RelaySet) AddBootstrapRelayURL(relayURL string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, ok := s.relays[relayURL]
+	if !ok {
+		state = newRelayState(relayURL)
+	}
+	state.Bootstrap = true
+	s.relays[relayURL] = state
+}
+
+func (s *RelaySet) RemoveBootstrapRelayURL(relayURL string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, ok := s.relays[relayURL]
+	if !ok {
+		return
+	}
+	state.Bootstrap = false
+	if disposableRelayState(state) {
+		delete(s.relays, relayURL)
+		return
+	}
+	s.relays[relayURL] = state
+}
+
+func disposableRelayState(state RelayState) bool {
+	return !state.Bootstrap && !state.hasObservedDescriptor() && !state.Banned &&
+		state.discoveryFailures == 0 && state.activeFailures == 0 &&
+		state.nextDiscoveryRefreshAt.IsZero() && state.suppressActiveUntil.IsZero()
+}
+
+func (s *RelaySet) AggregateRelays() []RelayState {
+	return MOLSRelayPolicy{}.SelectAggregate(s.currentRelayStates(time.Now().UTC()))
+}
+
+func (s *RelaySet) AllRelays() []RelayState {
+	return s.currentRelayStates(time.Now().UTC())
+}
+
+func (s *RelaySet) ConfirmedRelays() []RelayState {
+	return MOLSRelayPolicy{}.SelectConfirmed(s.currentRelayStates(time.Now().UTC()))
 }
 
 type Route struct {
@@ -367,7 +415,65 @@ func (s *RelaySet) PlanRoutes(explicitPath []string, routeState RouteState) ([]R
 	return routes, nil
 }
 
-func (s *RelaySet) OverlayPeerStates() []RelayState {
+// PriorityRelaysWithTrace returns the same ordered relay-URL list as
+// PriorityRelays, plus a SelectionTrace populated with pool statistics,
+// eligibility classification, and the scoring parameters used. Prometheus
+// metrics are emitted from the trace before returning, and a sampled zerolog
+// debug entry is written.
+func (s *RelaySet) PriorityRelaysWithTrace(clientState ClientState) ([]string, telemetry.SelectionTrace) {
+	states := s.currentRelayStates(time.Now().UTC())
+
+	result, trace := MOLSRelayPolicy{}.SelectPriorityWithTrace(states, clientState)
+	telemetry.EmitFromTrace(trace)
+	log.Debug().
+		Uint8("client_hash", trace.ClientHash).
+		Int("pool_size", trace.PoolTotal).
+		Int("output_count", len(trace.OutputURLs)).
+		Str("mode", trace.Mode).
+		Bool("congested", trace.Congested).
+		Strs("relay_urls", trace.OutputURLs).
+		Msg("relay selection")
+	return result, trace
+}
+
+// PriorityRelays returns the ordered list of relay URLs for a client. It
+// delegates to PriorityRelaysWithTrace and discards the trace. The public
+// signature is unchanged through all phases.
+func (s *RelaySet) PriorityRelays(clientState ClientState) []string {
+	out, _ := s.PriorityRelaysWithTrace(clientState)
+	return out
+}
+
+// PriorityMultiHopWithTrace returns the same ordered relay-URL list as
+// PriorityMultiHop, plus a SelectionTrace populated with pool statistics,
+// eligibility classification, and the scoring parameters used. Prometheus
+// metrics are emitted from the trace before returning, and a sampled zerolog
+// debug entry is written.
+func (s *RelaySet) PriorityMultiHopWithTrace(clientState ClientState) ([]string, telemetry.SelectionTrace) {
+	states := s.currentRelayStates(time.Now().UTC())
+
+	result, trace := MOLSRelayPolicy{}.SelectMultiHopWithTrace(states, clientState)
+	telemetry.EmitFromTrace(trace)
+	log.Debug().
+		Uint8("client_hash", trace.ClientHash).
+		Int("pool_size", trace.PoolTotal).
+		Int("output_count", len(trace.OutputURLs)).
+		Str("mode", trace.Mode).
+		Bool("congested", trace.Congested).
+		Strs("relay_urls", trace.OutputURLs).
+		Msg("relay selection")
+	return result, trace
+}
+
+// PriorityMultiHop returns the ordered list of relay URLs for multi-hop
+// routing. It delegates to PriorityMultiHopWithTrace and discards the trace.
+// The public signature is unchanged through all phases.
+func (s *RelaySet) PriorityMultiHop(clientState ClientState) []string {
+	out, _ := s.PriorityMultiHopWithTrace(clientState)
+	return out
+}
+
+func (s *RelaySet) overlayPeerRelayStates() []RelayState {
 	now := time.Now().UTC()
 	states := s.currentRelayStates(now)
 	out := make([]RelayState, 0, len(states))
@@ -379,6 +485,18 @@ func (s *RelaySet) OverlayPeerStates() []RelayState {
 	}
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+func (s *RelaySet) OverlayPeerDescriptor() []types.RelayDescriptor {
+	states := s.overlayPeerRelayStates()
+	if len(states) == 0 {
+		return nil
+	}
+	out := make([]types.RelayDescriptor, 0, len(states))
+	for _, state := range states {
+		out = append(out, state.Descriptor)
 	}
 	return out
 }
@@ -468,6 +586,20 @@ func (s *RelaySet) BanRelayURL(relayURL string) {
 	s.relays[relayURL] = state
 }
 
+func (s *RelaySet) AllowRelayURL(relayURL string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, ok := s.relays[relayURL]
+	if !ok {
+		state = newRelayState(relayURL)
+	}
+	state.Banned = false
+	state.suppressActiveUntil = time.Time{}
+	state.unhealthySince = time.Time{}
+	s.relays[relayURL] = state
+}
+
 func (s *RelaySet) ConfirmRelayURL(relayURL string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -497,6 +629,21 @@ func (s *RelaySet) UnconfirmRelayURL(relayURL string) {
 		return
 	}
 	state.Confirmed = false
+	s.relays[relayURL] = state
+}
+
+// DeactivateRelayURL drops a relay out of active selection while keeping its
+// discovered descriptor as a candidate.
+func (s *RelaySet) DeactivateRelayURL(relayURL string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, ok := s.relays[relayURL]
+	if !ok {
+		return
+	}
+	state.Confirmed = false
+	state.suppressActiveUntil = time.Now().Add(defaultDirectRecoveryBackoff)
 	s.relays[relayURL] = state
 }
 
@@ -605,6 +752,19 @@ func (s *RelaySet) RecordDiscoveryRTT(relayURL string, rtt time.Duration, measur
 
 	state.DiscoveryRTT = rtt
 	state.DiscoveryRTTAt = measuredAt
+	s.relays[relayURL] = state
+}
+
+func (s *RelaySet) RecordLoadFactor(relayURL string, loadFixed uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, ok := s.relays[relayURL]
+	if !ok {
+		return
+	}
+
+	state.StoreLoadFactor(loadFixed)
 	s.relays[relayURL] = state
 }
 

@@ -1,4 +1,4 @@
-.PHONY: help install fmt vet lint lint-auto test vuln tidy all run build build-frontend build-docs build-tunnel build-server clean
+.PHONY: help install fmt vet lint lint-auto test vuln tidy all run build build-frontend build-docs build-tunnel build-server clean load-test
 
 .DEFAULT_GOAL := help
 
@@ -15,6 +15,7 @@ help:
 	@echo "  make install           - Install Go developer tools used by this repo"
 	@echo "  make fmt               - Apply gofmt/goimports"
 	@echo "  make lint-auto         - Run autofix lint/format pipeline"
+	@echo "  make test              - Run Go tests"
 	@echo "  make build             - Build everything (frontend, tunnel, server)"
 	@echo "  make build-frontend    - Build React frontend (Tailwind CSS 4)"
 	@echo "  make build-docs        - Build documentation site (SvelteKit)"
@@ -98,3 +99,13 @@ clean:
 	rm -rf bin
 	rm -rf cmd/relay-server/dist/app
 	rm -rf cmd/relay-server/dist/tunnel
+
+# Run the uniformity probe. Extra flags are passed through after the target name:
+#   make load-test -- -clients 1000 -relays 5
+# GNU make consumes '--' and forwards remaining goals; the catch-all '%:' rule
+# below silently absorbs them so make does not error with "no rule to make target."
+load-test:
+	go run ./cmd/portal-loadtest $(filter-out $@,$(MAKECMDGOALS))
+
+%:
+	@:

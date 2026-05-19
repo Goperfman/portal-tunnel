@@ -49,7 +49,7 @@ func resolvePublicIP(ctx context.Context, totalTimeout, attemptTimeout time.Dura
 	ctx, cancel := context.WithTimeout(ctx, totalTimeout)
 	defer cancel()
 
-	client := &http.Client{}
+	client := DefaultHTTPClient
 	headers := http.Header{"User-Agent": []string{"portal-tunnel"}}
 	var lastErr error
 
@@ -125,7 +125,7 @@ func SanitizeReportedIP(raw string) string {
 // FetchRelayVersion calls GET /sdk/domain on a relay and returns its release version.
 // Returns an empty string on any error (timeout, unreachable, bad response).
 func FetchRelayVersion(ctx context.Context, relayURL string) string {
-	client := &http.Client{Timeout: 3 * time.Second}
+	client := NewHTTPClient(WithHTTPTimeout(3 * time.Second))
 	resp, err := httpDo(ctx, client, http.MethodGet, relayURL+types.PathSDKDomain, nil, nil)
 	if err != nil {
 		return ""
@@ -139,39 +139,4 @@ func FetchRelayVersion(ctx context.Context, relayURL string) string {
 		return ""
 	}
 	return envelope.Data.ReleaseVersion
-}
-
-func ResolvePortalRelayURLs(ctx context.Context, explicit []string, includeDefaults bool) ([]string, error) {
-	explicit, err := NormalizeRelayURLs(explicit...)
-	if err != nil {
-		return nil, err
-	}
-	if !includeDefaults {
-		return explicit, nil
-	}
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	var registry struct {
-		Relays []string `json:"relays"`
-	}
-	resp, err := httpDo(ctx, client, http.MethodGet, types.PortalRelayRegistryURL, nil, nil)
-	if err != nil {
-		return explicit, nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return explicit, nil
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&registry); err != nil {
-		return explicit, nil
-	}
-
-	defaults, err := NormalizeRelayURLs(registry.Relays...)
-	if err != nil {
-		return explicit, nil
-	}
-	if len(defaults) == 0 {
-		return explicit, nil
-	}
-	return MergeRelayURLs(defaults, nil, explicit)
 }

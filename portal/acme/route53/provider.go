@@ -34,7 +34,8 @@ type Config struct {
 }
 
 type Provider struct {
-	cfg Config
+	cfg   Config
+	zones *utils.Snapshot[map[string]string]
 }
 
 func New(cfg Config) *Provider {
@@ -47,6 +48,7 @@ func New(cfg Config) *Provider {
 			HostedZoneID:    normalizeZoneID(cfg.HostedZoneID),
 			KMSKeyARN:       strings.TrimSpace(cfg.KMSKeyARN),
 		},
+		zones: utils.NewSnapshot(map[string]string{}, utils.CloneMap[string, string]),
 	}
 }
 
@@ -93,7 +95,7 @@ func (p *Provider) EnsureARecords(ctx context.Context, baseDomain, publicIPv4 st
 		return err
 	}
 
-	hostedZoneID, err := findHostedZoneID(ctx, client, baseDomain, p.cfg.HostedZoneID)
+	hostedZoneID, err := p.findHostedZoneID(ctx, client, baseDomain)
 	if err != nil {
 		return err
 	}
@@ -123,7 +125,7 @@ func (p *Provider) EnsureARecord(ctx context.Context, name, publicIPv4 string) e
 		return err
 	}
 
-	hostedZoneID, err := findHostedZoneID(ctx, client, name, p.cfg.HostedZoneID)
+	hostedZoneID, err := p.findHostedZoneID(ctx, client, name)
 	if err != nil {
 		return err
 	}
@@ -147,7 +149,7 @@ func (p *Provider) DeleteARecord(ctx context.Context, name string) error {
 		return err
 	}
 
-	hostedZoneID, err := findHostedZoneID(ctx, client, name, p.cfg.HostedZoneID)
+	hostedZoneID, err := p.findHostedZoneID(ctx, client, name)
 	if err != nil {
 		return err
 	}
@@ -182,7 +184,7 @@ func (p *Provider) EnsureTXTRecord(ctx context.Context, name, value string) erro
 		return err
 	}
 
-	hostedZoneID, err := findHostedZoneID(ctx, client, name, p.cfg.HostedZoneID)
+	hostedZoneID, err := p.findHostedZoneID(ctx, client, name)
 	if err != nil {
 		return err
 	}
@@ -210,12 +212,71 @@ func (p *Provider) DeleteTXTRecords(ctx context.Context, name, matchPrefix strin
 		return err
 	}
 
-	hostedZoneID, err := findHostedZoneID(ctx, client, name, p.cfg.HostedZoneID)
+	hostedZoneID, err := p.findHostedZoneID(ctx, client, name)
 	if err != nil {
 		return err
 	}
 	if err := deleteTXTRecords(ctx, client, hostedZoneID, name, matchPrefix); err != nil {
 		return fmt.Errorf("delete route53 TXT records %s: %w", name, err)
+	}
+	return nil
+}
+
+func (p *Provider) EnsureHTTPSRecord(ctx context.Context, name string, _ uint16, _, _, content string) error {
+	if p == nil {
+		return errors.New("route53 provider is nil")
+	}
+	name = utils.NormalizeHostname(name)
+	if name == "" {
+		return errors.New("record name is required")
+	}
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return errors.New("https record content is required")
+	}
+
+	client, err := newClient(ctx, p.cfg)
+	if err != nil {
+		return err
+	}
+
+	hostedZoneID, err := p.findHostedZoneID(ctx, client, name)
+	if err != nil {
+		return err
+	}
+	if err := upsertRecord(ctx, client, hostedZoneID, name, route53types.RRTypeHttps, []string{content}, "Managed by Portal ECH"); err != nil {
+		return fmt.Errorf("upsert route53 HTTPS record %s: %w", name, err)
+	}
+	return nil
+}
+
+func (p *Provider) DeleteHTTPSRecord(ctx context.Context, name string) error {
+	if p == nil {
+		return errors.New("route53 provider is nil")
+	}
+	name = utils.NormalizeHostname(name)
+	if name == "" {
+		return errors.New("record name is required")
+	}
+
+	client, err := newClient(ctx, p.cfg)
+	if err != nil {
+		return err
+	}
+
+	hostedZoneID, err := p.findHostedZoneID(ctx, client, name)
+	if err != nil {
+		return err
+	}
+	recordSet, err := getRecordSet(ctx, client, hostedZoneID, name, route53types.RRTypeHttps)
+	if err != nil {
+		return err
+	}
+	if recordSet == nil {
+		return nil
+	}
+	if err := deleteRecordSet(ctx, client, hostedZoneID, recordSet, "Managed by Portal ECH cleanup"); err != nil {
+		return fmt.Errorf("delete route53 HTTPS record %s: %w", name, err)
 	}
 	return nil
 }
@@ -234,7 +295,7 @@ func (p *Provider) EnsureDNSSEC(ctx context.Context, baseDomain string) (state, 
 		return "", "", "", err
 	}
 
-	hostedZoneID, err := findHostedZoneID(ctx, client, baseDomain, p.cfg.HostedZoneID)
+	hostedZoneID, err := p.findHostedZoneID(ctx, client, baseDomain)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -296,8 +357,8 @@ func newClient(ctx context.Context, cfg Config) (*awsroute53.Client, error) {
 	return awsroute53.NewFromConfig(awsCfg), nil
 }
 
-func findHostedZoneID(ctx context.Context, client *awsroute53.Client, domain, explicitZoneID string) (string, error) {
-	if explicitZoneID = normalizeZoneID(explicitZoneID); explicitZoneID != "" {
+func (p *Provider) findHostedZoneID(ctx context.Context, client *awsroute53.Client, domain string) (string, error) {
+	if explicitZoneID := normalizeZoneID(p.cfg.HostedZoneID); explicitZoneID != "" {
 		return explicitZoneID, nil
 	}
 	if client == nil {
@@ -307,6 +368,13 @@ func findHostedZoneID(ctx context.Context, client *awsroute53.Client, domain, ex
 	candidates := utils.DomainCandidates(domain)
 	if len(candidates) == 0 {
 		return "", fmt.Errorf("invalid base domain for hosted zone lookup: %q", domain)
+	}
+
+	zones := p.zones.Load()
+	for _, candidate := range candidates {
+		if zoneID := zones[candidate]; zoneID != "" {
+			return zoneID, nil
+		}
 	}
 
 	zonesByName := make(map[string]string)
@@ -327,6 +395,17 @@ func findHostedZoneID(ctx context.Context, client *awsroute53.Client, domain, ex
 			}
 			zonesByName[zoneName] = zoneID
 		}
+	}
+
+	if len(zonesByName) > 0 {
+		p.zones.UpdateCopy(func(zones *map[string]string) {
+			if *zones == nil {
+				*zones = make(map[string]string)
+			}
+			for zoneName, zoneID := range zonesByName {
+				(*zones)[zoneName] = zoneID
+			}
+		})
 	}
 
 	for _, candidate := range candidates {

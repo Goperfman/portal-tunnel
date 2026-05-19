@@ -3,13 +3,12 @@ package utils
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"net"
-	"net/netip"
 	"net/url"
 	"path"
 	"strings"
@@ -17,6 +16,8 @@ import (
 	"unicode"
 
 	"golang.org/x/net/idna"
+
+	"github.com/gosuda/portal-tunnel/v2/types"
 )
 
 func SplitCSV(raw string) []string {
@@ -228,6 +229,15 @@ func HostnameMatchesPattern(pattern, hostname string) bool {
 	return ok && rest == suffix
 }
 
+func HostnameHash(hostname string) string {
+	hostname = NormalizeHostname(hostname)
+	if hostname == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte("portal hostname hash v1\x00" + hostname))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
 func NormalizeChildHostnames(inputs []string, baseDomain string) []string {
 	if len(inputs) == 0 {
 		return nil
@@ -352,6 +362,25 @@ func MergeRelayURLs(current, excluded, inputs []string) ([]string, error) {
 	return FilterRelayURLs(merged, excluded), nil
 }
 
+func ResolvePortalRelayURLs(explicit []string, includeBootstrap bool) ([]string, error) {
+	explicit, err := NormalizeRelayURLs(explicit...)
+	if err != nil {
+		return nil, err
+	}
+	if !includeBootstrap {
+		return explicit, nil
+	}
+
+	defaults, err := NormalizeRelayURLs(types.BootstrapRelays...)
+	if err != nil {
+		return explicit, nil
+	}
+	if len(defaults) == 0 {
+		return explicit, nil
+	}
+	return MergeRelayURLs(defaults, nil, explicit)
+}
+
 func ExcludeLocalRelayURLs(inputs ...string) ([]string, error) {
 	normalized, err := NormalizeRelayURLs(inputs...)
 	if err != nil {
@@ -474,27 +503,12 @@ func IsLocalRelayHost(host string) bool {
 	return strings.HasSuffix(host, ".localhost")
 }
 
-func AddrString(addr net.Addr) string {
-	if addr == nil {
-		return ""
-	}
-	return addr.String()
-}
-
 func ValidateIPv4(raw string) error {
 	ip := net.ParseIP(strings.TrimSpace(raw))
 	if ip == nil || ip.To4() == nil {
 		return fmt.Errorf("invalid ipv4 address: %q", raw)
 	}
 	return nil
-}
-
-func RandomHex(size int) (string, error) {
-	buf := make([]byte, size)
-	if _, err := io.ReadFull(rand.Reader, buf); err != nil {
-		return "", fmt.Errorf("read random bytes: %w", err)
-	}
-	return hex.EncodeToString(buf), nil
 }
 
 func SleepOrDone(ctx context.Context, d time.Duration) bool {
@@ -514,20 +528,6 @@ func RandomID(prefix string) string {
 		panic(err)
 	}
 	return prefix + hex.EncodeToString(buf)
-}
-
-func NormalizeIPPrefixes(inputs []string) []string {
-	return normalizeUniqueStrings(inputs, func(input string) string {
-		input = strings.TrimSpace(input)
-		if input == "" {
-			return ""
-		}
-		prefix, err := netip.ParsePrefix(input)
-		if err != nil {
-			return ""
-		}
-		return prefix.String()
-	})
 }
 
 func normalizeUniqueStrings(inputs []string, normalize func(string) string) []string {

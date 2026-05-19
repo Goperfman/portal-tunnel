@@ -6,12 +6,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"text/tabwriter"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
@@ -25,6 +27,7 @@ func main() {
 	log.Logger = log.Output(zerolog.NewConsoleWriter())
 	if err := utils.RunCommands(os.Args[1:], os.Stdout, os.Stderr, printRootUsage, map[string]utils.CommandFunc{
 		"expose": runExposeCommand,
+		"agent":  runAgentCommand,
 		"list":   runListCommand,
 		"update": runUpdateCommand,
 		"version": func(args []string) error {
@@ -33,6 +36,7 @@ func main() {
 		},
 		"help": utils.MakeHelpCommand(printRootUsage, []utils.HelpTopic{
 			{Name: "expose", Usage: printExposeUsage},
+			{Name: "agent", Usage: printAgentUsage},
 			{Name: "list", Usage: printListUsage},
 			{Name: "update", Usage: printUpdateUsage},
 		}),
@@ -62,6 +66,7 @@ type exposeFlags struct {
 	tcp             bool
 	maxActiveRelays int
 	multiHopDepth   int
+	metricsAddr     string
 }
 
 func runExposeCommand(args []string) error {
@@ -72,7 +77,7 @@ func runExposeCommand(args []string) error {
 
 	utils.StringFlag(fs, &flags.relayCSV, "relays", "", "Additional Portal relay server API URLs (comma-separated; scheme omitted defaults to https)")
 	utils.StringFlagEnv(fs, &flags.multiHopCSV, "multi-hop", "", "Ordered multi-hop relay API URLs, comma-separated", "MULTI_HOP")
-	utils.BoolFlag(fs, &flags.discovery, "discovery", true, "Include public registry relays and discover additional relay bootstraps")
+	utils.BoolFlag(fs, &flags.discovery, "discovery", true, "Include bootstrap relays and discover additional relays")
 	utils.BoolFlagEnv(fs, &flags.banMITM, "ban-mitm", true, "Ban relay when the MITM self-probe detects TLS termination", "BAN_MITM")
 	utils.StringFlagEnv(fs, &flags.identityPath, "identity-path", "identity.json", "identity json file path", "IDENTITY_PATH")
 	utils.StringFlagEnv(fs, &flags.identityJSON, "identity-json", "", "identity json payload; overrides --identity-path contents and is persisted there when both are set", "IDENTITY_JSON")
@@ -88,6 +93,7 @@ func runExposeCommand(args []string) error {
 	utils.BoolFlagEnv(fs, &flags.tcp, "tcp", false, "Request a dedicated TCP port on the relay for raw TCP services (no TLS; e.g., Minecraft, game servers)", "TCP_ENABLED")
 	utils.IntFlagEnv(fs, &flags.maxActiveRelays, "max-active-relays", 3, nil, "Maximum number of auto-selected relays to keep connected; explicit --relays are always included", "MAX_ACTIVE_RELAYS")
 	utils.IntFlagEnv(fs, &flags.multiHopDepth, "multi-hop-depth", 0, nil, "Automatically select one multi-hop route with this hop count; 0 or 1 disables multi-hop", "MULTI_HOP_DEPTH")
+	utils.StringFlag(fs, &flags.metricsAddr, "metrics-addr", "", "Optional address (host:port) to serve Prometheus /metrics. Empty = disabled.")
 
 	if err := utils.ParseFlagSet(fs, args, printExposeUsage); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -117,12 +123,28 @@ func runExposeCommand(args []string) error {
 	ctx, stop := utils.SignalContext()
 	defer stop()
 
+	if flags.metricsAddr != "" {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+		srv := &http.Server{
+			Addr:              flags.metricsAddr,
+			Handler:           mux,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		go func() {
+			log.Info().Str("metrics_addr", flags.metricsAddr).Msg("metrics server listening")
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Error().Err(err).Msg("metrics server error")
+			}
+		}()
+	}
+
 	exposure, err := sdk.Expose(ctx, sdk.ExposeConfig{
 		RelayURLs:       utils.SplitCSV(flags.relayCSV),
 		Discovery:       flags.discovery,
+		Identity:        types.Identity{Name: flags.name},
 		IdentityPath:    flags.identityPath,
 		IdentityJSON:    flags.identityJSON,
-		Name:            flags.name,
 		TargetAddr:      flags.targetAddr,
 		UDPAddr:         flags.udpAddr,
 		UDPEnabled:      flags.udp,
@@ -158,7 +180,7 @@ func runExposeCommand(args []string) error {
 		defer exposure.Close()
 		return exposure.RunHTTPRoutes(ctx, httpRoutes, "")
 	}
-	return proxyExposure(ctx, exposure)
+	return sdk.ProxyExposure(ctx, exposure)
 }
 
 func runUpdateCommand(args []string) error {
@@ -197,7 +219,7 @@ func runListCommand(args []string) error {
 	fs := utils.NewFlagSet("list", printListUsage)
 
 	utils.StringFlag(fs, &flags.relayCSV, "relays", "", "Additional Portal relay server API URLs (comma-separated; scheme omitted defaults to https)")
-	utils.BoolFlag(fs, &flags.defaultRelays, "default-relays", true, "Include public registry relays")
+	utils.BoolFlag(fs, &flags.defaultRelays, "default-relays", true, "Include bootstrap relays")
 
 	if err := utils.ParseFlagSet(fs, args, printListUsage); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -215,7 +237,7 @@ func runListCommand(args []string) error {
 
 	relayInputs := utils.SplitCSV(flags.relayCSV)
 
-	relayURLs, err := utils.ResolvePortalRelayURLs(ctx, relayInputs, flags.defaultRelays)
+	relayURLs, err := utils.ResolvePortalRelayURLs(relayInputs, flags.defaultRelays)
 	if err != nil {
 		return fmt.Errorf("resolve relay urls: %w", err)
 	}
@@ -251,6 +273,10 @@ func printRootUsage(w io.Writer) {
 		[]string{
 			"portal expose [flags] <target>",
 			"portal expose [flags] --http-route PATH=UPSTREAM [--http-route PATH=UPSTREAM]",
+			"portal agent run [flags]",
+			"portal agent dashboard [flags]",
+			"portal agent stop [flags]",
+			"portal agent restart [flags]",
 			"portal list [flags]",
 			"portal update [flags]",
 			"portal version",
@@ -259,6 +285,10 @@ func printRootUsage(w io.Writer) {
 			"portal expose 3000",
 			"portal expose localhost:8080 --name my-app",
 			"portal expose --http-route /api=http://127.0.0.1:3001 --http-route /=http://127.0.0.1:5173 --name my-app",
+			"portal agent run",
+			"portal agent dashboard",
+			"portal agent stop",
+			"portal agent restart",
 			"portal expose 3000 --udp --udp-addr 127.0.0.1:5353",
 			"portal list",
 			"portal update",
@@ -306,7 +336,7 @@ func printUpdateUsage(w io.Writer) {
 		},
 		[]string{
 			"portal update",
-			"portal update --version v2.1.7",
+			"portal update --version v2.1.9",
 		},
 	)
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { AdminLeaseData } from "@/hooks/useSSRData";
 import { useList, type BaseServer } from "@/hooks/useList";
-import type { BanFilter } from "@/components/ServerListView";
+import type { BanFilter } from "@/types/filters";
 import {
   API_PATHS,
   adminIPBanPath,
@@ -29,8 +29,6 @@ type AdminSnapshotResponse = {
   udp?: { enabled: boolean; max_leases: number };
   tcp_port?: { enabled: boolean; max_leases: number };
 };
-
-type LeaseActionResult = ApprovalModeResponse;
 
 export interface AdminServer extends BaseServer {
   identityKey: string;
@@ -168,7 +166,7 @@ async function loadAdminSnapshot(): Promise<AdminSnapshot> {
   };
 }
 
-export function useAdmin() {
+export function useAdmin(enabled = true) {
   const [serverData, setServerData] = useState<AdminLeaseData[]>([]);
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>("auto");
   const [landingPageEnabled, setLandingPageEnabled] = useState(true);
@@ -199,6 +197,14 @@ export function useAdmin() {
 
   useEffect(() => {
     let mounted = true;
+    if (!enabled) {
+      setError("");
+      setLoading(false);
+      return () => {
+        mounted = false;
+      };
+    }
+
     const loadInitialData = async () => {
       setError("");
       setLoading(true);
@@ -224,7 +230,7 @@ export function useAdmin() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [enabled]);
 
   const servers: AdminServer[] = useMemo(() => {
     return serverData.map((row) => toAdminServer(row));
@@ -267,7 +273,7 @@ export function useAdmin() {
   ) => {
     const identity = resolveLeaseIdentity(serverData, identityKey);
     const method = enabled ? apiClient.post : apiClient.delete;
-    await method<LeaseActionResult>(
+    await method<ApprovalModeResponse>(
       adminLeasePath(identity.name, identity.address, action)
     );
   };
@@ -300,12 +306,12 @@ export function useAdmin() {
     try {
       await runAdminAction(async () => {
         if (!Number.isFinite(normalizedBPS) || normalizedBPS <= 0) {
-          await apiClient.delete<LeaseActionResult>(
+          await apiClient.delete<ApprovalModeResponse>(
             adminLeasePath(identity.name, identity.address, "bps")
           );
           return;
         }
-        await apiClient.post<LeaseActionResult>(
+        await apiClient.post<ApprovalModeResponse>(
           adminLeasePath(identity.name, identity.address, "bps"),
           { bps: normalizedBPS }
         );
@@ -373,10 +379,10 @@ export function useAdmin() {
         throw new Error("Missing IP address");
       }
       if (isBan) {
-        await apiClient.post<LeaseActionResult>(adminIPBanPath(normalizedIP));
+        await apiClient.post<ApprovalModeResponse>(adminIPBanPath(normalizedIP));
         return;
       }
-      await apiClient.delete<LeaseActionResult>(adminIPBanPath(normalizedIP));
+      await apiClient.delete<ApprovalModeResponse>(adminIPBanPath(normalizedIP));
     });
 
   const runBulkLeaseAction = async (identityKeys: string[], action: LeaseAction) => {
@@ -390,7 +396,7 @@ export function useAdmin() {
     const results = await Promise.allSettled(
       normalizedIdentityKeys.map((identityKey) => {
         const identity = resolveLeaseIdentity(serverData, identityKey);
-        return apiClient.post<LeaseActionResult>(
+        return apiClient.post<ApprovalModeResponse>(
           adminLeasePath(identity.name, identity.address, action)
         );
       })

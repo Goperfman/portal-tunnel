@@ -5,9 +5,9 @@ import { SearchBar } from "@/components/SearchBar";
 import { ServerCard } from "@/components/ServerCard";
 import { TagCombobox } from "@/components/TagCombobox";
 import { TunnelCommandModal } from "@/components/TunnelCommandModal";
-import type { ClientServer } from "@/hooks/useServerList";
+import type { BaseServer } from "@/hooks/useList";
 import type { AdminServer, ApprovalMode, UDPSettings, TCPPortSettings } from "@/hooks/useAdmin";
-import type { SortOption, StatusFilter } from "@/types/filters";
+import type { BanFilter, SortOption, StatusFilter } from "@/types/filters";
 import { StatusSelect } from "@/components/select/StatusSelect";
 import { BanStatusButtons } from "@/components/button/BanStatusButtons";
 import { SortbySelect } from "@/components/select/SortbySelect";
@@ -23,8 +23,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-export type BanFilter = "all" | "banned" | "active";
-type ListServer = ClientServer | AdminServer;
+type ListServer = BaseServer | AdminServer;
 
 interface RelayDomainResponse {
   release_version?: string;
@@ -131,7 +130,7 @@ interface ServerListViewProps {
   sortBy: SortOption;
   selectedTags: string[];
   availableTags: string[];
-  filteredServers: ClientServer[] | AdminServer[];
+  filteredServers: BaseServer[] | AdminServer[];
   favorites: string[];
   onSearchChange: (value: string) => void;
   onStatusChange: (value: StatusFilter) => void;
@@ -166,7 +165,7 @@ interface ServerListViewProps {
   onBulkApprove?: (identityKeys: string[]) => void | Promise<void>;
   onBulkDeny?: (identityKeys: string[]) => void | Promise<void>;
   onBulkBan?: (identityKeys: string[]) => void | Promise<void>;
-  onLogout?: () => void;
+  onAuthChange?: () => void | Promise<void>;
 }
 
 function isAdminServer(server: ListServer): server is AdminServer {
@@ -210,7 +209,7 @@ export function ServerListView({
   onBulkApprove,
   onBulkDeny,
   onBulkBan,
-  onLogout,
+  onAuthChange,
 }: ServerListViewProps) {
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [relayReleaseVersions, setRelayReleaseVersions] = useState<
@@ -720,7 +719,11 @@ export function ServerListView({
           <>
             <div className="sticky top-0 z-10 w-full bg-background pb-4 pt-5">
               <div className="flex w-full flex-col px-4 sm:px-6 lg:px-8">
-                <Header title={title} isAdmin={isAdmin} onLogout={onLogout} />
+                <Header
+                  title={title}
+                  isAdmin={isAdmin}
+                  onAuthChange={onAuthChange}
+                />
                 <div className="flex items-center gap-2">
                   <div className="flex-1">{searchBar}</div>
                 </div>
@@ -786,7 +789,7 @@ export function ServerListView({
                 <Header
                   title={title}
                   isAdmin={isAdmin}
-                  onLogout={onLogout}
+                  onAuthChange={onAuthChange}
                   showQuickStartLink={landingPageEnabled}
                 />
               </div>

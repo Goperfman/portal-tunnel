@@ -17,25 +17,25 @@ import (
 	"time"
 )
 
-func NewHTTPTLSClient(ctx context.Context, relayURL *url.URL, timeout time.Duration) (*tls.Config, *http.Client, error) {
+func NewHTTPTLSClient(ctx context.Context, relayURL *url.URL, timeout time.Duration) (*tls.Config, *http.Client, *http.Transport, error) {
 	if relayURL == nil {
-		return nil, nil, errors.New("relay url is required")
+		return nil, nil, nil, errors.New("relay url is required")
 	}
 
 	serverName := relayURL.Hostname()
 	if serverName == "" {
-		return nil, nil, errors.New("relay hostname is required")
+		return nil, nil, nil, errors.New("relay hostname is required")
 	}
 
 	var rootCAs *x509.CertPool
 	if IsLocalRelayHost(serverName) {
 		rootCAPEM, err := FetchEndpointCertificateChain(ctx, relayURL.String(), serverName)
 		if err != nil {
-			return nil, nil, fmt.Errorf("bootstrap localhost relay trust: %w", err)
+			return nil, nil, nil, fmt.Errorf("bootstrap localhost relay trust: %w", err)
 		}
 		rootCAs = x509.NewCertPool()
 		if !rootCAs.AppendCertsFromPEM(rootCAPEM) {
-			return nil, nil, errors.New("failed to parse relay root ca")
+			return nil, nil, nil, errors.New("failed to parse relay root ca")
 		}
 	}
 
@@ -45,14 +45,12 @@ func NewHTTPTLSClient(ctx context.Context, relayURL *url.URL, timeout time.Durat
 		RootCAs:    rootCAs,
 		NextProtos: []string{"http/1.1"},
 	}
-	httpClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig:   rawTLSConfig.Clone(),
-			ForceAttemptHTTP2: false,
-		},
-		Timeout: timeout,
-	}
-	return rawTLSConfig, httpClient, nil
+	httpClient := NewHTTPClient(
+		WithHTTPTLSConfig(rawTLSConfig), // will be cloned internally
+		WithoutHTTP2(),
+		WithHTTPTimeout(timeout),
+	)
+	return rawTLSConfig, httpClient, mustTransportOf(httpClient), nil
 }
 
 func FetchEndpointCertificateChain(ctx context.Context, endpoint, serverName string) ([]byte, error) {

@@ -13,6 +13,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,11 +32,9 @@ func tempIdentityPath(t *testing.T) string {
 
 func newTestClient(t *testing.T, cancel context.CancelFunc, server *Server) *http.Client {
 	t.Helper()
-	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-	}
+	client := utils.NewHTTPClient(
+		utils.WithHTTPTLSConfig(&tls.Config{InsecureSkipVerify: true}),
+	)
 	t.Cleanup(func() {
 		client.CloseIdleConnections()
 		cancel()
@@ -88,7 +87,7 @@ func writeManualRelayCertificate(t *testing.T, keyDir, baseDomain string) {
 	}
 }
 
-func TestNewServerInitializesRelaySetWhenDiscoveryEnabled(t *testing.T) {
+func TestRelayDiscoveryEnabledServesDiscoveryEnvelope(t *testing.T) {
 	t.Parallel()
 
 	server, err := NewServer(ServerConfig{
@@ -99,8 +98,20 @@ func TestNewServerInitializesRelaySetWhenDiscoveryEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer() error = %v", err)
 	}
-	if server.relaySet == nil {
-		t.Fatal("relaySet = nil, want discovery relay set")
+
+	req := httptest.NewRequest(http.MethodGet, types.PathDiscovery, nil)
+	rec := httptest.NewRecorder()
+	server.handleRelayDiscovery(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET relay discovery status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var envelope types.APIEnvelope[types.DiscoveryResponse]
+	if err := json.NewDecoder(rec.Body).Decode(&envelope); err != nil {
+		t.Fatalf("json.Decode() error = %v", err)
+	}
+	if !envelope.OK || envelope.Data.ProtocolVersion != types.DiscoveryVersion {
+		t.Fatalf("discovery envelope = %+v, want ok discovery response", envelope)
 	}
 }
 
@@ -154,8 +165,47 @@ func TestServerStartInitializesLocalACMEAndSigner(t *testing.T) {
 	}
 	defer signResp.Body.Close()
 
-	if signResp.StatusCode != http.StatusMethodNotAllowed {
-		t.Fatalf("GET /v1/sign status = %d, want %d", signResp.StatusCode, http.StatusMethodNotAllowed)
+	if signResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("GET /v1/sign status = %d, want %d", signResp.StatusCode, http.StatusForbidden)
+	}
+}
+
+func TestServerStartEnablesPProfOnSeparateHTTPListener(t *testing.T) {
+	t.Parallel()
+
+	server, err := NewServer(ServerConfig{
+		PortalURL:       "https://localhost:4017",
+		IdentityPath:    tempIdentityPath(t),
+		ACME:            acme.Config{KeyDir: t.TempDir()},
+		APIListenAddr:   "127.0.0.1:0",
+		SNIListenAddr:   "127.0.0.1:0",
+		PProfEnabled:    true,
+		PProfListenAddr: "127.0.0.1:0",
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := server.Start(ctx, nil); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	client := newTestClient(t, cancel, server)
+	if server.pprofListener == nil {
+		t.Fatal("pprofListener = nil, want listener")
+	}
+
+	resp, err := client.Get("http://" + utils.HostPortOrLoopback(server.pprofListener.Addr().String()) + "/debug/pprof/")
+	if err != nil {
+		t.Fatalf("GET /debug/pprof/ error = %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /debug/pprof/ status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 }
 
@@ -213,7 +263,7 @@ func TestServerStartDomainReportsCompatibilityInfo(t *testing.T) {
 	}
 }
 
-func TestRegisterLeaseOmitsSNIPortWithoutUDP(t *testing.T) {
+func TestRegisterLeaseIncludesSNIPortForPublicIngress(t *testing.T) {
 	t.Parallel()
 
 	server, err := NewServer(ServerConfig{
@@ -228,7 +278,7 @@ func TestRegisterLeaseOmitsSNIPortWithoutUDP(t *testing.T) {
 		t.Fatalf("NewServer() error = %v", err)
 	}
 
-	resp, err := server.registerLease(types.RegisterChallengeRequest{
+	record, resp, err := server.registry.Register(types.RegisterChallengeRequest{
 		Identity: types.Identity{
 			Name:    "demo-tcp",
 			Address: server.identity.Address,
@@ -236,16 +286,14 @@ func TestRegisterLeaseOmitsSNIPortWithoutUDP(t *testing.T) {
 		TCPEnabled: true,
 	}, "203.0.113.10", "")
 	if err != nil {
-		t.Fatalf("registerLease() error = %v", err)
+		t.Fatalf("registry.Register() error = %v", err)
 	}
 	t.Cleanup(func() {
-		if record, ok := server.registry.RecordByKey(resp.Identity.Key(), time.Now()); ok {
-			record.Close()
-		}
+		record.Close()
 	})
 
-	if resp.SNIPort != 0 {
-		t.Fatalf("RegisterResponse.SNIPort = %d, want 0 without udp", resp.SNIPort)
+	if resp.SNIPort != server.config().SNIPort {
+		t.Fatalf("RegisterResponse.SNIPort = %d, want %d", resp.SNIPort, server.config().SNIPort)
 	}
 }
 
@@ -326,25 +374,21 @@ func TestRegisterLeaseDerivesFixedHostnameFromName(t *testing.T) {
 		t.Fatalf("NewServer() error = %v", err)
 	}
 
-	resp, err := server.registerLease(types.RegisterChallengeRequest{
+	record, _, err := server.registry.Register(types.RegisterChallengeRequest{
 		Identity: types.Identity{
 			Name:    "Demo-App",
 			Address: server.identity.Address,
 		},
 	}, "203.0.113.10", "")
 	if err != nil {
-		t.Fatalf("registerLease() error = %v", err)
+		t.Fatalf("registry.Register() error = %v", err)
 	}
 
 	wantHostname := "demo-app.portal.example.com"
-	if resp.Hostname != wantHostname {
-		t.Fatalf("registerLease() hostname = %q, want %q", resp.Hostname, wantHostname)
+	if record.Hostname != wantHostname {
+		t.Fatalf("registry.Register() route hostname = %q, want %q", record.Hostname, wantHostname)
 	}
 
-	record, ok := server.registry.RecordByKey(resp.Identity.Key(), time.Now())
-	if !ok {
-		t.Fatal("registry.RecordByKey() = false, want registered lease")
-	}
 	lease := server.registry.publicLease(record)
 	if lease.Name != "demo-app" {
 		t.Fatalf("publicLease().Name = %q, want %q", lease.Name, "demo-app")
@@ -367,9 +411,9 @@ func TestRegisterLeaseBuildsUDPEnabledRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer() error = %v", err)
 	}
-	server.registry.policy.SetUDPPolicy(true, 0)
+	server.SetUDPPolicy(true, 0)
 
-	resp, err := server.registerLease(types.RegisterChallengeRequest{
+	record, resp, err := server.registry.Register(types.RegisterChallengeRequest{
 		Identity: types.Identity{
 			Name:    "demo-udp",
 			Address: server.identity.Address,
@@ -377,18 +421,12 @@ func TestRegisterLeaseBuildsUDPEnabledRuntime(t *testing.T) {
 		UDPEnabled: true,
 	}, "203.0.113.10", "")
 	if err != nil {
-		t.Fatalf("registerLease() error = %v", err)
+		t.Fatalf("registry.Register() error = %v", err)
 	}
 	t.Cleanup(func() {
-		if record, ok := server.registry.RecordByKey(resp.Identity.Key(), time.Now()); ok {
-			record.Close()
-		}
+		record.Close()
 	})
 
-	record, ok := server.registry.RecordByKey(resp.Identity.Key(), time.Now())
-	if !ok {
-		t.Fatal("registry.RecordByKey() = false, want registered lease")
-	}
 	if record.stream == nil {
 		t.Fatal("stream = nil, want stream runtime")
 	}
@@ -398,8 +436,8 @@ func TestRegisterLeaseBuildsUDPEnabledRuntime(t *testing.T) {
 	if got := record.datagram.UDPPort(); got < 40000 || got > 40009 {
 		t.Fatalf("UDPPort() = %d, want port within %d-%d", got, 40000, 40009)
 	}
-	if resp.SNIPort != server.cfg.SNIPort {
-		t.Fatalf("RegisterResponse.SNIPort = %d, want %d", resp.SNIPort, server.cfg.SNIPort)
+	if resp.SNIPort != server.config().SNIPort {
+		t.Fatalf("RegisterResponse.SNIPort = %d, want %d", resp.SNIPort, server.config().SNIPort)
 	}
 	if resp.UDPAddr == "" {
 		t.Fatal("RegisterResponse.UDPAddr = empty, want public udp address")
@@ -438,7 +476,7 @@ func TestServerStartHidesDiscoveryRoutesWhenDisabled(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("GET relay discovery status = %d, want %d", resp.StatusCode, http.StatusNotFound)
 	}
-	if server.cfg.DiscoveryEnabled {
+	if server.config().DiscoveryEnabled {
 		t.Fatal("cfg.DiscoveryEnabled = true, want false without configured discovery service")
 	}
 }

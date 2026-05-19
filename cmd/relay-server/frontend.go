@@ -19,6 +19,8 @@ import (
 
 	"github.com/gosuda/portal-tunnel/v2/cmd/portal-tunnel/installer"
 	"github.com/gosuda/portal-tunnel/v2/portal"
+	"github.com/gosuda/portal-tunnel/v2/portal/auth"
+	"github.com/gosuda/portal-tunnel/v2/portal/identity"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
@@ -34,7 +36,7 @@ var embeddedDistFS embed.FS
 type Frontend struct {
 	distFS            readDirFileFS
 	server            *portal.Server
-	auth              *adminAuth
+	auth              *auth.WalletAuthenticator
 	adminSettingsPath string
 	thumbnails        *thumbnailService
 
@@ -43,7 +45,7 @@ type Frontend struct {
 	landingPageEnabled   atomic.Bool
 }
 
-func NewFrontend(server *portal.Server, identityPath string, defaultLandingPageEnabled bool, headlessShellURL string) (*Frontend, error) {
+func NewFrontend(server *portal.Server, identityPath string, defaultLandingPageEnabled bool, headlessShellURL string, adminWallets []string) (*Frontend, error) {
 	if server == nil {
 		return nil, errors.New("frontend requires portal server")
 	}
@@ -51,16 +53,20 @@ func NewFrontend(server *portal.Server, identityPath string, defaultLandingPageE
 	if runtime == nil {
 		return nil, errors.New("frontend requires policy runtime")
 	}
-	adminSettingsPath := utils.ResolveRelayAdminSettingsPath(identityPath)
+	adminSettingsPath := identity.ResolveRelayAdminSettingsPath(identityPath)
 	if adminSettingsPath == "" {
 		return nil, errors.New("frontend requires identity path")
 	}
-	state, err := loadAdminState(adminSettingsPath, runtime)
+	state, err := loadAdminState(adminSettingsPath, server)
 	if err != nil {
 		return nil, err
 	}
-	identity := server.RelayIdentity()
-	auth, err := newAdminAuth(identity.AdminSecretKey)
+	relayIdentity := server.RelayIdentity()
+	allowedWallets := append([]string{relayIdentity.Address}, adminWallets...)
+	authenticator, err := auth.NewWalletAuthenticator(auth.WalletAuthConfig{
+		AllowedAddresses: allowedWallets,
+		Statement:        "Sign in to Portal relay admin",
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +74,7 @@ func NewFrontend(server *portal.Server, identityPath string, defaultLandingPageE
 	frontend := &Frontend{
 		distFS:            embeddedDistFS,
 		server:            server,
-		auth:              auth,
+		auth:              authenticator,
 		adminSettingsPath: strings.TrimSpace(adminSettingsPath),
 		thumbnails:        newThumbnailService(headlessShellURL),
 	}
@@ -95,7 +101,14 @@ func (f *Frontend) Handler() *http.ServeMux {
 	mux.HandleFunc(types.PathAssetsPrefix, func(w http.ResponseWriter, r *http.Request) {
 		f.ServeAsset(w, r, strings.TrimPrefix(r.URL.Path, "/"), "")
 	})
-	for _, assetPath := range frontendRootAssetPaths() {
+	for _, assetPath := range []string{
+		"/favicon.ico",
+		"/favicon.svg",
+		"/favicon-96x96.png",
+		"/apple-touch-icon.png",
+		"/web-app-manifest-192x192.png",
+		"/web-app-manifest-512x512.png",
+	} {
 		mux.HandleFunc(assetPath, func(w http.ResponseWriter, r *http.Request) {
 			f.ServeAsset(w, r, strings.TrimPrefix(assetPath, "/"), "")
 		})
@@ -364,17 +377,6 @@ func getContentType(ext string) string {
 	return ""
 }
 
-func frontendRootAssetPaths() []string {
-	return []string{
-		"/favicon.ico",
-		"/favicon.svg",
-		"/favicon-96x96.png",
-		"/apple-touch-icon.png",
-		"/web-app-manifest-192x192.png",
-		"/web-app-manifest-512x512.png",
-	}
-}
-
 func serveInstallBinary(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead)
@@ -395,7 +397,7 @@ func serveInstallBinary(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := embeddedDistFS.ReadFile("dist/tunnel/" + filename)
 	if err != nil {
-		redirectURL := types.OfficialReleaseBaseURL + "/" + filename
+		redirectURL := types.OfficialReleaseBaseURL + "/latest/download/" + filename
 		if checksumRequest {
 			redirectURL += ".sha256"
 		}

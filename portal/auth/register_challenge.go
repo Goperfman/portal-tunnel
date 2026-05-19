@@ -8,6 +8,7 @@ import (
 
 	"github.com/spruceid/siwe-go"
 
+	"github.com/gosuda/portal-tunnel/v2/portal/identity"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
@@ -29,7 +30,7 @@ type RegisterChallenge struct {
 }
 
 func NewRegisterChallenge(req types.RegisterChallengeRequest, domain, uri string, now time.Time, ttl time.Duration) (*RegisterChallenge, error) {
-	normalizedIdentity, err := utils.NormalizeIdentity(req.Identity)
+	normalizedIdentity, err := identity.NormalizeIdentity(req.Identity)
 	if err != nil {
 		return nil, err
 	}
@@ -48,19 +49,13 @@ func NewRegisterChallenge(req types.RegisterChallengeRequest, domain, uri string
 		return nil, fmt.Errorf("build siwe message: %w", err)
 	}
 
-	normalizedRequest := types.RegisterChallengeRequest{
-		Identity:   normalizedIdentity,
-		Metadata:   req.Metadata.Copy(),
-		TTL:        req.TTL,
-		UDPEnabled: req.UDPEnabled,
-		TCPEnabled: req.TCPEnabled,
-		HopToken:   strings.TrimSpace(req.HopToken),
-	}
+	req.Identity = normalizedIdentity
+	req.Metadata = req.Metadata.Copy()
 
 	return &RegisterChallenge{
 		ChallengeID: challengeID,
 		ExpiresAt:   expiresAt,
-		Request:     normalizedRequest,
+		Request:     req,
 		SIWEMessage: message.String(),
 		domain:      strings.TrimSpace(domain),
 		nonce:       nonce,

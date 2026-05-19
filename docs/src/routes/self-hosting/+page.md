@@ -36,7 +36,7 @@ docker run -d \
   ghcr.io/gosuda/portal:latest
 ```
 
-Replace `relay.example.com` with your domain. The admin secret is generated on first start and stored in `IDENTITY_PATH/identity.json`.
+Replace `relay.example.com` with your domain. The relay identity address is allowed to sign in to the admin UI by default.
 
 ## Docker Compose Setup
 
@@ -109,7 +109,7 @@ By default the relay expects you to place `fullchain.pem` and `privatekey.pem` i
 
 ```yaml
 environment:
-  ACME_DNS_PROVIDER: cloudflare   # or: gcloud, route53
+  ACME_DNS_PROVIDER: cloudflare   # or: gcloud, hetzner, route53, vultr
   CLOUDFLARE_TOKEN: <your-token>
 ```
 

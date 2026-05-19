@@ -11,9 +11,10 @@ import (
 )
 
 type TLSMaterialConfig struct {
-	Keyless *RemoteSignerConfig
-	CertPEM []byte
-	KeyPEM  []byte
+	Keyless                  *RemoteSignerConfig
+	CertPEM                  []byte
+	KeyPEM                   []byte
+	EncryptedClientHelloKeys []tls.EncryptedClientHelloKey
 }
 
 type RemoteSignerConfig struct {
@@ -30,6 +31,7 @@ func AttachToHTTPServer(server *http.Server, cfg TLSMaterialConfig) (io.Closer, 
 		return nil, errors.New("http server is required")
 	}
 	if cfg.Keyless != nil {
+		minVersion := MinTLSVersion(len(cfg.EncryptedClientHelloKeys) > 0)
 		remoteSigner, err := keylesstls.AttachToHTTPServer(server, keylesstls.HTTPServerAttachConfig{
 			CertPEM: cfg.CertPEM,
 			RemoteSigner: keylesstls.RemoteSignerConfig{
@@ -40,8 +42,9 @@ func AttachToHTTPServer(server *http.Server, cfg TLSMaterialConfig) (io.Closer, 
 				ClientKeyPEM:  cfg.Keyless.ClientKeyPEM,
 				RootCAPEM:     cfg.Keyless.RootCAPEM,
 			},
-			NextProtos:    []string{"http/1.1"},
-			MinTLSVersion: tls.VersionTLS12,
+			NextProtos:               []string{"http/1.1"},
+			MinTLSVersion:            minVersion,
+			EncryptedClientHelloKeys: cfg.EncryptedClientHelloKeys,
 		})
 		if err != nil {
 			return nil, err
@@ -54,10 +57,12 @@ func AttachToHTTPServer(server *http.Server, cfg TLSMaterialConfig) (io.Closer, 
 		return nil, fmt.Errorf("parse api tls key pair: %w", err)
 	}
 
+	minVersion := MinTLSVersion(len(cfg.EncryptedClientHelloKeys) > 0)
 	server.TLSConfig = &tls.Config{
-		MinVersion:   tls.VersionTLS12,
-		NextProtos:   []string{"http/1.1"},
-		Certificates: []tls.Certificate{cert},
+		MinVersion:               minVersion,
+		NextProtos:               []string{"http/1.1"},
+		Certificates:             []tls.Certificate{cert},
+		EncryptedClientHelloKeys: cfg.EncryptedClientHelloKeys,
 	}
 	return nil, nil
 }
