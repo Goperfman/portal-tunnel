@@ -472,3 +472,24 @@ func TestPlanRoutesExplicitPathReturnsSingleRouteToExit(t *testing.T) {
 		t.Fatalf("MultiHop() = %v, want [%q %q %q]", path, entry, mid, exit)
 	}
 }
+
+func TestPlanRoutesIncludesExplicitRelayMissingFromSet(t *testing.T) {
+	const relayURL = "https://relay-explicit.example"
+
+	routes, err := NewRelaySet(nil).PlanRoutes(nil, RouteState{
+		ExplicitRelayURLs: []string{relayURL},
+	})
+	if err != nil {
+		t.Fatalf("PlanRoutes() error = %v", err)
+	}
+	if len(routes) != 1 {
+		t.Fatalf("len(routes) = %d, want 1", len(routes))
+	}
+	route := routes[0]
+	if !route.Explicit() {
+		t.Fatal("route.Explicit() = false, want true")
+	}
+	if got := route.ListenerRelayURL(); got != relayURL {
+		t.Fatalf("ListenerRelayURL() = %q, want %q", got, relayURL)
+	}
+}

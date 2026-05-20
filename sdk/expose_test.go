@@ -1,6 +1,8 @@
 package sdk
 
 import (
+	"context"
+	"errors"
 	"net/url"
 	"testing"
 
@@ -129,7 +131,7 @@ func TestExposureReconcileRemovesStaleListener(t *testing.T) {
 
 	relayAClosed := make(chan struct{})
 	exposure := &Exposure{
-		cfg:            utils.NewSnapshot(ExposeConfig{RelayURLs: []string{relayA, relayB}}, ExposeConfig.snapshot),
+		cfg:            utils.NewSnapshot(ExposeConfig{RelayURLs: []string{relayB}}, ExposeConfig.snapshot),
 		relaySet:       mustRelaySet(t, relayA, relayB),
 		relayListeners: make(map[string]*listener, 2),
 	}
@@ -214,5 +216,71 @@ func TestExposureRemoveRelayStopsRunningListener(t *testing.T) {
 	relays := exposure.relaySet.AllRelays()
 	if len(relays) != 1 || relays[0].Descriptor.APIHTTPSAddr != relayA || relays[0].Banned {
 		t.Fatalf("AllRelays() = %+v, want unbanned candidate %q", relays, relayA)
+	}
+}
+
+func TestExposureListenerSelfExitKeepsExplicitRelayConfigured(t *testing.T) {
+	const relayA = "https://relay-a.example"
+
+	relayAURL, err := url.Parse(relayA)
+	if err != nil {
+		t.Fatalf("url.Parse(relayA) error = %v", err)
+	}
+
+	l := &listener{relayURL: relayAURL}
+	exposure := &Exposure{
+		cfg:            utils.NewSnapshot(ExposeConfig{RelayURLs: []string{relayA}}, ExposeConfig.snapshot),
+		relaySet:       mustRelaySet(t, relayA),
+		relayListeners: map[string]*listener{relayA: l},
+		done:           make(chan struct{}),
+	}
+
+	exposure.runListenerAcceptLoop(l)
+
+	if got := exposure.ActiveRelayURLs(); len(got) != 0 {
+		t.Fatalf("ActiveRelayURLs() = %v, want empty", got)
+	}
+	if got := exposure.Config().RelayURLs; len(got) != 1 || got[0] != relayA {
+		t.Fatalf("RelayURLs = %v, want [%q]", got, relayA)
+	}
+	if got := exposure.relaySet.BootstrapRelayURLs(); len(got) != 1 || got[0] != relayA {
+		t.Fatalf("BootstrapRelayURLs() = %v, want [%q]", got, relayA)
+	}
+}
+
+func TestListenerRetryBudgetDropsAutoSelectedRelayWithoutPoolBan(t *testing.T) {
+	const relayA = "https://relay-a.example"
+
+	relayAURL, err := url.Parse(relayA)
+	if err != nil {
+		t.Fatalf("url.Parse(relayA) error = %v", err)
+	}
+
+	relaySet := mustRelaySet(t, relayA)
+	listener := &listener{
+		relayURL:   relayAURL,
+		route:      discovery.NewRoute([]string{relayA}, false),
+		relaySet:   relaySet,
+		retryCount: 1,
+	}
+
+	if listener.waitRetry(context.Background(), "lease registration", errors.New("boom"), 2, 0) {
+		t.Fatal("waitRetry() = true after retry budget was exhausted")
+	}
+
+	routes, err := relaySet.PlanRoutes(nil, discovery.RouteState{})
+	if err != nil {
+		t.Fatalf("PlanRoutes() error = %v", err)
+	}
+	if len(routes) != 0 {
+		t.Fatalf("PlanRoutes() = %v, want no active routes", routes)
+	}
+
+	relays := relaySet.AllRelays()
+	if len(relays) != 1 || relays[0].Banned || relays[0].Descriptor.APIHTTPSAddr != relayA {
+		t.Fatalf("AllRelays() = %+v, want relay retained outside active pool", relays)
+	}
+	if got := relaySet.BootstrapRelayURLs(); len(got) != 1 || got[0] != relayA {
+		t.Fatalf("BootstrapRelayURLs() = %v, want [%q]", got, relayA)
 	}
 }
