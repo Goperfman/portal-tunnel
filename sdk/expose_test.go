@@ -131,7 +131,7 @@ func TestExposureReconcileRemovesStaleListener(t *testing.T) {
 
 	relayAClosed := make(chan struct{})
 	exposure := &Exposure{
-		cfg:            utils.NewSnapshot(ExposeConfig{RelayURLs: []string{relayA, relayB}}, ExposeConfig.snapshot),
+		cfg:            utils.NewSnapshot(ExposeConfig{RelayURLs: []string{relayB}}, ExposeConfig.snapshot),
 		relaySet:       mustRelaySet(t, relayA, relayB),
 		relayListeners: make(map[string]*listener, 2),
 	}

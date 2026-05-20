@@ -12,11 +12,14 @@ import (
 	"encoding/pem"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,9 +28,83 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
+var (
+	testLeasePortsMu sync.Mutex
+	testLeasePorts   = make(map[int]struct{})
+)
+
 func tempIdentityPath(t *testing.T) string {
 	t.Helper()
 	return t.TempDir()
+}
+
+func tempLeasePort(t *testing.T) int {
+	t.Helper()
+
+	for attempt := 0; attempt < 100; attempt++ {
+		probe, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("allocate probe port: %v", err)
+		}
+		_, portText, err := net.SplitHostPort(probe.Addr().String())
+		if closeErr := probe.Close(); closeErr != nil {
+			t.Fatalf("close probe port: %v", closeErr)
+		}
+		if err != nil {
+			t.Fatalf("parse probe port: %v", err)
+		}
+		start, err := strconv.Atoi(portText)
+		if err != nil {
+			t.Fatalf("parse probe port %q: %v", portText, err)
+		}
+		if start <= 0 || start > 65535 {
+			continue
+		}
+		if !reserveTestLeasePort(start) {
+			continue
+		}
+		if tempLeasePortAvailable(start) {
+			return start
+		}
+		releaseTestLeasePort(start)
+	}
+	t.Fatalf("could not find a free lease port")
+	return 0
+}
+
+func reserveTestLeasePort(port int) bool {
+	testLeasePortsMu.Lock()
+	defer testLeasePortsMu.Unlock()
+
+	if _, exists := testLeasePorts[port]; exists {
+		return false
+	}
+	testLeasePorts[port] = struct{}{}
+	return true
+}
+
+func releaseTestLeasePort(port int) {
+	testLeasePortsMu.Lock()
+	defer testLeasePortsMu.Unlock()
+
+	delete(testLeasePorts, port)
+}
+
+func tempLeasePortAvailable(port int) bool {
+	addr := ":" + strconv.Itoa(port)
+	tcpListener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return false
+	}
+	defer tcpListener.Close()
+
+	udpListener, err := net.ListenPacket("udp", addr)
+	if err != nil {
+		return false
+	}
+	defer udpListener.Close()
+
+	return true
 }
 
 func newTestClient(t *testing.T, cancel context.CancelFunc, server *Server) *http.Client {
@@ -266,12 +343,13 @@ func TestServerStartDomainReportsCompatibilityInfo(t *testing.T) {
 func TestRegisterLeaseIncludesSNIPortForPublicIngress(t *testing.T) {
 	t.Parallel()
 
+	port := tempLeasePort(t)
 	server, err := NewServer(ServerConfig{
 		PortalURL:    "https://portal.example.com:4017",
 		IdentityPath: tempIdentityPath(t),
 		SNIPort:      4443,
-		MinPort:      40000,
-		MaxPort:      40009,
+		MinPort:      port,
+		MaxPort:      port,
 		TCPEnabled:   true,
 	})
 	if err != nil {
@@ -401,11 +479,12 @@ func TestRegisterLeaseDerivesFixedHostnameFromName(t *testing.T) {
 func TestRegisterLeaseBuildsUDPEnabledRuntime(t *testing.T) {
 	t.Parallel()
 
+	port := tempLeasePort(t)
 	server, err := NewServer(ServerConfig{
 		PortalURL:    "https://portal.example.com",
 		IdentityPath: tempIdentityPath(t),
-		MinPort:      40000,
-		MaxPort:      40009,
+		MinPort:      port,
+		MaxPort:      port,
 		UDPEnabled:   true,
 	})
 	if err != nil {
@@ -433,8 +512,8 @@ func TestRegisterLeaseBuildsUDPEnabledRuntime(t *testing.T) {
 	if record.datagram == nil {
 		t.Fatal("datagram = nil, want datagram runtime")
 	}
-	if got := record.datagram.UDPPort(); got < 40000 || got > 40009 {
-		t.Fatalf("UDPPort() = %d, want port within %d-%d", got, 40000, 40009)
+	if got := record.datagram.UDPPort(); got != port {
+		t.Fatalf("UDPPort() = %d, want %d", got, port)
 	}
 	if resp.SNIPort != server.config().SNIPort {
 		t.Fatalf("RegisterResponse.SNIPort = %d, want %d", resp.SNIPort, server.config().SNIPort)
