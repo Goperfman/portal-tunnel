@@ -19,7 +19,7 @@ You need:
 - A public domain, for example `example.com`
 - A public Linux server with a static public IPv4
 - Docker and Docker Compose
-- Optional for managed ACME DNS-01 automation and Portal-managed ECH HTTPS records: a supported DNS provider account for `cloudflare`, `gcloud`, `hetzner`, `route53`, or `vultr`
+- Optional for managed ACME DNS-01 automation and Portal-managed ECH HTTPS records: a supported DNS provider account for `cloudflare`, `gcloud`, `hetzner`, `njalla`, `route53`, or `vultr`
 - Open inbound ports:
   - `443/tcp`
   - `4017/tcp`
@@ -42,7 +42,7 @@ Choose one of these modes:
   - Set `ACME_DNS_PROVIDER` to a DNSSEC-capable provider.
   - Portal keeps the manual certificate files, skips ACME certificate issuance, and still uses the provider for ECH HTTPS records and DNSSEC + ENS TXT automation.
 - Managed ACME mode
-  - Set `ACME_DNS_PROVIDER` to `cloudflare`, `gcloud`, `hetzner`, `route53`, or `vultr`.
+  - Set `ACME_DNS_PROVIDER` to `cloudflare`, `gcloud`, `hetzner`, `njalla`, `route53`, or `vultr`.
   - Portal manages root/wildcard A records, ECH HTTPS records, and certificate renewal.
   - ENS gasless additionally requires a DNSSEC-capable provider.
 
@@ -57,6 +57,7 @@ Set `ACME_DNS_PROVIDER` to one of:
 - `cloudflare`
 - `gcloud`
 - `hetzner`
+- `njalla`
 - `route53`
 - `vultr`
 
@@ -200,7 +201,25 @@ Notes:
 - The API key needs permission to list DNS domains, edit DNS records, and update DNSSEC for the target domain.
 - Vultr uses `@` for apex records and relative names such as `www` or `*` for subdomains.
 
-### 3.7 Optional ENS Gasless Automation
+### 3.7 Njalla DNS setup
+
+Create or select a Njalla DNS domain that covers your relay host.
+
+Required environment variable:
+
+- `NJALLA_TOKEN`
+
+Equivalent relay flag:
+
+- `--njalla-token`
+
+Notes:
+
+- The token needs permission to list and edit DNS records for the target domain.
+- Njalla uses `@` for apex records and relative names such as `www` or `*` for subdomains.
+- Portal does not automate Njalla DNSSEC signing, so ENS gasless automation is not supported with `ACME_DNS_PROVIDER=njalla`.
+
+### 3.8 Optional ENS Gasless Automation
 
 Portal can optionally enable ENS gasless DNS import for the base domain and lease hostnames.
 
@@ -213,6 +232,7 @@ Portal can optionally enable ENS gasless DNS import for the base domain and leas
 - Google Cloud DNS can enable zone signing directly, but the registrar may still require publishing the returned DS record.
 - Route53 requires a compatible KMS key ARN when no active KSK already exists, and the registrar may still require the DS record.
 - Vultr can enable zone signing directly, but the registrar may still require publishing the returned DS record.
+- Hetzner and Njalla are supported for managed ACME DNS automation, but not for ENS gasless automation.
 - New lease hostnames such as `app.portal.example.com` are published automatically when they register and are cleaned up on unregister or expiry.
 - ENS gasless import still depends on DNSSEC being valid for the domain.
 - By default Portal writes `ENS1 0x238A8F792dFA6033814B18618aD4100654aeef01 <address>`.
@@ -334,6 +354,15 @@ Vultr example:
 IDENTITY_PATH=/portal-certs
 ACME_DNS_PROVIDER=vultr
 VULTR_API_KEY=...
+ENS_GASLESS_ENABLED=false
+```
+
+Njalla example:
+
+```bash
+IDENTITY_PATH=/portal-certs
+ACME_DNS_PROVIDER=njalla
+NJALLA_TOKEN=...
 ENS_GASLESS_ENABLED=false
 ```
 
