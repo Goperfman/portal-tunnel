@@ -72,6 +72,26 @@ connections. Because the tunnel process parses HTTP in this mode, this is the
 right mode for HTTP-specific behavior such as path routing, response header
 policy, redirect rewriting, and cookie path remapping.
 
+Use x402 when a routed HTTP endpoint should require payment before the upstream
+app receives the request:
+
+```text
+portal expose 3000 --name paid-api \
+  --description "Paid API" \
+  --x402-network eip155:8453 \
+  --x402-price "$0.001" \
+  --x402-resource /
+```
+
+When `--x402-*` is used with a positional target, the CLI runs routed HTTP mode
+internally as `--http-route /=<target>`. `--x402-pay-to` defaults to the tunnel
+identity address; set it explicitly when payments should be received by another
+wallet. The x402 paywall uses tunnel metadata: `--name` for the app name,
+`--description` for the resource description, and `--thumbnail` for the app
+logo. `--x402-resource` defaults to the matched HTTP route prefix and controls
+the resource path advertised in the x402 payment requirement. x402 is not
+available in raw TCP or UDP modes.
+
 Use dedicated raw TCP mode for non-HTTP services that need a public TCP port:
 
 ```text
@@ -172,6 +192,17 @@ Common flags:
 --owner              Service owner metadata
 --hide               Hide service from relay listing screens
 --http-route         HTTP route mapping in PATH=UPSTREAM form; repeatable
+--x402-network       x402 payment network, such as eip155:8453
+--x402-price         x402 route price, such as $0.001
+--x402-pay-to        x402 recipient address; defaults to the tunnel identity address
+--x402-facilitator-url
+                     x402 facilitator URL; defaults to the SDK default
+--x402-resource      x402 protected resource/root path; defaults to the HTTP route prefix
+--x402-mime-type     x402 protected resource MIME type
+--x402-testnet       Render the x402 paywall in testnet mode
+--x402-max-timeout   x402 max payment timeout seconds advertised to clients
+--x402-payment-timeout
+                     x402 middleware verify/settle timeout seconds
 --tcp                Request a dedicated raw TCP port on the relay
 --udp                Enable public UDP relay in addition to the default stream path
 --udp-addr           Local UDP target; defaults to the primary target when --udp is enabled
@@ -275,6 +306,23 @@ http_routes = [
   { prefix = "/api", upstream = "http://127.0.0.1:3001" },
   { prefix = "/", upstream = "http://127.0.0.1:5173" },
 ]
+
+[[tunnels]]
+id = "paid-api"
+name = "paid-api"
+description = "Paid API"
+relays = ["https://portal.example.com"]
+discovery = false
+
+[[tunnels.http_routes]]
+prefix = "/"
+upstream = "http://127.0.0.1:3000"
+
+[tunnels.http_routes.x402]
+network = "eip155:8453"
+price = "$0.001"
+pay_to = "identity"
+resource = "/"
 ```
 
 ## Install Behavior

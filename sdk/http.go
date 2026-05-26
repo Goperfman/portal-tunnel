@@ -15,11 +15,25 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/andybalholm/brotli"
 	"github.com/rs/zerolog/log"
+	x402 "github.com/x402-foundation/x402/go"
+	x402http "github.com/x402-foundation/x402/go/http"
+	x402nethttp "github.com/x402-foundation/x402/go/http/nethttp"
+	evmserver "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
 
+	"github.com/gosuda/portal-tunnel/v2/portal/identity"
+	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
+)
+
+const (
+	defaultX402Scheme             = "exact"
+	defaultX402PaymentTimeout     = 30 * time.Second
+	defaultX402RouteDescription   = "Portal protected route"
+	defaultX402PayToIdentityValue = "identity"
 )
 
 func RunHTTP(ctx context.Context, relayListener net.Listener, handler http.Handler, localAddr string) error {
@@ -131,6 +145,8 @@ type HTTPRoute struct {
 	Prefix string
 	// Upstream is the target HTTP URL, or a loopback host:port shorthand.
 	Upstream string
+	// X402 enables payment enforcement for this public route.
+	X402 *types.X402Config
 }
 
 type httpRoute struct {
@@ -140,10 +156,10 @@ type httpRoute struct {
 	upstreamPath      string
 	upstreamPathSlash string
 	upstreamDomain    string
-	proxy             *httputil.ReverseProxy
+	handler           http.Handler
 }
 
-func newHTTPRouteHandler(routeConfigs []HTTPRoute) (http.Handler, error) {
+func newHTTPRouteHandler(routeConfigs []HTTPRoute, tunnelIdentity types.Identity, metadata types.LeaseMetadata) (http.Handler, error) {
 	if len(routeConfigs) == 0 {
 		return nil, errors.New("at least one http route is required")
 	}
@@ -159,7 +175,14 @@ func newHTTPRouteHandler(routeConfigs []HTTPRoute) (http.Handler, error) {
 			return nil, fmt.Errorf("duplicate http route prefix %q", route.prefix)
 		}
 		seen[route.prefix] = struct{}{}
-		route.proxy = route.newReverseProxy()
+		var handler http.Handler = route.newReverseProxy()
+		if routeConfig.X402 != nil && !routeConfig.X402.Empty() {
+			handler, err = newX402HTTPRouteHandler(route, handler, *routeConfig.X402, tunnelIdentity, metadata)
+			if err != nil {
+				return nil, err
+			}
+		}
+		route.handler = handler
 		routes = append(routes, route)
 	}
 
@@ -177,7 +200,7 @@ func newHTTPRouteHandler(routeConfigs []HTTPRoute) (http.Handler, error) {
 		}
 		for _, route := range routes {
 			if route.prefix == "/" || p == route.prefix || strings.HasPrefix(p, route.prefixSlash) {
-				route.proxy.ServeHTTP(w, r)
+				route.handler.ServeHTTP(w, r)
 				return
 			}
 		}
@@ -396,6 +419,82 @@ func (r *httpRoute) upstreamPathToPublic(raw string) string {
 		return r.prefix
 	}
 	return r.prefix + rest
+}
+
+func newX402HTTPRouteHandler(route *httpRoute, next http.Handler, cfg types.X402Config, tunnelIdentity types.Identity, metadata types.LeaseMetadata) (http.Handler, error) {
+	network := strings.TrimSpace(cfg.Network)
+	if network == "" {
+		return nil, fmt.Errorf("http route %q x402 network is required", route.prefix)
+	}
+	price := strings.TrimSpace(cfg.Price)
+	if price == "" {
+		return nil, fmt.Errorf("http route %q x402 price is required", route.prefix)
+	}
+	payTo := strings.TrimSpace(cfg.PayTo)
+	if payTo == "" || strings.EqualFold(payTo, defaultX402PayToIdentityValue) {
+		payTo = strings.TrimSpace(tunnelIdentity.Address)
+	}
+	if payTo == "" {
+		return nil, fmt.Errorf("http route %q x402 pay_to is required", route.prefix)
+	}
+	payTo, err := identity.NormalizeEVMAddress(payTo)
+	if err != nil {
+		return nil, fmt.Errorf("http route %q x402 pay_to: %w", route.prefix, err)
+	}
+	if cfg.PaymentTimeoutSecs < 0 {
+		return nil, errors.New("x402 payment_timeout_seconds cannot be negative")
+	}
+	if cfg.MaxTimeoutSeconds < 0 {
+		return nil, errors.New("x402 max_timeout_seconds cannot be negative")
+	}
+
+	timeout := defaultX402PaymentTimeout
+	if cfg.PaymentTimeoutSecs > 0 {
+		timeout = time.Duration(cfg.PaymentTimeoutSecs) * time.Second
+	}
+	resource := strings.TrimSpace(cfg.Resource)
+	if resource == "" {
+		resource = route.prefix
+	}
+	description := strings.TrimSpace(metadata.Description)
+	if description == "" {
+		description = defaultX402RouteDescription
+	}
+	middleware := x402nethttp.X402Payment(x402nethttp.Config{
+		Routes: x402http.RoutesConfig{
+			"*": x402http.RouteConfig{
+				Accepts: []x402http.PaymentOption{
+					{
+						Scheme:            defaultX402Scheme,
+						PayTo:             payTo,
+						Price:             x402.Price(price),
+						Network:           x402.Network(network),
+						MaxTimeoutSeconds: cfg.MaxTimeoutSeconds,
+					},
+				},
+				Resource:    resource,
+				Description: description,
+				MimeType:    strings.TrimSpace(cfg.MimeType),
+			},
+		},
+		Facilitator: x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+			URL: strings.TrimSpace(cfg.FacilitatorURL),
+		}),
+		Schemes: []x402nethttp.SchemeConfig{
+			{
+				Network: x402.Network("eip155:*"),
+				Server:  evmserver.NewExactEvmScheme(),
+			},
+		},
+		PaywallConfig: &x402http.PaywallConfig{
+			AppName: strings.TrimSpace(tunnelIdentity.Name),
+			AppLogo: strings.TrimSpace(metadata.Thumbnail),
+			Testnet: cfg.Testnet,
+		},
+		SyncFacilitatorOnStart: true,
+		Timeout:                timeout,
+	})
+	return middleware(next), nil
 }
 
 func serveCompressedHTTP(handler http.Handler, w http.ResponseWriter, r *http.Request) {

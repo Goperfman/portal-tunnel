@@ -686,6 +686,7 @@ func (t *managedTunnel) runOnce(ctx context.Context) error {
 			routes = append(routes, sdk.HTTPRoute{
 				Prefix:   route.Prefix,
 				Upstream: route.Upstream,
+				X402:     route.X402,
 			})
 		}
 		err = exposure.RunHTTPRoutes(ctx, routes, "")
