@@ -160,6 +160,17 @@ portal expose 3000 \
   --x402-price "$0.001"
 ```
 
+Native Go apps can use the same relay facilitator without putting payment
+policy in the tunnel config. The demo app includes per-path pricing:
+
+```bash
+go run ./cmd/demo-app \
+  --relays https://relay.example.com:4017 \
+  --discovery=false \
+  --x402-facilitator-url https://relay.example.com:4017/x402 \
+  --x402-network eip155:8453
+```
+
 ## Troubleshooting
 
 **Port already in use**

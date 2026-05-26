@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Portal Native x402 Demo</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="container">
+        <h1>Portal Native x402 Demo</h1>
+
+        <div class="toolbar">
+            <button id="freeBtn">Free API</button>
+            <button data-api-path="/api/premium">Overview</button>
+            <button data-api-path="/api/premium/basic">Basic $0.001</button>
+            <button data-api-path="/api/premium/report">Report $0.010</button>
+            <button data-api-path="/api/premium/dataset">Dataset $0.050</button>
+        </div>
+
+        <div class="canvas-wrapper">
+            <pre id="log" class="log"></pre>
+        </div>
+
+        <div id="status" class="status">Idle</div>
+    </div>
+
+    <script>
+        const statusEl = document.getElementById('status');
+        const logEl = document.getElementById('log');
+
+        function log(message) {
+            const time = new Date().toISOString();
+            logEl.textContent += `[${time}] ${message}\n`;
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        async function callAPI(path) {
+            statusEl.textContent = `${path}: Loading...`;
+            try {
+                const res = await fetch(path);
+                const contentType = res.headers.get('content-type') || '';
+                const body = contentType.includes('application/json')
+                    ? JSON.stringify(await res.json())
+                    : await res.text();
+                statusEl.textContent = `${path}: ${res.status}`;
+                log(`${path} -> ${res.status}`);
+                log(body);
+            } catch (err) {
+                statusEl.textContent = `${path}: Error`;
+                log(`${path} error: ${err}`);
+            }
+        }
+
+        document.getElementById('freeBtn').addEventListener('click', () => callAPI('/api/ping'));
+        for (const button of document.querySelectorAll('[data-api-path]')) {
+            button.addEventListener('click', () => callAPI(button.dataset.apiPath));
+        }
+    </script>
+</body>
+
+</html>

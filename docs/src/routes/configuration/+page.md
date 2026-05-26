@@ -250,6 +250,41 @@ Tunnel fields mirror `portal expose` flags:
 | `description`, `tags`, `owner`, `thumbnail`, `hide` | mixed | Lease metadata shown by relays |
 | `http_routes.x402` | table | x402 payment settings for one HTTP route; set `facilitator_url` explicitly or let frontend/configuration tooling write it |
 
+`http_routes.x402` is evaluated by the tunnel process before proxying to the
+upstream. Use it when a specific HTTP path should require payment:
+
+```toml
+[[tunnels]]
+id = "paid-api"
+name = "paid-api"
+relays = ["https://portal.example.com"]
+discovery = false
+
+[[tunnels.http_routes]]
+prefix = "/"
+upstream = "http://127.0.0.1:5173"
+
+[[tunnels.http_routes]]
+prefix = "/api/report"
+upstream = "http://127.0.0.1:3001"
+
+[tunnels.http_routes.x402]
+network = "eip155:8453"
+price = "$0.010"
+pay_to = "identity"
+facilitator_url = "https://portal.example.com:4017/x402"
+resource = "/api/report"
+mime_type = "application/json"
+testnet = false
+max_timeout_seconds = 0
+payment_timeout_seconds = 0
+```
+
+Repeat `[[tunnels.http_routes]]` with a different `x402.price` for each static
+priced path. If prices depend on product state, user input, or a database row,
+wrap the app's Go handler with `portal/x402` and use a `PriceResolver`; tunnel
+config is intentionally static.
+
 For a task-oriented walkthrough, see [Portal Agent](/portal-agent).
 
 ### `identity.json`

@@ -1,6 +1,7 @@
 package x402
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -50,12 +51,17 @@ func MountFacilitator(mux *http.ServeMux, cfg FacilitatorConfig) error {
 	return nil
 }
 
+type HTTPRequestContext = x402http.HTTPRequestContext
+
+type PriceResolver func(context.Context, HTTPRequestContext) (string, error)
+
 type HTTPRouteHandlerConfig struct {
 	Prefix         string
 	Next           http.Handler
 	X402           types.X402Config
 	TunnelIdentity types.Identity
 	Metadata       types.LeaseMetadata
+	PriceResolver  PriceResolver
 }
 
 func NewHTTPRouteHandler(cfg HTTPRouteHandlerConfig) (http.Handler, error) {
@@ -71,9 +77,23 @@ func NewHTTPRouteHandler(cfg HTTPRouteHandlerConfig) (http.Handler, error) {
 	if network == "" {
 		return nil, fmt.Errorf("http route %q x402 network is required", prefix)
 	}
-	price := strings.TrimSpace(cfg.X402.Price)
-	if price == "" {
+	priceValue := strings.TrimSpace(cfg.X402.Price)
+	if priceValue == "" && cfg.PriceResolver == nil {
 		return nil, fmt.Errorf("http route %q x402 price is required", prefix)
+	}
+	var price any = foundationx402.Price(priceValue)
+	if cfg.PriceResolver != nil {
+		price = x402http.DynamicPriceFunc(func(ctx context.Context, req x402http.HTTPRequestContext) (foundationx402.Price, error) {
+			resolvedPrice, err := cfg.PriceResolver(ctx, req)
+			if err != nil {
+				return "", err
+			}
+			resolvedPrice = strings.TrimSpace(resolvedPrice)
+			if resolvedPrice == "" {
+				return "", fmt.Errorf("http route %q x402 dynamic price is empty", prefix)
+			}
+			return foundationx402.Price(resolvedPrice), nil
+		})
 	}
 	payTo := strings.TrimSpace(cfg.X402.PayTo)
 	if payTo == "" || strings.EqualFold(payTo, types.X402PayToIdentity) {
@@ -112,7 +132,7 @@ func NewHTTPRouteHandler(cfg HTTPRouteHandlerConfig) (http.Handler, error) {
 					{
 						Scheme:            types.X402SchemeExact,
 						PayTo:             payTo,
-						Price:             foundationx402.Price(price),
+						Price:             price,
 						Network:           foundationx402.Network(network),
 						MaxTimeoutSeconds: cfg.X402.MaxTimeoutSeconds,
 					},

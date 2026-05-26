@@ -95,6 +95,68 @@ not infer a relay facilitator URL; set `--x402-facilitator-url` explicitly, or
 use relay/frontend tooling that writes the desired facilitator URL into the
 tunnel config. x402 is not available in raw TCP or UDP modes.
 
+For route-specific static prices, use agent config and attach `x402` to the
+routes that should be paid:
+
+```toml
+[[tunnels]]
+id = "paid-site"
+name = "paid-site"
+relays = ["https://portal.example.com"]
+discovery = false
+
+[[tunnels.http_routes]]
+prefix = "/"
+upstream = "http://127.0.0.1:5173"
+
+[[tunnels.http_routes]]
+prefix = "/api/report"
+upstream = "http://127.0.0.1:3001"
+
+[tunnels.http_routes.x402]
+network = "eip155:8453"
+price = "$0.010"
+pay_to = "identity"
+facilitator_url = "https://portal.example.com:4017/x402"
+resource = "/api/report"
+mime_type = "application/json"
+
+[[tunnels.http_routes]]
+prefix = "/api/dataset"
+upstream = "http://127.0.0.1:3001"
+
+[tunnels.http_routes.x402]
+network = "eip155:8453"
+price = "$0.050"
+pay_to = "identity"
+facilitator_url = "https://portal.example.com:4017/x402"
+resource = "/api/dataset"
+mime_type = "application/json"
+```
+
+For product/catalog pricing that depends on each request, put x402 in the Go
+app itself and wrap the protected handler with `portal/x402`:
+
+```go
+protected, err := portalx402.NewHTTPRouteHandler(portalx402.HTTPRouteHandlerConfig{
+	Prefix:         "/api/premium",
+	Next:           premiumHandler,
+	X402:           x402Config,
+	TunnelIdentity: appIdentity,
+	Metadata:       metadata,
+	PriceResolver: func(ctx context.Context, req portalx402.HTTPRequestContext) (string, error) {
+		return catalog.PriceForPath(req.Path)
+	},
+})
+```
+
+`cmd/demo-app` includes this native x402 pattern. Run it with:
+
+```text
+demo-app --x402-facilitator-url https://portal.example.com:4017/x402 \
+  --x402-network eip155:8453
+```
+
 Use dedicated raw TCP mode for non-HTTP services that need a public TCP port:
 
 ```text

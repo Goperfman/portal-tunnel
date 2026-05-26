@@ -161,6 +161,68 @@ portal expose 3000 --name paid-api \
   --x402-price "$0.001"
 ```
 
+With `portal expose`, the `--x402-*` flags apply one shared price to the routed
+HTTP handler created by that command. For route-specific prices, use agent
+config and attach x402 to each paid route:
+
+```toml
+[[tunnels]]
+id = "paid-site"
+name = "paid-site"
+relays = ["https://portal.example.com"]
+discovery = false
+
+[[tunnels.http_routes]]
+prefix = "/"
+upstream = "http://127.0.0.1:5173"
+
+[[tunnels.http_routes]]
+prefix = "/api/report"
+upstream = "http://127.0.0.1:3001"
+
+[tunnels.http_routes.x402]
+network = "eip155:8453"
+price = "$0.010"
+pay_to = "identity"
+facilitator_url = "https://portal.example.com/x402"
+resource = "/api/report"
+mime_type = "application/json"
+
+[[tunnels.http_routes]]
+prefix = "/api/dataset"
+upstream = "http://127.0.0.1:3001"
+
+[tunnels.http_routes.x402]
+network = "eip155:8453"
+price = "$0.050"
+pay_to = "identity"
+facilitator_url = "https://portal.example.com/x402"
+resource = "/api/dataset"
+mime_type = "application/json"
+```
+
+Native Go apps can keep pricing inside the application instead. Wrap the paid
+handler with `portal/x402` and provide a resolver:
+
+```go
+protected, err := portalx402.NewHTTPRouteHandler(portalx402.HTTPRouteHandlerConfig{
+	Prefix:         "/api/premium",
+	Next:           premiumHandler,
+	X402:           x402Config,
+	TunnelIdentity: appIdentity,
+	Metadata:       metadata,
+	PriceResolver: func(ctx context.Context, req portalx402.HTTPRequestContext) (string, error) {
+		return catalog.PriceForPath(req.Path)
+	},
+})
+```
+
+The demo app exposes the same pattern:
+
+```bash
+go run ./cmd/demo-app --x402-facilitator-url https://portal.example.com/x402 --x402-network eip155:8453
+```
+
 Expose a Minecraft server:
 
 ```bash

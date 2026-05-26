@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -48,6 +49,7 @@ type demoConfig struct {
 	hide            bool
 	thumbnail       string
 	maxActiveRelays int
+	x402            types.X402Config
 }
 
 // registerConnectivityFlags registers the relay, discovery, identity, and
@@ -73,6 +75,15 @@ func runTCPCommand(args []string) error {
 	utils.StringFlag(fs, &cfg.tags, "tags", "demo,connectivity,activity,cloud,sun,morning", "comma-separated lease tags")
 	utils.StringFlag(fs, &cfg.thumbnail, "thumbnail", "https://picsum.photos/640/360", "lease thumbnail")
 	utils.BoolFlag(fs, &cfg.hide, "hide", false, "hide this lease from listings")
+	utils.StringFlag(fs, &cfg.x402.FacilitatorURL, "x402-facilitator-url", "", "x402 facilitator URL, such as https://relay.example.com:4017/x402")
+	utils.StringFlag(fs, &cfg.x402.Network, "x402-network", "", "x402 payment network, such as eip155:8453")
+	utils.StringFlag(fs, &cfg.x402.Price, "x402-price", "", "fallback x402 price for premium content, such as $0.001")
+	utils.StringFlag(fs, &cfg.x402.PayTo, "x402-pay-to", "", "x402 recipient address; empty uses the demo app identity address")
+	utils.StringFlag(fs, &cfg.x402.Resource, "x402-resource", "", "x402 protected resource path; defaults to /api/premium")
+	utils.StringFlag(fs, &cfg.x402.MimeType, "x402-mime-type", "", "x402 protected resource MIME type; defaults to application/json")
+	utils.BoolFlag(fs, &cfg.x402.Testnet, "x402-testnet", false, "render the x402 paywall in testnet mode")
+	fs.IntVar(&cfg.x402.MaxTimeoutSeconds, "x402-max-timeout", 0, "x402 max payment timeout seconds advertised to clients")
+	fs.IntVar(&cfg.x402.PaymentTimeoutSecs, "x402-payment-timeout", 0, "x402 middleware verify/settle timeout seconds")
 
 	if err := utils.ParseFlagSet(fs, args, printTCPUsage); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -89,6 +100,24 @@ func runTCPCommand(args []string) error {
 		return fmt.Errorf("invalid --name value: %w", err)
 	}
 	cfg.name = normalizedName
+	if !cfg.x402.Empty() {
+		switch {
+		case strings.TrimSpace(cfg.x402.FacilitatorURL) == "":
+			return errors.New("--x402-facilitator-url is required when x402 is enabled")
+		case strings.TrimSpace(cfg.x402.Network) == "":
+			return errors.New("--x402-network is required when x402 is enabled")
+		case cfg.x402.MaxTimeoutSeconds < 0:
+			return errors.New("--x402-max-timeout cannot be negative")
+		case cfg.x402.PaymentTimeoutSecs < 0:
+			return errors.New("--x402-payment-timeout cannot be negative")
+		}
+		if strings.TrimSpace(cfg.x402.Resource) == "" {
+			cfg.x402.Resource = "/api/premium"
+		}
+		if strings.TrimSpace(cfg.x402.MimeType) == "" {
+			cfg.x402.MimeType = "application/json"
+		}
+	}
 
 	ctx, stop := utils.SignalContext()
 	defer stop()
@@ -130,6 +159,13 @@ func runUDPCommand(args []string) error {
 }
 
 func runTCPDemo(ctx context.Context, cfg demoConfig) error {
+	metadata := types.LeaseMetadata{
+		Description: cfg.desc,
+		Tags:        utils.SplitCSV(cfg.tags),
+		Owner:       cfg.owner,
+		Thumbnail:   cfg.thumbnail,
+		Hide:        cfg.hide,
+	}
 	exposure, err := sdk.Expose(ctx, sdk.ExposeConfig{
 		RelayURLs:       utils.SplitCSV(cfg.relayURLs),
 		Discovery:       cfg.discovery,
@@ -138,13 +174,7 @@ func runTCPDemo(ctx context.Context, cfg demoConfig) error {
 		IdentityJSON:    cfg.identityJSON,
 		BanMITM:         cfg.banMITM,
 		MaxActiveRelays: cfg.maxActiveRelays,
-		Metadata: types.LeaseMetadata{
-			Description: cfg.desc,
-			Tags:        utils.SplitCSV(cfg.tags),
-			Owner:       cfg.owner,
-			Thumbnail:   cfg.thumbnail,
-			Hide:        cfg.hide,
-		},
+		Metadata:        metadata,
 	})
 	if err != nil {
 		return fmt.Errorf("exposure listen error: %w", err)
@@ -155,7 +185,17 @@ func runTCPDemo(ctx context.Context, cfg demoConfig) error {
 	if err != nil {
 		return fmt.Errorf("invalid --addr value %q: %w", rawAddr, err)
 	}
-	httpHandler := newHandler()
+	var x402Config *types.X402Config
+	if !cfg.x402.Empty() {
+		if strings.TrimSpace(cfg.x402.PayTo) == "" {
+			cfg.x402.PayTo = types.X402PayToIdentity
+		}
+		x402Config = &cfg.x402
+	}
+	httpHandler, err := newHandler(exposure.Identity(), metadata, x402Config)
+	if err != nil {
+		return err
+	}
 	defer exposure.Close()
 	err = exposure.RunHTTP(ctx, httpHandler, cfg.addr)
 	if err != nil {
@@ -255,6 +295,7 @@ func printRootUsage(w io.Writer) {
 			"demo-app --name my-app",
 			"demo-app tcp --addr 127.0.0.1:9000",
 			"demo-app udp",
+			"demo-app --x402-facilitator-url https://relay.example.com:4017/x402 --x402-network eip155:8453",
 		},
 	)
 }
@@ -269,6 +310,7 @@ func printTCPUsage(w io.Writer) {
 			"demo-app",
 			"demo-app --name my-app",
 			"demo-app tcp --addr 127.0.0.1:9000",
+			"demo-app --x402-facilitator-url https://relay.example.com:4017/x402 --x402-network eip155:8453",
 		},
 	)
 }
