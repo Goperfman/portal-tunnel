@@ -78,6 +78,7 @@ app receives the request:
 ```text
 portal expose 3000 --name paid-api \
   --description "Paid API" \
+  --x402-facilitator-url https://portal.example.com:4017/x402 \
   --x402-network eip155:8453 \
   --x402-price "$0.001" \
   --x402-resource /
@@ -89,8 +90,10 @@ identity address; set it explicitly when payments should be received by another
 wallet. The x402 paywall uses tunnel metadata: `--name` for the app name,
 `--description` for the resource description, and `--thumbnail` for the app
 logo. `--x402-resource` defaults to the matched HTTP route prefix and controls
-the resource path advertised in the x402 payment requirement. x402 is not
-available in raw TCP or UDP modes.
+the resource path advertised in the x402 payment requirement. The tunnel does
+not infer a relay facilitator URL; set `--x402-facilitator-url` explicitly, or
+use relay/frontend tooling that writes the desired facilitator URL into the
+tunnel config. x402 is not available in raw TCP or UDP modes.
 
 Use dedicated raw TCP mode for non-HTTP services that need a public TCP port:
 
@@ -196,7 +199,7 @@ Common flags:
 --x402-price         x402 route price, such as $0.001
 --x402-pay-to        x402 recipient address; defaults to the tunnel identity address
 --x402-facilitator-url
-                     x402 facilitator URL; defaults to the SDK default
+                     x402 facilitator URL
 --x402-resource      x402 protected resource/root path; defaults to the HTTP route prefix
 --x402-mime-type     x402 protected resource MIME type
 --x402-testnet       Render the x402 paywall in testnet mode
@@ -261,7 +264,8 @@ Useful commands:
 - `portal agent run --config config.toml --foreground` runs the agent in the
   current terminal and opens the dashboard when the terminal is interactive.
 - `portal agent dashboard` attaches to a running agent and opens the local TUI
-  for tunnels, relays, multi-hop routes, and editable tunnel settings.
+  for tunnels, relays, multi-hop routes, editable tunnel settings, and x402
+  facilitator URLs.
 - `portal agent stop` asks the local agent to shut down, then disables or stops
   the OS service so intentional shutdown is not immediately restarted.
 - `portal agent restart` stops the running agent if present, installs or updates
@@ -322,6 +326,7 @@ upstream = "http://127.0.0.1:3000"
 network = "eip155:8453"
 price = "$0.001"
 pay_to = "identity"
+facilitator_url = "https://portal.example.com:4017/x402"
 resource = "/"
 ```
 

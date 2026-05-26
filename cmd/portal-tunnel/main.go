@@ -214,7 +214,7 @@ func (f *exposeX402Flags) bind(fs *flag.FlagSet) {
 	utils.StringFlag(fs, &f.network, "x402-network", "", "x402 payment network, such as eip155:8453")
 	utils.StringFlag(fs, &f.price, "x402-price", "", "x402 route price, such as $0.001")
 	utils.StringFlag(fs, &f.payTo, "x402-pay-to", "", "x402 recipient address; empty uses the tunnel identity address")
-	utils.StringFlag(fs, &f.facilitator, "x402-facilitator-url", "", "x402 facilitator URL; empty uses the SDK default")
+	utils.StringFlag(fs, &f.facilitator, "x402-facilitator-url", "", "x402 facilitator URL")
 	utils.StringFlag(fs, &f.resource, "x402-resource", "", "x402 protected resource/root path; defaults to the HTTP route prefix")
 	utils.StringFlag(fs, &f.mimeType, "x402-mime-type", "", "x402 protected resource MIME type")
 	utils.BoolFlag(fs, &f.testnet, "x402-testnet", false, "Render the x402 paywall in testnet mode")

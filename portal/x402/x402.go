@@ -1,0 +1,143 @@
+package x402
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	facilitatorapi "github.com/gosuda/x402-facilitator/api"
+	facilitatorcore "github.com/gosuda/x402-facilitator/facilitator"
+	facilitatortypes "github.com/gosuda/x402-facilitator/types"
+	foundationx402 "github.com/x402-foundation/x402/go"
+	x402http "github.com/x402-foundation/x402/go/http"
+	x402nethttp "github.com/x402-foundation/x402/go/http/nethttp"
+	evmserver "github.com/x402-foundation/x402/go/mechanisms/evm/exact/server"
+
+	"github.com/gosuda/portal-tunnel/v2/portal/identity"
+	"github.com/gosuda/portal-tunnel/v2/types"
+)
+
+const (
+	defaultPaymentTimeout   = 30 * time.Second
+	defaultRouteDescription = "Portal protected route"
+)
+
+type FacilitatorConfig struct {
+	Network  string
+	RPCURL   string
+	Identity types.Identity
+}
+
+func MountFacilitator(mux *http.ServeMux, cfg FacilitatorConfig) error {
+	if mux == nil {
+		return errors.New("x402 facilitator requires an api mux")
+	}
+	network := strings.TrimSpace(cfg.Network)
+	if network == "" {
+		return errors.New("--x402-network is required when --x402-facilitator-enabled is set")
+	}
+	privateKey := strings.TrimSpace(cfg.Identity.PrivateKey)
+	if privateKey == "" {
+		return errors.New("relay identity private key is required when --x402-facilitator-enabled is set")
+	}
+	facilitator, err := facilitatorcore.NewFacilitator(facilitatortypes.Exact, network, strings.TrimSpace(cfg.RPCURL), privateKey)
+	if err != nil {
+		return fmt.Errorf("create x402 facilitator: %w", err)
+	}
+	mux.Handle(types.PathX402FacilitatorPrefix, http.StripPrefix(types.PathX402Facilitator, facilitatorapi.NewServer(facilitator)))
+	return nil
+}
+
+type HTTPRouteHandlerConfig struct {
+	Prefix         string
+	Next           http.Handler
+	X402           types.X402Config
+	TunnelIdentity types.Identity
+	Metadata       types.LeaseMetadata
+}
+
+func NewHTTPRouteHandler(cfg HTTPRouteHandlerConfig) (http.Handler, error) {
+	next := cfg.Next
+	if next == nil {
+		next = http.NotFoundHandler()
+	}
+	prefix := strings.TrimSpace(cfg.Prefix)
+	if prefix == "" {
+		prefix = "/"
+	}
+	network := strings.TrimSpace(cfg.X402.Network)
+	if network == "" {
+		return nil, fmt.Errorf("http route %q x402 network is required", prefix)
+	}
+	price := strings.TrimSpace(cfg.X402.Price)
+	if price == "" {
+		return nil, fmt.Errorf("http route %q x402 price is required", prefix)
+	}
+	payTo := strings.TrimSpace(cfg.X402.PayTo)
+	if payTo == "" || strings.EqualFold(payTo, types.X402PayToIdentity) {
+		payTo = strings.TrimSpace(cfg.TunnelIdentity.Address)
+	}
+	if payTo == "" {
+		return nil, fmt.Errorf("http route %q x402 pay_to is required", prefix)
+	}
+	payTo, err := identity.NormalizeEVMAddress(payTo)
+	if err != nil {
+		return nil, fmt.Errorf("http route %q x402 pay_to: %w", prefix, err)
+	}
+	if cfg.X402.PaymentTimeoutSecs < 0 {
+		return nil, errors.New("x402 payment_timeout_seconds cannot be negative")
+	}
+	if cfg.X402.MaxTimeoutSeconds < 0 {
+		return nil, errors.New("x402 max_timeout_seconds cannot be negative")
+	}
+
+	timeout := defaultPaymentTimeout
+	if cfg.X402.PaymentTimeoutSecs > 0 {
+		timeout = time.Duration(cfg.X402.PaymentTimeoutSecs) * time.Second
+	}
+	resource := strings.TrimSpace(cfg.X402.Resource)
+	if resource == "" {
+		resource = prefix
+	}
+	description := strings.TrimSpace(cfg.Metadata.Description)
+	if description == "" {
+		description = defaultRouteDescription
+	}
+	middleware := x402nethttp.X402Payment(x402nethttp.Config{
+		Routes: x402http.RoutesConfig{
+			"*": x402http.RouteConfig{
+				Accepts: []x402http.PaymentOption{
+					{
+						Scheme:            types.X402SchemeExact,
+						PayTo:             payTo,
+						Price:             foundationx402.Price(price),
+						Network:           foundationx402.Network(network),
+						MaxTimeoutSeconds: cfg.X402.MaxTimeoutSeconds,
+					},
+				},
+				Resource:    resource,
+				Description: description,
+				MimeType:    strings.TrimSpace(cfg.X402.MimeType),
+			},
+		},
+		Facilitator: x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
+			URL: strings.TrimSpace(cfg.X402.FacilitatorURL),
+		}),
+		Schemes: []x402nethttp.SchemeConfig{
+			{
+				Network: foundationx402.Network("eip155:*"),
+				Server:  evmserver.NewExactEvmScheme(),
+			},
+		},
+		PaywallConfig: &x402http.PaywallConfig{
+			AppName: strings.TrimSpace(cfg.TunnelIdentity.Name),
+			AppLogo: strings.TrimSpace(cfg.Metadata.Thumbnail),
+			Testnet: cfg.X402.Testnet,
+		},
+		SyncFacilitatorOnStart: true,
+		Timeout:                timeout,
+	})
+	return middleware(next), nil
+}

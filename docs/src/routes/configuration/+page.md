@@ -65,6 +65,17 @@ The relay server (`relay-server`) reads configuration from environment variables
 | `PPROF_ENABLED` | `false` | bool | Enable the relay pprof diagnostics HTTP server |
 | `PPROF_ADDR` | `127.0.0.1:6060` | string | pprof listen address when enabled; keep it on loopback unless the port is protected |
 
+### Payments
+
+| Variable | Default | Type | Description |
+|----------|---------|------|-------------|
+| `X402_FACILITATOR_ENABLED` | `false` | bool | Enable the relay-local x402 facilitator under `/x402` |
+| `X402_NETWORK` | | string | CAIP-2 network served by the facilitator, such as `eip155:8453` |
+| `X402_RPC_URL` | | string | RPC URL used by the facilitator; empty uses the facilitator default for supported networks |
+
+The relay-local facilitator uses the relay identity private key from
+`IDENTITY_PATH/identity.json`.
+
 ### Cloudflare
 
 | Variable | Default | Type | Description |
@@ -237,6 +248,7 @@ Tunnel fields mirror `portal expose` flags:
 | `identity_json` | string | Identity JSON payload; overrides `identity_path` contents and is persisted there when both are set |
 | `udp`, `udp_addr`, `tcp` | bool/string | UDP and raw TCP relay options |
 | `description`, `tags`, `owner`, `thumbnail`, `hide` | mixed | Lease metadata shown by relays |
+| `http_routes.x402` | table | x402 payment settings for one HTTP route; set `facilitator_url` explicitly or let frontend/configuration tooling write it |
 
 For a task-oriented walkthrough, see [Portal Agent](/portal-agent).
 
