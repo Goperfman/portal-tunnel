@@ -67,6 +67,7 @@ Get relay domain and protocol version information. Used by the SDK to verify rel
 | `protocol_version` | `string` | Protocol version (must match SDK version) |
 | `release_version` | `string` | Relay software release version |
 | `ens` | `object` | ENS gasless status for this relay |
+| `x402` | `object` | Relay-local x402 facilitator status and public payment metadata |
 
 `ens` fields:
 
@@ -80,6 +81,16 @@ Get relay domain and protocol version information. Used by the SDK to verify rel
 | `ds_record` | `string` | DS record that may need registrar publication |
 | `message` | `string` | Provider-specific DNSSEC guidance |
 | `last_error` | `string` | Last ENS/DNS sync error |
+
+`x402` fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | `bool` | Relay-local facilitator is exposed under `/x402` |
+| `url` | `string` | Facilitator base URL to use in tunnel x402 config |
+| `network` | `string` | CAIP-2 payment network served by the facilitator |
+| `network_name` | `string` | Human-readable network name when known |
+| `supported_url` | `string` | URL for the facilitator `/supported` endpoint |
 
 **Example:**
 
@@ -101,6 +112,13 @@ curl https://relay.example.com/sdk/domain
       "provider": "cloudflare",
       "address": "0x1234567890abcdef1234567890abcdef12345678",
       "dnssec_state": "active"
+    },
+    "x402": {
+      "enabled": true,
+      "url": "https://relay.example.com/x402",
+      "network": "eip155:84532",
+      "network_name": "Base Sepolia",
+      "supported_url": "https://relay.example.com/x402/supported"
     }
   }
 }

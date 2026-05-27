@@ -74,7 +74,8 @@ The relay server (`relay-server`) reads configuration from environment variables
 | `X402_RPC_URL` | | string | RPC URL used by the facilitator; empty uses the facilitator default for supported networks |
 
 The relay-local facilitator uses the relay identity private key from
-`IDENTITY_PATH/identity.json`.
+`IDENTITY_PATH/identity.json`. `/sdk/domain` exposes only the public facilitator
+URL and network; `X402_RPC_URL` is not returned to clients.
 
 ### Cloudflare
 

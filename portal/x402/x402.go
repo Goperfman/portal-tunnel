@@ -25,6 +25,18 @@ const (
 	defaultRouteDescription = "Portal protected route"
 )
 
+var networkDisplayNames = map[string]string{
+	"eip155:1":      "Ethereum Mainnet",
+	"eip155:8453":   "Base Mainnet",
+	"eip155:84532":  "Base Sepolia",
+	"eip155:42161":  "Arbitrum One",
+	"eip155:421614": "Arbitrum Sepolia",
+}
+
+func NetworkDisplayName(network string) string {
+	return networkDisplayNames[strings.TrimSpace(strings.ToLower(network))]
+}
+
 type FacilitatorConfig struct {
 	Network  string
 	RPCURL   string

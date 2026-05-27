@@ -135,8 +135,8 @@ See [TCP/UDP Tunneling](/tcp-udp-tunneling) for usage details.
 ## Optional: Enable x402 Facilitator
 
 The relay can expose a relay-local x402 facilitator at `/x402`. Frontends and
-configuration tools can read `/x402/supported` and write the selected
-facilitator URL into tunnel x402 route config.
+configuration tools can read `/sdk/domain` for the current relay's facilitator
+URL and network, then call `/x402/supported` for mechanism details when needed.
 
 ```yaml
 environment:

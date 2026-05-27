@@ -177,6 +177,8 @@ func runServer(ctx context.Context, cfg relayServerConfig) error {
 		MaxPort:           cfg.MaxPort,
 		PProfEnabled:      cfg.PProfEnabled,
 		PProfListenAddr:   cfg.PProfAddr,
+		X402Enabled:       cfg.X402Enabled,
+		X402Network:       cfg.X402Network,
 		ACME: acme.Config{
 			KeyDir:             cfg.IdentityPath,
 			DNSProvider:        cfg.ACMEDNSProvider,

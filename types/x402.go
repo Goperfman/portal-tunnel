@@ -29,6 +29,14 @@ func (c X402Config) Empty() bool {
 		c.PaymentTimeoutSecs == 0
 }
 
+type X402FacilitatorInfo struct {
+	Enabled      bool   `json:"enabled"`
+	URL          string `json:"url,omitempty"`
+	Network      string `json:"network,omitempty"`
+	NetworkName  string `json:"network_name,omitempty"`
+	SupportedURL string `json:"supported_url,omitempty"`
+}
+
 type X402SupportedKind struct {
 	X402Version int            `json:"x402Version"`
 	Scheme      string         `json:"scheme"`
