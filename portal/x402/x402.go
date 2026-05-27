@@ -89,6 +89,10 @@ func NewHTTPRouteHandler(cfg HTTPRouteHandlerConfig) (http.Handler, error) {
 	if network == "" {
 		return nil, fmt.Errorf("http route %q x402 network is required", prefix)
 	}
+	facilitatorURL := strings.TrimSpace(cfg.X402.FacilitatorURL)
+	if facilitatorURL == "" {
+		return nil, fmt.Errorf("http route %q x402 facilitator_url is required", prefix)
+	}
 	priceValue := strings.TrimSpace(cfg.X402.Price)
 	if priceValue == "" && cfg.PriceResolver == nil {
 		return nil, fmt.Errorf("http route %q x402 price is required", prefix)
@@ -155,7 +159,7 @@ func NewHTTPRouteHandler(cfg HTTPRouteHandlerConfig) (http.Handler, error) {
 			},
 		},
 		Facilitator: x402http.NewHTTPFacilitatorClient(&x402http.FacilitatorConfig{
-			URL: strings.TrimSpace(cfg.X402.FacilitatorURL),
+			URL: facilitatorURL,
 		}),
 		Schemes: []x402nethttp.SchemeConfig{
 			{

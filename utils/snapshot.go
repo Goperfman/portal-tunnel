@@ -44,6 +44,20 @@ func (s *Snapshot[T]) Store(value T) {
 	s.value.Store(&value)
 }
 
+func (s *Snapshot[T]) Swap(value T) T {
+	if s == nil {
+		var zero T
+		return zero
+	}
+	value = s.snapshotValue(value)
+	previous := s.value.Swap(&value)
+	if previous == nil {
+		var zero T
+		return zero
+	}
+	return s.snapshotValue(*previous)
+}
+
 func (s *Snapshot[T]) snapshotValue(value T) T {
 	if s != nil && s.snapshot != nil {
 		return s.snapshot(value)

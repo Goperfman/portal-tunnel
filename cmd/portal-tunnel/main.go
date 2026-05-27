@@ -238,6 +238,8 @@ func (f exposeX402Flags) config() (*types.X402Config, error) {
 		return nil, nil
 	}
 	switch {
+	case strings.TrimSpace(cfg.FacilitatorURL) == "":
+		return nil, errors.New("--x402-facilitator-url is required when x402 is enabled")
 	case strings.TrimSpace(cfg.Network) == "":
 		return nil, errors.New("--x402-network is required when x402 is enabled")
 	case strings.TrimSpace(cfg.Price) == "":

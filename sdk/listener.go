@@ -76,8 +76,7 @@ type listener struct {
 
 	releaseVersion string
 
-	leaseMu sync.RWMutex
-	lease   *listenerSnapshot
+	lease *utils.Snapshot[listenerSnapshot]
 }
 
 // newListener creates one relay listener and its dedicated relay transport for one relay URL.
@@ -119,6 +118,7 @@ func newListener(ctx context.Context, route discovery.Route, cfg listenerConfig)
 		retryWait:      retryWait,
 		leaseTTL:       leaseTTL,
 		renewBefore:    renewBefore,
+		lease:          utils.NewSnapshot(listenerSnapshot{}, listenerSnapshot.snapshot),
 	}
 	l.mitmManager = newMITMManager(listenerCtx, l, cfg.BanMITM)
 	l.stream = transport.NewClientStream(readyTarget, handshakeTimeout)
@@ -266,11 +266,24 @@ type listenerSnapshot struct {
 	hopRoutes           []types.HopRoute
 }
 
+func (s listenerSnapshot) snapshot() listenerSnapshot {
+	s.echConfigList = bytes.Clone(s.echConfigList)
+	s.hopRoutes = append([]types.HopRoute(nil), s.hopRoutes...)
+	if s.publicURLBase != nil {
+		publicURLBase := *s.publicURLBase
+		s.publicURLBase = &publicURLBase
+	}
+	if s.tlsConfig != nil {
+		s.tlsConfig = s.tlsConfig.Clone()
+	}
+	return s
+}
+
 func (l *listener) clearLease(reason string) *listenerSnapshot {
-	l.leaseMu.Lock()
-	lease := l.lease
-	l.lease = nil
-	l.leaseMu.Unlock()
+	if l == nil || l.lease == nil {
+		return nil
+	}
+	lease := l.lease.Swap(listenerSnapshot{})
 
 	if l.mitmManager != nil {
 		l.mitmManager.reset()
@@ -278,17 +291,21 @@ func (l *listener) clearLease(reason string) *listenerSnapshot {
 	if l.datagram != nil && reason != "" {
 		l.datagram.Clear(reason)
 	}
-	return lease
+	if lease.accessToken == "" && lease.tlsCloser == nil {
+		return nil
+	}
+	return &lease
 }
 
 func (l *listener) leaseSnapshot() (listenerSnapshot, bool) {
-	l.leaseMu.RLock()
-	defer l.leaseMu.RUnlock()
-
-	if l.lease == nil {
+	if l == nil || l.lease == nil {
 		return listenerSnapshot{}, false
 	}
-	return *l.lease, true
+	lease := l.lease.Load()
+	if lease.accessToken == "" {
+		return listenerSnapshot{}, false
+	}
+	return lease, true
 }
 
 func (l *listener) Accept() (net.Conn, error) {
@@ -727,20 +744,25 @@ func (l *listener) renewLease(ctx context.Context) error {
 			return err
 		}
 	}
-	l.leaseMu.Lock()
-	if l.lease == nil || l.lease.accessToken != lease.accessToken {
-		l.leaseMu.Unlock()
+	if l.lease == nil {
 		return errLeaseRefreshRequired
 	}
-	next := *l.lease
-	next.accessToken = resp.AccessToken
-	next.expiresAt = resp.ExpiresAt
-	next.multihopAccessToken = multihopAccessToken
-	if entrySNIPort > 0 {
-		next.sniPort = entrySNIPort
+	_, updated := l.lease.UpdateIf(func(current listenerSnapshot) (listenerSnapshot, bool) {
+		if current.accessToken != lease.accessToken {
+			return current, false
+		}
+		next := current
+		next.accessToken = resp.AccessToken
+		next.expiresAt = resp.ExpiresAt
+		next.multihopAccessToken = multihopAccessToken
+		if entrySNIPort > 0 {
+			next.sniPort = entrySNIPort
+		}
+		return next, true
+	})
+	if !updated {
+		return errLeaseRefreshRequired
 	}
-	l.lease = &next
-	l.leaseMu.Unlock()
 	return nil
 }
 
@@ -817,7 +839,7 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 		}
 		return ctx.Err()
 	}
-	next := &listenerSnapshot{
+	next := listenerSnapshot{
 		hostname:            publicHostname,
 		echConfigList:       echConfigList,
 		udpAddr:             resp.UDPAddr,
@@ -831,11 +853,8 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 		multihopAccessToken: multihopAccessToken,
 		hopRoutes:           hopRoutes,
 	}
-	l.leaseMu.Lock()
-	oldLease := l.lease
-	l.lease = next
-	l.leaseMu.Unlock()
-	if oldLease != nil && oldLease.tlsCloser != nil {
+	oldLease := l.lease.Swap(next)
+	if oldLease.tlsCloser != nil {
 		_ = oldLease.tlsCloser.Close()
 	}
 	if l.udpEnabled && l.datagram != nil {
