@@ -227,9 +227,6 @@ func x402ConfigDocumentMap(cfg types.X402Config) map[string]any {
 	addStringDocumentField(out, "facilitator_url", cfg.FacilitatorURL)
 	addStringDocumentField(out, "resource", cfg.Resource)
 	addStringDocumentField(out, "mime_type", cfg.MimeType)
-	if cfg.Testnet {
-		out["testnet"] = cfg.Testnet
-	}
 	if cfg.MaxTimeoutSeconds != 0 {
 		out["max_timeout_seconds"] = cfg.MaxTimeoutSeconds
 	}

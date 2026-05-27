@@ -89,8 +89,8 @@ internally as `--http-route /=<target>`. `--x402-pay-to` defaults to the tunnel
 identity address; set it explicitly when payments should be received by another
 wallet. The x402 paywall uses tunnel metadata: `--name` for the app name,
 `--description` for the resource description, and `--thumbnail` for the app
-logo. `--x402-resource` defaults to the matched HTTP route prefix and controls
-the resource path advertised in the x402 payment requirement. The tunnel does
+logo. Empty `--x402-resource` uses the requested URL in the x402 payment
+requirement. Set it only when a stable resource URL should be advertised. The tunnel does
 not infer a relay facilitator URL; set `--x402-facilitator-url` explicitly, or
 use relay/frontend tooling that writes the desired facilitator URL into the
 tunnel config. x402 is not available in raw TCP or UDP modes.
@@ -262,9 +262,8 @@ Common flags:
 --x402-pay-to        x402 recipient address; defaults to the tunnel identity address
 --x402-facilitator-url
                      x402 facilitator URL
---x402-resource      x402 protected resource/root path; defaults to the HTTP route prefix
+--x402-resource      x402 protected resource URL; empty uses the requested URL
 --x402-mime-type     x402 protected resource MIME type
---x402-testnet       Render the x402 paywall in testnet mode
 --x402-max-timeout   x402 max payment timeout seconds advertised to clients
 --x402-payment-timeout
                      x402 middleware verify/settle timeout seconds

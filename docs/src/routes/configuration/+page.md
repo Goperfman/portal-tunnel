@@ -276,7 +276,6 @@ pay_to = "identity"
 facilitator_url = "https://portal.example.com:4017/x402"
 resource = "/api/report"
 mime_type = "application/json"
-testnet = false
 max_timeout_seconds = 0
 payment_timeout_seconds = 0
 ```

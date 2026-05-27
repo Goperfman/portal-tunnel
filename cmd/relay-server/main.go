@@ -99,7 +99,7 @@ func runServeCommand(args []string) error {
 	utils.StringFlagEnv(fs, &cfg.PProfAddr, "pprof-addr", portal.DefaultPProfListenAddr, "pprof diagnostics listen address when enabled", "PPROF_ADDR")
 	utils.BoolFlagEnv(fs, &cfg.X402Enabled, "x402-facilitator-enabled", false, "enable relay-local x402 facilitator endpoints under /x402", "X402_FACILITATOR_ENABLED")
 	utils.StringFlagEnv(fs, &cfg.X402Network, "x402-network", "", "x402 facilitator CAIP-2 network, such as eip155:8453", "X402_NETWORK")
-	utils.StringFlagEnv(fs, &cfg.X402RPCURL, "x402-rpc-url", "", "x402 facilitator RPC URL; empty uses the facilitator default for the network when available", "X402_RPC_URL")
+	utils.StringFlagEnv(fs, &cfg.X402RPCURL, "x402-rpc-url", "", "x402 facilitator RPC URL; empty uses the PublicNode default for supported networks", "X402_RPC_URL")
 
 	utils.StringFlagEnv(fs, &cfg.ACMEDNSProvider, "acme-dns-provider", "", "DNS provider for managed DNS-01/A-record sync, ECH HTTPS records, and ENS gasless DNSSEC/TXT automation (cloudflare|gcloud|hetzner|njalla|route53|vultr); leave empty to use manual fullchain.pem/privatekey.pem from IDENTITY_PATH", "ACME_DNS_PROVIDER")
 	utils.BoolFlagEnv(fs, &cfg.ENSGaslessEnabled, "ens-gasless-enabled", false, "enable ENS gasless DNS import automation for the managed DNS zone and lease hostnames", "ENS_GASLESS_ENABLED")

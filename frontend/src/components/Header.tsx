@@ -45,10 +45,6 @@ function formatWalletAddress(address: string): string {
   return `${trimmed.slice(0, 6)}...${trimmed.slice(-4)}`;
 }
 
-function facilitatorURL(x402: X402FacilitatorInfo): string {
-  return x402.url?.trim() || "/x402";
-}
-
 function facilitatorNetworkLabel(x402: X402FacilitatorInfo): string {
   return x402.network_name?.trim() || x402.network?.trim() || "enabled";
 }
@@ -154,15 +150,12 @@ export function Header({
                 </span>
               )}
               {x402 && (
-                <a
-                  href={facilitatorURL(x402)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex h-6 max-w-40 items-center overflow-hidden text-ellipsis whitespace-nowrap rounded-full bg-emerald-500/10 px-2.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-500/20 transition-colors hover:bg-emerald-500/15 dark:text-emerald-300"
-                  title={`x402 facilitator: ${facilitatorURL(x402)}`}
+                <span
+                  className="inline-flex h-6 max-w-40 cursor-default items-center overflow-hidden text-ellipsis whitespace-nowrap rounded-full bg-emerald-500/10 px-2.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-500/20 dark:text-emerald-300"
+                  title="x402 facilitator enabled"
                 >
                   x402 {facilitatorNetworkLabel(x402)}
-                </a>
+                </span>
               )}
             </div>
           </div>

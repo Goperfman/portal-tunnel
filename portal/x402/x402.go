@@ -33,8 +33,29 @@ var networkDisplayNames = map[string]string{
 	"eip155:421614": "Arbitrum Sepolia",
 }
 
+var networkPublicNodeRPCURLs = map[string]string{
+	"eip155:1":      "https://ethereum-rpc.publicnode.com",
+	"eip155:8453":   "https://base-rpc.publicnode.com",
+	"eip155:84532":  "https://base-sepolia-rpc.publicnode.com",
+	"eip155:42161":  "https://arbitrum-one-rpc.publicnode.com",
+	"eip155:421614": "https://arbitrum-sepolia-rpc.publicnode.com",
+}
+
 func NetworkDisplayName(network string) string {
 	return networkDisplayNames[strings.TrimSpace(strings.ToLower(network))]
+}
+
+func PublicNodeRPCURL(network string) string {
+	return networkPublicNodeRPCURLs[strings.TrimSpace(strings.ToLower(network))]
+}
+
+func isTestnetNetwork(network string) bool {
+	switch strings.TrimSpace(strings.ToLower(network)) {
+	case "eip155:84532", "eip155:421614":
+		return true
+	default:
+		return false
+	}
 }
 
 type FacilitatorConfig struct {
@@ -55,7 +76,11 @@ func MountFacilitator(mux *http.ServeMux, cfg FacilitatorConfig) error {
 	if privateKey == "" {
 		return errors.New("relay identity private key is required when --x402-facilitator-enabled is set")
 	}
-	facilitator, err := facilitatorcore.NewFacilitator(facilitatortypes.Exact, network, strings.TrimSpace(cfg.RPCURL), privateKey)
+	rpcURL := strings.TrimSpace(cfg.RPCURL)
+	if rpcURL == "" {
+		rpcURL = PublicNodeRPCURL(network)
+	}
+	facilitator, err := facilitatorcore.NewFacilitator(facilitatortypes.Exact, network, rpcURL, privateKey)
 	if err != nil {
 		return fmt.Errorf("create x402 facilitator: %w", err)
 	}
@@ -134,9 +159,6 @@ func NewHTTPRouteHandler(cfg HTTPRouteHandlerConfig) (http.Handler, error) {
 		timeout = time.Duration(cfg.X402.PaymentTimeoutSecs) * time.Second
 	}
 	resource := strings.TrimSpace(cfg.X402.Resource)
-	if resource == "" {
-		resource = prefix
-	}
 	description := strings.TrimSpace(cfg.Metadata.Description)
 	if description == "" {
 		description = defaultRouteDescription
@@ -163,14 +185,14 @@ func NewHTTPRouteHandler(cfg HTTPRouteHandlerConfig) (http.Handler, error) {
 		}),
 		Schemes: []x402nethttp.SchemeConfig{
 			{
-				Network: foundationx402.Network("eip155:*"),
+				Network: foundationx402.Network(network),
 				Server:  evmserver.NewExactEvmScheme(),
 			},
 		},
 		PaywallConfig: &x402http.PaywallConfig{
 			AppName: strings.TrimSpace(cfg.TunnelIdentity.Name),
 			AppLogo: strings.TrimSpace(cfg.Metadata.Thumbnail),
-			Testnet: cfg.X402.Testnet,
+			Testnet: isTestnetNetwork(network),
 		},
 		SyncFacilitatorOnStart: true,
 		Timeout:                timeout,

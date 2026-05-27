@@ -77,7 +77,6 @@ type exposeX402Flags struct {
 	facilitator    string
 	resource       string
 	mimeType       string
-	testnet        bool
 	maxTimeout     int
 	paymentTimeout int
 }
@@ -215,9 +214,8 @@ func (f *exposeX402Flags) bind(fs *flag.FlagSet) {
 	utils.StringFlag(fs, &f.price, "x402-price", "", "x402 route price, such as $0.001")
 	utils.StringFlag(fs, &f.payTo, "x402-pay-to", "", "x402 recipient address; empty uses the tunnel identity address")
 	utils.StringFlag(fs, &f.facilitator, "x402-facilitator-url", "", "x402 facilitator URL")
-	utils.StringFlag(fs, &f.resource, "x402-resource", "", "x402 protected resource/root path; defaults to the HTTP route prefix")
+	utils.StringFlag(fs, &f.resource, "x402-resource", "", "x402 protected resource URL; empty uses the requested URL")
 	utils.StringFlag(fs, &f.mimeType, "x402-mime-type", "", "x402 protected resource MIME type")
-	utils.BoolFlag(fs, &f.testnet, "x402-testnet", false, "Render the x402 paywall in testnet mode")
 	fs.IntVar(&f.maxTimeout, "x402-max-timeout", 0, "x402 max payment timeout seconds advertised to clients")
 	fs.IntVar(&f.paymentTimeout, "x402-payment-timeout", 0, "x402 middleware verify/settle timeout seconds")
 }
@@ -230,7 +228,6 @@ func (f exposeX402Flags) config() (*types.X402Config, error) {
 		FacilitatorURL:     f.facilitator,
 		Resource:           f.resource,
 		MimeType:           f.mimeType,
-		Testnet:            f.testnet,
 		MaxTimeoutSeconds:  f.maxTimeout,
 		PaymentTimeoutSecs: f.paymentTimeout,
 	}

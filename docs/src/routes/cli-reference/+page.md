@@ -102,9 +102,8 @@ not supported.
 | `--x402-price` | string | | x402 route price, such as `$0.001` |
 | `--x402-pay-to` | string | identity | x402 recipient address; empty uses the tunnel identity address |
 | `--x402-facilitator-url` | string | | x402 facilitator URL |
-| `--x402-resource` | string | route prefix | x402 protected resource/root path |
+| `--x402-resource` | string | requested URL | x402 protected resource URL |
 | `--x402-mime-type` | string | | x402 protected resource MIME type |
-| `--x402-testnet` | bool | `false` | Render the x402 paywall in testnet mode |
 | `--x402-max-timeout` | int | `0` | x402 max payment timeout seconds advertised to clients |
 | `--x402-payment-timeout` | int | `0` | x402 middleware verify/settle timeout seconds |
 | `--tcp` | bool | `false` | Request a dedicated raw TCP port on the relay |

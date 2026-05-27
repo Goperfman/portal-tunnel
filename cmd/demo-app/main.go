@@ -75,13 +75,10 @@ func runTCPCommand(args []string) error {
 	utils.StringFlag(fs, &cfg.tags, "tags", "demo,connectivity,activity,cloud,sun,morning", "comma-separated lease tags")
 	utils.StringFlag(fs, &cfg.thumbnail, "thumbnail", "https://picsum.photos/640/360", "lease thumbnail")
 	utils.BoolFlag(fs, &cfg.hide, "hide", false, "hide this lease from listings")
-	utils.StringFlag(fs, &cfg.x402.FacilitatorURL, "x402-facilitator-url", "", "x402 facilitator URL, such as https://relay.example.com:4017/x402")
-	utils.StringFlag(fs, &cfg.x402.Network, "x402-network", "", "x402 payment network, such as eip155:8453")
-	utils.StringFlag(fs, &cfg.x402.Price, "x402-price", "", "fallback x402 price for premium content, such as $0.001")
+	utils.StringFlag(fs, &cfg.x402.FacilitatorURL, "x402-facilitator-url", "https://gosunuts.xyz/x402", "x402 facilitator URL, such as https://relay.example.com:4017/x402")
+	utils.StringFlag(fs, &cfg.x402.Network, "x402-network", "eip155:84532", "x402 payment network, such as eip155:8453")
+	utils.StringFlag(fs, &cfg.x402.Price, "x402-price", "$0.01", "x402 price for the premium photo, such as $0.01")
 	utils.StringFlag(fs, &cfg.x402.PayTo, "x402-pay-to", "", "x402 recipient address; empty uses the demo app identity address")
-	utils.StringFlag(fs, &cfg.x402.Resource, "x402-resource", "", "x402 protected resource path; defaults to /api/premium")
-	utils.StringFlag(fs, &cfg.x402.MimeType, "x402-mime-type", "", "x402 protected resource MIME type; defaults to application/json")
-	utils.BoolFlag(fs, &cfg.x402.Testnet, "x402-testnet", false, "render the x402 paywall in testnet mode")
 	fs.IntVar(&cfg.x402.MaxTimeoutSeconds, "x402-max-timeout", 0, "x402 max payment timeout seconds advertised to clients")
 	fs.IntVar(&cfg.x402.PaymentTimeoutSecs, "x402-payment-timeout", 0, "x402 middleware verify/settle timeout seconds")
 
@@ -111,11 +108,8 @@ func runTCPCommand(args []string) error {
 		case cfg.x402.PaymentTimeoutSecs < 0:
 			return errors.New("--x402-payment-timeout cannot be negative")
 		}
-		if strings.TrimSpace(cfg.x402.Resource) == "" {
-			cfg.x402.Resource = "/api/premium"
-		}
 		if strings.TrimSpace(cfg.x402.MimeType) == "" {
-			cfg.x402.MimeType = "application/json"
+			cfg.x402.MimeType = "text/html"
 		}
 	}
 

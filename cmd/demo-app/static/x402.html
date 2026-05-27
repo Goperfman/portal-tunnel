@@ -14,10 +14,7 @@
 
         <div class="toolbar">
             <button id="freeBtn">Free API</button>
-            <button data-api-path="/api/premium">Overview</button>
-            <button data-api-path="/api/premium/basic">Basic $0.001</button>
-            <button data-api-path="/api/premium/report">Report $0.010</button>
-            <button data-api-path="/api/premium/dataset">Dataset $0.050</button>
+            <button class="payment-button" data-api-path="/api/premium">Unlock Photo $0.01</button>
         </div>
 
         <div class="canvas-wrapper">
@@ -56,7 +53,9 @@
 
         document.getElementById('freeBtn').addEventListener('click', () => callAPI('/api/ping'));
         for (const button of document.querySelectorAll('[data-api-path]')) {
-            button.addEventListener('click', () => callAPI(button.dataset.apiPath));
+            button.addEventListener('click', () => {
+                window.location.assign(button.dataset.apiPath);
+            });
         }
     </script>
 </body>
