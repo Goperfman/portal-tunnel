@@ -173,7 +173,7 @@ UDP client
 - `/sdk/connect`, `/sdk/renew`, and `/sdk/unregister` are authorized by lease existence plus a relay-issued lease access token.
 - `/sdk/register` is authenticated by a SIWE challenge/response flow using the SDK identity secp256k1 key. On success, the relay issues a lease-scoped ES256K JWT access token signed by the relay identity key and used for the rest of the lease lifecycle.
 - Relay URLs must use `https://`.
-- HTTP/2 is allowed on the admin/API TLS listener for ordinary API traffic; `/sdk/connect` remains HTTP/1.1-only because it depends on hijacking semantics.
+- HTTP/2 stays disabled on the admin/API TLS listener because `/sdk/connect` depends on HTTP/1.1 hijacking semantics.
 - WireGuard, when enabled, is relay-to-relay overlay transport only. It carries multi-hop relay forwarding and overlay discovery, but it is not used for direct tenant TLS termination, public UDP ingress, or `/sdk/*` control-plane traffic.
 
 ### Reverse Session Protocol

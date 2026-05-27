@@ -69,6 +69,7 @@ func (s *Server) newAPIServer(listener net.Listener, apiMux *http.ServeMux, apiT
 	apiServer := &http.Server{
 		Handler:           s.apiHandler(apiMux, keylessSignerHandler),
 		ReadHeaderTimeout: 10 * time.Second,
+		TLSNextProto:      make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 	}
 
 	apiCloser, err := keyless.AttachToHTTPServer(apiServer, apiTLS)

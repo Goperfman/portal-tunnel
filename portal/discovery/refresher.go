@@ -38,8 +38,9 @@ func NewRefresher(relaySet *RelaySet, overlay OverlayRuntime) *Refresher {
 		httpClient: utils.NewHTTPClient(
 			utils.WithHTTPTLSConfig(&tls.Config{
 				MinVersion: tls.VersionTLS12,
-				NextProtos: []string{"h2", "http/1.1"},
+				NextProtos: []string{"http/1.1"},
 			}),
+			utils.WithoutHTTP2(),
 			utils.WithHTTPTimeout(defaultRequestTimeout),
 		),
 		overlay:                overlay,
