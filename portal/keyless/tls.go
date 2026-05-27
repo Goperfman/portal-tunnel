@@ -42,7 +42,7 @@ func AttachToHTTPServer(server *http.Server, cfg TLSMaterialConfig) (io.Closer, 
 				ClientKeyPEM:  cfg.Keyless.ClientKeyPEM,
 				RootCAPEM:     cfg.Keyless.RootCAPEM,
 			},
-			NextProtos:               []string{"http/1.1"},
+			NextProtos:               []string{"h2", "http/1.1"},
 			MinTLSVersion:            minVersion,
 			EncryptedClientHelloKeys: cfg.EncryptedClientHelloKeys,
 		})
@@ -60,7 +60,7 @@ func AttachToHTTPServer(server *http.Server, cfg TLSMaterialConfig) (io.Closer, 
 	minVersion := MinTLSVersion(len(cfg.EncryptedClientHelloKeys) > 0)
 	server.TLSConfig = &tls.Config{
 		MinVersion:               minVersion,
-		NextProtos:               []string{"http/1.1"},
+		NextProtos:               []string{"h2", "http/1.1"},
 		Certificates:             []tls.Certificate{cert},
 		EncryptedClientHelloKeys: cfg.EncryptedClientHelloKeys,
 	}

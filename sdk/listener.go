@@ -575,9 +575,11 @@ func (l *listener) openReverseSession(ctx context.Context) (net.Conn, error) {
 		return nil, errors.New("relay tls config is unavailable")
 	}
 
+	reverseTLSConfig := l.tlsConfig.Clone()
+	reverseTLSConfig.NextProtos = []string{"http/1.1"}
 	dialer := &tls.Dialer{
 		NetDialer: &net.Dialer{Timeout: l.dialTimeout},
-		Config:    l.tlsConfig.Clone(),
+		Config:    reverseTLSConfig,
 	}
 
 	conn, err := dialer.DialContext(ctx, "tcp", utils.EnsurePort(l.relayURL.Host))

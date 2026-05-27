@@ -143,7 +143,6 @@ func NewOverlay(cfg Config, handler http.Handler, streamHandler StreamHandler) (
 		utils.WithHTTPIdleConnTimeout(90*time.Second),
 		utils.WithHTTPResponseHeaderTimeout(30*time.Second),
 		utils.WithHTTPExpectContinueTimeout(1*time.Second),
-		utils.WithoutHTTP2(),
 	)
 
 	publicCfg := cfg.Copy()

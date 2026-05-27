@@ -57,12 +57,6 @@ func WithHTTPDialContext(dialContext func(context.Context, string, string) (net.
 	}
 }
 
-func WithoutHTTP2() HTTPClientOption {
-	return func(c *http.Client) {
-		mustTransportOf(c).ForceAttemptHTTP2 = false
-	}
-}
-
 func WithHTTPResponseHeaderTimeout(timeout time.Duration) HTTPClientOption {
 	return func(c *http.Client) {
 		mustTransportOf(c).ResponseHeaderTimeout = timeout
