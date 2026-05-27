@@ -298,11 +298,16 @@ Stores the secp256k1 identity used to sign tunnel sessions and relay descriptors
 | `address` | string | Derived EVM address used for SIWE and identity ownership |
 | `public_key` | string | Compressed secp256k1 public key hex |
 | `private_key` | string | secp256k1 private key hex; keep secret |
+| `mnemonic` | string | BIP-39 mnemonic used to derive the secp256k1 identity key; keep secret |
+| `derivation_path` | string | EVM derivation path for `mnemonic`; defaults to `m/44'/60'/0'/0/0` |
 | `wireguard_public_key` | string | Relay-only WireGuard overlay public key when discovery is enabled |
 | `wireguard_private_key` | string | Relay-only WireGuard overlay private key when discovery is enabled |
 | `encrypted_client_hello_seed` | string | Relay-only HKDF salt for deriving the ECH HPKE private key; generated automatically when missing; keep secret |
 
-The same identity file or state directory can be reused across restarts to keep a stable address.
+When `mnemonic` is present, Portal derives the private key at `derivation_path`
+and preserves the mnemonic form when rewriting `identity.json`. The same
+identity file or state directory can be reused across restarts to keep a stable
+address.
 
 ### `admin_settings.json`
 

@@ -30,6 +30,7 @@ require (
 	github.com/quic-go/quic-go v0.59.0
 	github.com/rs/zerolog v1.34.0
 	github.com/spruceid/siwe-go v0.2.1
+	github.com/tyler-smith/go-bip39 v1.1.0
 	github.com/vultr/govultr/v3 v3.30.0
 	github.com/x402-foundation/x402/go v0.0.0-20260526081544-8cf020c5335e
 	golang.org/x/crypto v0.51.0

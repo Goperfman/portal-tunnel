@@ -19,6 +19,10 @@ from `identity.json`. During registration, the relay returns a SIWE challenge
 with statement `Register a portal lease`; the tunnel signs it with the local
 identity private key and receives a lease access token.
 
+`identity.json` can store the signing key directly as `private_key`, or store a
+BIP-39 `mnemonic` with `derivation_path` and let Portal derive the key at load
+time.
+
 This flow is automatic. It does not require a browser wallet.
 
 ```bash

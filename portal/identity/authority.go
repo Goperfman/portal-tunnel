@@ -36,6 +36,8 @@ func NewLocalAuthority(raw types.Identity) (LocalAuthority, error) {
 func (a LocalAuthority) Identity() types.Identity {
 	identity := a.identity.Copy()
 	identity.PrivateKey = ""
+	identity.Mnemonic = ""
+	identity.DerivationPath = ""
 	identity.TokenSecret = ""
 	return identity
 }

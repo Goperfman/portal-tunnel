@@ -143,7 +143,24 @@ func normalizeStoredIdentity(identity types.Identity) (types.Identity, error) {
 	normalized.Address = strings.TrimSpace(normalized.Address)
 	normalized.PublicKey = strings.TrimSpace(normalized.PublicKey)
 	normalized.PrivateKey = strings.TrimSpace(normalized.PrivateKey)
+	normalized.Mnemonic = normalizeMnemonic(normalized.Mnemonic)
+	normalized.DerivationPath = strings.TrimSpace(normalized.DerivationPath)
 	normalized.TokenSecret = strings.TrimSpace(normalized.TokenSecret)
+
+	if normalized.Mnemonic != "" {
+		privateKey, derivationPath, err := deriveSecp256k1PrivateKeyFromMnemonic(normalized.Mnemonic, normalized.DerivationPath)
+		if err != nil {
+			return types.Identity{}, err
+		}
+		normalized.DerivationPath = derivationPath
+		if normalized.PrivateKey == "" {
+			normalized.PrivateKey = privateKey
+		} else if !strings.EqualFold(utils.TrimHexPrefix(normalized.PrivateKey), privateKey) {
+			return types.Identity{}, errors.New("identity private key does not match mnemonic")
+		}
+	} else if normalized.DerivationPath != "" {
+		return types.Identity{}, errors.New("identity derivation_path requires mnemonic")
+	}
 
 	switch {
 	case normalized.PrivateKey != "":
@@ -225,11 +242,13 @@ func normalizeStoredRelayIdentity(identity types.RelayIdentity) (types.RelayIden
 }
 
 type storedIdentity struct {
-	Name        string `json:"name,omitempty"`
-	Address     string `json:"address,omitempty"`
-	PublicKey   string `json:"public_key,omitempty"`
-	PrivateKey  string `json:"private_key,omitempty"`
-	TokenSecret string `json:"token_secret,omitempty"`
+	Name           string `json:"name,omitempty"`
+	Address        string `json:"address,omitempty"`
+	PublicKey      string `json:"public_key,omitempty"`
+	PrivateKey     string `json:"private_key,omitempty"`
+	Mnemonic       string `json:"mnemonic,omitempty"`
+	DerivationPath string `json:"derivation_path,omitempty"`
+	TokenSecret    string `json:"token_secret,omitempty"`
 }
 
 type storedRelayIdentity struct {
@@ -237,6 +256,22 @@ type storedRelayIdentity struct {
 	WireGuardPublicKey       string `json:"wireguard_public_key,omitempty"`
 	WireGuardPrivateKey      string `json:"wireguard_private_key,omitempty"`
 	EncryptedClientHelloSeed string `json:"encrypted_client_hello_seed,omitempty"`
+}
+
+func storedIdentityFromIdentity(identity types.Identity) storedIdentity {
+	privateKey := identity.PrivateKey
+	if strings.TrimSpace(identity.Mnemonic) != "" {
+		privateKey = ""
+	}
+	return storedIdentity{
+		Name:           identity.Name,
+		Address:        identity.Address,
+		PublicKey:      identity.PublicKey,
+		PrivateKey:     privateKey,
+		Mnemonic:       identity.Mnemonic,
+		DerivationPath: identity.DerivationPath,
+		TokenSecret:    identity.TokenSecret,
+	}
 }
 
 func saveIdentity(path string, identity types.Identity) error {
@@ -252,13 +287,7 @@ func saveIdentity(path string, identity types.Identity) error {
 	if err != nil {
 		return err
 	}
-	if err := utils.WriteJSONFile(path, storedIdentity{
-		Name:        normalized.Name,
-		Address:     normalized.Address,
-		PublicKey:   normalized.PublicKey,
-		PrivateKey:  normalized.PrivateKey,
-		TokenSecret: normalized.TokenSecret,
-	}, 0o600); err != nil {
+	if err := utils.WriteJSONFile(path, storedIdentityFromIdentity(normalized), 0o600); err != nil {
 		return fmt.Errorf("write identity file: %w", err)
 	}
 	return nil
@@ -278,14 +307,9 @@ func saveRelayIdentity(path string, identity types.RelayIdentity) error {
 		return err
 	}
 	normalized.Identity = baseIdentity
+	storedBaseIdentity := storedIdentityFromIdentity(normalized.Identity)
 	if err := utils.WriteJSONFile(path, storedRelayIdentity{
-		storedIdentity: storedIdentity{
-			Name:        normalized.Name,
-			Address:     normalized.Address,
-			PublicKey:   normalized.PublicKey,
-			PrivateKey:  normalized.PrivateKey,
-			TokenSecret: normalized.TokenSecret,
-		},
+		storedIdentity:           storedBaseIdentity,
 		WireGuardPublicKey:       normalized.WireGuardPublicKey,
 		WireGuardPrivateKey:      normalized.WireGuardPrivateKey,
 		EncryptedClientHelloSeed: normalized.EncryptedClientHelloSeed,
@@ -305,11 +329,13 @@ func loadIdentity(path string) (types.Identity, error) {
 		return types.Identity{}, fmt.Errorf("read identity file: %w", err)
 	}
 	return normalizeStoredIdentity(types.Identity{
-		Name:        payload.Name,
-		Address:     payload.Address,
-		PublicKey:   payload.PublicKey,
-		PrivateKey:  payload.PrivateKey,
-		TokenSecret: payload.TokenSecret,
+		Name:           payload.Name,
+		Address:        payload.Address,
+		PublicKey:      payload.PublicKey,
+		PrivateKey:     payload.PrivateKey,
+		Mnemonic:       payload.Mnemonic,
+		DerivationPath: payload.DerivationPath,
+		TokenSecret:    payload.TokenSecret,
 	})
 }
 
@@ -324,11 +350,13 @@ func loadRelayIdentity(path string) (types.RelayIdentity, error) {
 	}
 	return normalizeStoredRelayIdentity(types.RelayIdentity{
 		Identity: types.Identity{
-			Name:        payload.Name,
-			Address:     payload.Address,
-			PublicKey:   payload.PublicKey,
-			PrivateKey:  payload.PrivateKey,
-			TokenSecret: payload.TokenSecret,
+			Name:           payload.Name,
+			Address:        payload.Address,
+			PublicKey:      payload.PublicKey,
+			PrivateKey:     payload.PrivateKey,
+			Mnemonic:       payload.Mnemonic,
+			DerivationPath: payload.DerivationPath,
+			TokenSecret:    payload.TokenSecret,
 		},
 		WireGuardPublicKey:       payload.WireGuardPublicKey,
 		WireGuardPrivateKey:      payload.WireGuardPrivateKey,
@@ -347,11 +375,13 @@ func parseIdentityJSON(raw string) (types.Identity, error) {
 		return types.Identity{}, fmt.Errorf("decode identity json: %w", err)
 	}
 	return normalizeStoredIdentity(types.Identity{
-		Name:        payload.Name,
-		Address:     payload.Address,
-		PublicKey:   payload.PublicKey,
-		PrivateKey:  payload.PrivateKey,
-		TokenSecret: payload.TokenSecret,
+		Name:           payload.Name,
+		Address:        payload.Address,
+		PublicKey:      payload.PublicKey,
+		PrivateKey:     payload.PrivateKey,
+		Mnemonic:       payload.Mnemonic,
+		DerivationPath: payload.DerivationPath,
+		TokenSecret:    payload.TokenSecret,
 	})
 }
 
@@ -376,6 +406,12 @@ func loadOrCreateIdentity(path string, identity types.Identity) (types.Identity,
 		if privateKey := strings.TrimSpace(identity.PrivateKey); privateKey != "" {
 			stored.PrivateKey = privateKey
 		}
+		if mnemonic := normalizeMnemonic(identity.Mnemonic); mnemonic != "" {
+			stored.Mnemonic = mnemonic
+		}
+		if derivationPath := strings.TrimSpace(identity.DerivationPath); derivationPath != "" {
+			stored.DerivationPath = derivationPath
+		}
 		if tokenSecret := strings.TrimSpace(identity.TokenSecret); tokenSecret != "" {
 			stored.TokenSecret = tokenSecret
 		}
@@ -395,17 +431,24 @@ func loadOrCreateIdentity(path string, identity types.Identity) (types.Identity,
 	}
 
 	created := identity.Copy()
-	generated, err := ResolveSecp256k1Identity(created.PrivateKey)
-	if err != nil {
-		return types.Identity{}, false, fmt.Errorf("generate identity: %w", err)
+	if strings.TrimSpace(created.Mnemonic) != "" || strings.TrimSpace(created.DerivationPath) != "" {
+		created, err = normalizeStoredIdentity(created)
+		if err != nil {
+			return types.Identity{}, false, fmt.Errorf("resolve identity mnemonic: %w", err)
+		}
+	} else {
+		generated, err := ResolveSecp256k1Identity(created.PrivateKey)
+		if err != nil {
+			return types.Identity{}, false, fmt.Errorf("generate identity: %w", err)
+		}
+		if strings.TrimSpace(created.Address) == "" {
+			created.Address = generated.Address
+		}
+		if strings.TrimSpace(created.PublicKey) == "" {
+			created.PublicKey = generated.PublicKey
+		}
+		created.PrivateKey = generated.PrivateKey
 	}
-	if strings.TrimSpace(created.Address) == "" {
-		created.Address = generated.Address
-	}
-	if strings.TrimSpace(created.PublicKey) == "" {
-		created.PublicKey = generated.PublicKey
-	}
-	created.PrivateKey = generated.PrivateKey
 	if strings.TrimSpace(created.TokenSecret) == "" {
 		created, err = ensureTokenSecret(created)
 		if err != nil {
@@ -620,7 +663,10 @@ func resolveExposeName(name, target, identityPath, identityJSON string) (string,
 }
 
 func resolveLeaseIdentity(identity types.Identity) (types.Identity, error) {
-	resolved := identity.Copy()
+	resolved, err := normalizeStoredIdentity(identity)
+	if err != nil {
+		return types.Identity{}, err
+	}
 
 	name, err := utils.NormalizeDNSLabel(resolved.Name)
 	if err != nil {

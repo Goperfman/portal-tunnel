@@ -13,20 +13,24 @@ const (
 )
 
 type Identity struct {
-	Name        string `json:"name,omitempty"`
-	Address     string `json:"address,omitempty"`
-	PublicKey   string `json:"-"`
-	PrivateKey  string `json:"-"`
-	TokenSecret string `json:"-"`
+	Name           string `json:"name,omitempty"`
+	Address        string `json:"address,omitempty"`
+	PublicKey      string `json:"-"`
+	PrivateKey     string `json:"-"`
+	Mnemonic       string `json:"-"`
+	DerivationPath string `json:"-"`
+	TokenSecret    string `json:"-"`
 }
 
 func (i Identity) Copy() Identity {
 	return Identity{
-		Name:        i.Name,
-		Address:     i.Address,
-		PublicKey:   i.PublicKey,
-		PrivateKey:  i.PrivateKey,
-		TokenSecret: i.TokenSecret,
+		Name:           i.Name,
+		Address:        i.Address,
+		PublicKey:      i.PublicKey,
+		PrivateKey:     i.PrivateKey,
+		Mnemonic:       i.Mnemonic,
+		DerivationPath: i.DerivationPath,
+		TokenSecret:    i.TokenSecret,
 	}
 }
 
