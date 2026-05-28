@@ -155,7 +155,8 @@ dd {
 }
 
 .preview.is-active {
-  min-height: 680px;
+  height: min(680px, calc(100vh - 84px));
+  min-height: 560px;
   background: #ffffff;
 }
 
@@ -316,8 +317,8 @@ dd {
   }
 
   .preview.is-active {
-    height: 660px;
-    min-height: 660px;
+    height: min(660px, calc(100vh - 36px));
+    min-height: 560px;
   }
 }
 
@@ -340,8 +341,8 @@ dd {
   }
 
   .preview.is-active {
-    height: 620px;
-    min-height: 620px;
+    height: min(620px, calc(100vh - 28px));
+    min-height: 520px;
   }
 
   .preview-body::before {

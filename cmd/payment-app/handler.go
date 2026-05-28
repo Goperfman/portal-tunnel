@@ -38,32 +38,33 @@ var (
     body {
       margin: 0;
       min-height: 100vh;
-      display: grid;
-      place-items: center;
-      padding: 22px;
+      display: flex;
+      padding: 0;
       background: #f7f8fb;
       color: #182033;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     main {
-      width: min(100%, 720px);
+      display: grid;
+      width: 100%;
+      min-height: 100vh;
+      grid-template-rows: minmax(0, 1fr) auto;
       overflow: hidden;
-      border: 1px solid #d9e1ea;
-      border-radius: 8px;
       background: #ffffff;
-      box-shadow: 0 18px 42px rgba(24, 32, 51, 0.14);
     }
     img {
       width: 100%;
-      aspect-ratio: 16 / 10;
+      height: 100%;
+      min-height: 0;
       display: block;
-      object-fit: cover;
-      background: #dfe6ee;
+      object-fit: contain;
+      background: #111827;
     }
     section {
       display: grid;
-      gap: 14px;
-      padding: 22px;
+      gap: 10px;
+      padding: 18px;
+      border-top: 1px solid #e5eaf0;
     }
     .eyebrow {
       margin: 0;
@@ -88,10 +89,8 @@ var (
     dl {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
+      gap: 10px;
       margin: 4px 0 0;
-      padding-top: 16px;
-      border-top: 1px solid #e5eaf0;
     }
     div { min-width: 0; }
     dt {
@@ -107,8 +106,7 @@ var (
       font-weight: 750;
     }
     @media (max-width: 640px) {
-      body { padding: 12px; }
-      section { padding: 18px; }
+      section { padding: 14px; }
       dl { grid-template-columns: 1fr; }
     }
   </style>
