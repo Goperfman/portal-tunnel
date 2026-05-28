@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <title>{{.PageTitle}}</title>
+    <meta name="description" content="{{.PageDescription}}">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="{{.PageTitle}}">
+    <meta property="og:description" content="{{.PageDescription}}">
+    <meta property="og:image" content="{{.OGImage}}">
+    <meta property="og:url" content="{{.URL}}">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="{{.PageTitle}}">
+    <meta name="twitter:description" content="{{.PageDescription}}">
+    <meta name="twitter:image" content="{{.OGImage}}">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <main class="shell">
+        <section class="app-surface" aria-label="Payment app">
+            <div class="summary">
+                <div class="kicker">
+                    <span>Native x402</span>
+                    <span>{{.NetworkName}}</span>
+                </div>
+                <h1>Paid image delivery</h1>
+                <p class="lede">Settle {{.Price}} and reveal the protected image in the viewer.</p>
+
+                <dl class="facts">
+                    <div>
+                        <dt>Amount</dt>
+                        <dd>{{.Price}}</dd>
+                    </div>
+                    <div>
+                        <dt>Network</dt>
+                        <dd>{{.Network}}</dd>
+                    </div>
+                    <div>
+                        <dt>Recipient</dt>
+                        <dd>{{.RecipientAddress}}</dd>
+                    </div>
+                </dl>
+
+                <div class="actions">
+                    <button id="unlockButton" class="primary-button" type="button" data-protected-path="{{.ProtectedPath}}">
+                        Open checkout
+                    </button>
+                    <span id="status" class="status">Ready</span>
+                </div>
+            </div>
+
+            <div id="viewer" class="preview" aria-label="Protected image viewer">
+                <div class="preview-topbar">
+                    <div class="window-controls" aria-hidden="true">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </div>
+                    <span id="viewerTitle" class="viewer-title">Protected image</span>
+                    <button id="resetViewer" class="viewer-reset" type="button" hidden>Reset</button>
+                </div>
+                <div id="lockedPreview" class="preview-body">
+                    <div class="lock-mark">402</div>
+                    <div>
+                        <p class="preview-label">Protected image</p>
+                        <p class="preview-title">Checkout opens here</p>
+                    </div>
+                </div>
+                <iframe id="paymentFrame" class="payment-frame" title="x402 payment checkout" allow="clipboard-read; clipboard-write; payment; publickey-credentials-get" hidden></iframe>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const unlockButton = document.getElementById('unlockButton');
+        const viewer = document.getElementById('viewer');
+        const lockedPreview = document.getElementById('lockedPreview');
+        const paymentFrame = document.getElementById('paymentFrame');
+        const resetViewer = document.getElementById('resetViewer');
+        const viewerTitle = document.getElementById('viewerTitle');
+        const statusEl = document.getElementById('status');
+
+        unlockButton.addEventListener('click', () => {
+            viewer.classList.add('is-active');
+            lockedPreview.hidden = true;
+            paymentFrame.hidden = false;
+            resetViewer.hidden = false;
+            viewerTitle.textContent = 'x402 checkout';
+            statusEl.textContent = 'Checkout open';
+            if (!paymentFrame.src) {
+                paymentFrame.src = unlockButton.dataset.protectedPath;
+            }
+        });
+
+        resetViewer.addEventListener('click', () => {
+            viewer.classList.remove('is-active');
+            lockedPreview.hidden = false;
+            paymentFrame.hidden = true;
+            resetViewer.hidden = true;
+            viewerTitle.textContent = 'Protected image';
+            statusEl.textContent = paymentFrame.src ? 'Checkout paused' : 'Ready';
+        });
+    </script>
+</body>
+
+</html>

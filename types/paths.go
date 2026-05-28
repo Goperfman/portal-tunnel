@@ -48,4 +48,10 @@ const (
 	PathSDKConnect           = "/sdk/connect"
 	PathDiscovery            = "/discovery"
 	PathDiscoveryAnnounce    = "/discovery/announce"
+
+	PathX402Facilitator       = "/x402"
+	PathX402FacilitatorPrefix = PathX402Facilitator + "/"
+	X402SupportedPath         = PathX402Facilitator + "/supported"
+	X402VerifyPath            = PathX402Facilitator + "/verify"
+	X402SettlePath            = PathX402Facilitator + "/settle"
 )

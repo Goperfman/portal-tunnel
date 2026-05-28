@@ -23,6 +23,7 @@ func newHandler() http.Handler {
 	mux.HandleFunc("/api/ping", handlePing)
 	mux.Handle("/ws", websocket.Handler(handleWebSocket))
 	mux.HandleFunc("/api/test-cookies", handleCookies)
+
 	return mux
 }
 

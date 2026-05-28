@@ -62,6 +62,7 @@ const (
 	agentDashboardSettingsFieldOwner
 	agentDashboardSettingsFieldThumbnail
 	agentDashboardSettingsFieldHide
+	agentDashboardSettingsFieldX402Facilitator
 	agentDashboardSettingsFieldCount
 )
 
@@ -98,6 +99,7 @@ type agentDashboardModel struct {
 	metadataOwner        textinput.Model
 	metadataThumbnail    textinput.Model
 	metadataHide         textinput.Model
+	x402FacilitatorURL   textinput.Model
 }
 
 type agentDashboardStatusMsg struct {
@@ -165,6 +167,7 @@ func RunDashboard(configPath, stateDir string) error {
 		metadataOwner:       newAgentDashboardInlineInput("owner"),
 		metadataThumbnail:   newAgentDashboardInlineInput("https://..."),
 		metadataHide:        newAgentDashboardInlineInput("true or false"),
+		x402FacilitatorURL:  newAgentDashboardInlineInput("https://relay.example.com/x402"),
 	}
 	model.resizeInputs(0)
 
@@ -701,10 +704,14 @@ func (m agentDashboardModel) updateSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.
 }
 
 func (m *agentDashboardModel) focusSettingsField(field int) {
-	if field < 0 {
-		field = agentDashboardSettingsFieldCount - 1
+	fieldCount := agentDashboardSettingsFieldCount
+	if tunnel, ok := m.selectedTunnelStatus(); ok && !tunnel.X402Enabled {
+		fieldCount = agentDashboardSettingsFieldX402Facilitator
 	}
-	if field >= agentDashboardSettingsFieldCount {
+	if field < 0 {
+		field = fieldCount - 1
+	}
+	if field >= fieldCount {
 		field = 0
 	}
 	m.input.Blur()
@@ -716,6 +723,7 @@ func (m *agentDashboardModel) focusSettingsField(field int) {
 		&m.metadataOwner,
 		&m.metadataThumbnail,
 		&m.metadataHide,
+		&m.x402FacilitatorURL,
 	} {
 		input.Blur()
 	}
@@ -738,6 +746,8 @@ func (m *agentDashboardModel) focusedSettingsInput() *textinput.Model {
 		return &m.metadataThumbnail
 	case agentDashboardSettingsFieldHide:
 		return &m.metadataHide
+	case agentDashboardSettingsFieldX402Facilitator:
+		return &m.x402FacilitatorURL
 	default:
 		return nil
 	}
@@ -751,6 +761,7 @@ func (m *agentDashboardModel) blurSettingsInputs() {
 		&m.metadataOwner,
 		&m.metadataThumbnail,
 		&m.metadataHide,
+		&m.x402FacilitatorURL,
 	} {
 		input.Blur()
 	}
@@ -765,6 +776,7 @@ func (m *agentDashboardModel) clearSettingsDraft() {
 		&m.metadataOwner,
 		&m.metadataThumbnail,
 		&m.metadataHide,
+		&m.x402FacilitatorURL,
 	} {
 		input.Reset()
 	}
@@ -790,6 +802,7 @@ func (m *agentDashboardModel) resizeInputs(width int) {
 		&m.metadataOwner,
 		&m.metadataThumbnail,
 		&m.metadataHide,
+		&m.x402FacilitatorURL,
 	} {
 		input.Width = settingsWidth
 	}
@@ -813,18 +826,23 @@ func (m *agentDashboardModel) ensureSettingsDraft(tunnel types.AgentTunnelStatus
 func (m *agentDashboardModel) loadSettingsDraft(tunnel types.AgentTunnelStatus) {
 	metadata := tunnel.Metadata
 	m.settingsEditTunnelID = tunnel.ID
+	if !tunnel.X402Enabled && m.settingsFocus == agentDashboardSettingsFieldX402Facilitator {
+		m.settingsFocus = agentDashboardSettingsFieldMaxActiveRelays
+	}
 	m.settingsMaxRelays.SetValue(strconv.Itoa(tunnel.MaxActiveRelays))
 	m.metadataDescription.SetValue(strings.TrimSpace(metadata.Description))
 	m.metadataTags.SetValue(strings.Join(metadata.Tags, ","))
 	m.metadataOwner.SetValue(strings.TrimSpace(metadata.Owner))
 	m.metadataThumbnail.SetValue(strings.TrimSpace(metadata.Thumbnail))
 	m.metadataHide.SetValue(strconv.FormatBool(metadata.Hide))
+	m.x402FacilitatorURL.SetValue(strings.TrimSpace(tunnel.X402FacilitatorURL))
 	m.settingsMaxRelays.CursorEnd()
 	m.metadataDescription.CursorEnd()
 	m.metadataTags.CursorEnd()
 	m.metadataOwner.CursorEnd()
 	m.metadataThumbnail.CursorEnd()
 	m.metadataHide.CursorEnd()
+	m.x402FacilitatorURL.CursorEnd()
 }
 
 func (m agentDashboardModel) addTunnelFromInput() (tea.Model, tea.Cmd) {
@@ -917,6 +935,12 @@ func (m agentDashboardModel) applySettingsEdit() (tea.Model, tea.Cmd) {
 	req := types.AgentTunnelUpdateRequest{
 		MaxActiveRelays: &maxActiveRelays,
 		Metadata:        &metadata,
+	}
+	if tunnel.X402Enabled {
+		facilitatorURL := strings.TrimSpace(m.x402FacilitatorURL.Value())
+		if facilitatorURL != strings.TrimSpace(tunnel.X402FacilitatorURL) {
+			req.X402FacilitatorURL = &facilitatorURL
+		}
 	}
 	m.err = nil
 	return m, agentDashboardRun(func(ctx context.Context) error {
@@ -1284,10 +1308,10 @@ func (m agentDashboardModel) renderSettingsSection(pane *agentDashboardView, wid
 		return
 	}
 
-	m.renderSettingsInputRows(pane, width, height, startLine)
+	m.renderSettingsInputRows(pane, width, height, startLine, tunnel)
 }
 
-func (m agentDashboardModel) renderSettingsInputRows(pane *agentDashboardView, width, height, startLine int) {
+func (m agentDashboardModel) renderSettingsInputRows(pane *agentDashboardView, width, height, startLine int, tunnel types.AgentTunnelStatus) {
 	rows := []struct {
 		label string
 		input textinput.Model
@@ -1299,6 +1323,13 @@ func (m agentDashboardModel) renderSettingsInputRows(pane *agentDashboardView, w
 		{label: "Owner", input: m.metadataOwner, field: agentDashboardSettingsFieldOwner},
 		{label: "Thumbnail", input: m.metadataThumbnail, field: agentDashboardSettingsFieldThumbnail},
 		{label: "Hidden", input: m.metadataHide, field: agentDashboardSettingsFieldHide},
+	}
+	if tunnel.X402Enabled {
+		rows = append(rows, struct {
+			label string
+			input textinput.Model
+			field int
+		}{label: "Facilitator", input: m.x402FacilitatorURL, field: agentDashboardSettingsFieldX402Facilitator})
 	}
 	for _, row := range rows {
 		if len(pane.lines)-startLine >= height {
@@ -1656,12 +1687,15 @@ func (m agentDashboardModel) settingsChanged(tunnel types.AgentTunnelStatus) boo
 		return true
 	}
 	metadata := tunnel.Metadata
+	x402Changed := tunnel.X402Enabled &&
+		strings.TrimSpace(m.x402FacilitatorURL.Value()) != strings.TrimSpace(tunnel.X402FacilitatorURL)
 	return maxRelays != tunnel.MaxActiveRelays ||
 		strings.TrimSpace(m.metadataDescription.Value()) != strings.TrimSpace(metadata.Description) ||
 		!slices.Equal(utils.SplitCSV(m.metadataTags.Value()), metadata.Tags) ||
 		strings.TrimSpace(m.metadataOwner.Value()) != strings.TrimSpace(metadata.Owner) ||
 		strings.TrimSpace(m.metadataThumbnail.Value()) != strings.TrimSpace(metadata.Thumbnail) ||
-		hide != metadata.Hide
+		hide != metadata.Hide ||
+		x402Changed
 }
 
 func relayDashboardFeatures(relay types.AgentRelayStatus) string {

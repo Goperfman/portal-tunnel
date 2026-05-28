@@ -65,6 +65,18 @@ The relay server (`relay-server`) reads configuration from environment variables
 | `PPROF_ENABLED` | `false` | bool | Enable the relay pprof diagnostics HTTP server |
 | `PPROF_ADDR` | `127.0.0.1:6060` | string | pprof listen address when enabled; keep it on loopback unless the port is protected |
 
+### Payments
+
+| Variable | Default | Type | Description |
+|----------|---------|------|-------------|
+| `X402_FACILITATOR_ENABLED` | `false` | bool | Enable the relay-local x402 facilitator under `/x402` |
+| `X402_NETWORK` | | string | CAIP-2 network served by the facilitator, such as `eip155:8453` |
+| `X402_RPC_URL` | | string | RPC URL used by the facilitator; empty uses the facilitator default for supported networks |
+
+The relay-local facilitator uses the relay identity private key from
+`IDENTITY_PATH/identity.json`. `/sdk/domain` exposes only the public facilitator
+URL and network; `X402_RPC_URL` is not returned to clients.
+
 ### Cloudflare
 
 | Variable | Default | Type | Description |
@@ -237,6 +249,41 @@ Tunnel fields mirror `portal expose` flags:
 | `identity_json` | string | Identity JSON payload; overrides `identity_path` contents and is persisted there when both are set |
 | `udp`, `udp_addr`, `tcp` | bool/string | UDP and raw TCP relay options |
 | `description`, `tags`, `owner`, `thumbnail`, `hide` | mixed | Lease metadata shown by relays |
+| `http_routes.x402` | table | x402 payment settings for one HTTP route; set `facilitator_url` explicitly or let frontend/configuration tooling write it |
+
+`http_routes.x402` is evaluated by the tunnel process before proxying to the
+upstream. Use it when a specific HTTP path should require payment:
+
+```toml
+[[tunnels]]
+id = "paid-api"
+name = "paid-api"
+relays = ["https://portal.example.com"]
+discovery = false
+
+[[tunnels.http_routes]]
+prefix = "/"
+upstream = "http://127.0.0.1:5173"
+
+[[tunnels.http_routes]]
+prefix = "/api/report"
+upstream = "http://127.0.0.1:3001"
+
+[tunnels.http_routes.x402]
+network = "eip155:8453"
+price = "$0.010"
+pay_to = "identity"
+facilitator_url = "https://portal.example.com:4017/x402"
+resource = "/api/report"
+mime_type = "application/json"
+max_timeout_seconds = 0
+payment_timeout_seconds = 0
+```
+
+Repeat `[[tunnels.http_routes]]` with a different `x402.price` for each static
+priced path. If prices depend on product state, user input, or a database row,
+wrap the app's Go handler with `portal/x402` and use a `PriceResolver`; tunnel
+config is intentionally static.
 
 For a task-oriented walkthrough, see [Portal Agent](/portal-agent).
 
@@ -250,11 +297,16 @@ Stores the secp256k1 identity used to sign tunnel sessions and relay descriptors
 | `address` | string | Derived EVM address used for SIWE and identity ownership |
 | `public_key` | string | Compressed secp256k1 public key hex |
 | `private_key` | string | secp256k1 private key hex; keep secret |
+| `mnemonic` | string | BIP-39 mnemonic used to derive the secp256k1 identity key; keep secret |
+| `derivation_path` | string | EVM derivation path for `mnemonic`; defaults to `m/44'/60'/0'/0/0` |
 | `wireguard_public_key` | string | Relay-only WireGuard overlay public key when discovery is enabled |
 | `wireguard_private_key` | string | Relay-only WireGuard overlay private key when discovery is enabled |
 | `encrypted_client_hello_seed` | string | Relay-only HKDF salt for deriving the ECH HPKE private key; generated automatically when missing; keep secret |
 
-The same identity file or state directory can be reused across restarts to keep a stable address.
+When `mnemonic` is present, Portal derives the private key at `derivation_path`
+and preserves the mnemonic form when rewriting `identity.json`. The same
+identity file or state directory can be reused across restarts to keep a stable
+address.
 
 ### `admin_settings.json`
 

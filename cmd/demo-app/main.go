@@ -130,6 +130,13 @@ func runUDPCommand(args []string) error {
 }
 
 func runTCPDemo(ctx context.Context, cfg demoConfig) error {
+	metadata := types.LeaseMetadata{
+		Description: cfg.desc,
+		Tags:        utils.SplitCSV(cfg.tags),
+		Owner:       cfg.owner,
+		Thumbnail:   cfg.thumbnail,
+		Hide:        cfg.hide,
+	}
 	exposure, err := sdk.Expose(ctx, sdk.ExposeConfig{
 		RelayURLs:       utils.SplitCSV(cfg.relayURLs),
 		Discovery:       cfg.discovery,
@@ -138,13 +145,7 @@ func runTCPDemo(ctx context.Context, cfg demoConfig) error {
 		IdentityJSON:    cfg.identityJSON,
 		BanMITM:         cfg.banMITM,
 		MaxActiveRelays: cfg.maxActiveRelays,
-		Metadata: types.LeaseMetadata{
-			Description: cfg.desc,
-			Tags:        utils.SplitCSV(cfg.tags),
-			Owner:       cfg.owner,
-			Thumbnail:   cfg.thumbnail,
-			Hide:        cfg.hide,
-		},
+		Metadata:        metadata,
 	})
 	if err != nil {
 		return fmt.Errorf("exposure listen error: %w", err)
@@ -155,9 +156,8 @@ func runTCPDemo(ctx context.Context, cfg demoConfig) error {
 	if err != nil {
 		return fmt.Errorf("invalid --addr value %q: %w", rawAddr, err)
 	}
-	httpHandler := newHandler()
 	defer exposure.Close()
-	err = exposure.RunHTTP(ctx, httpHandler, cfg.addr)
+	err = exposure.RunHTTP(ctx, newHandler(), cfg.addr)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			err = nil

@@ -132,6 +132,46 @@ ports:
 
 See [TCP/UDP Tunneling](/tcp-udp-tunneling) for usage details.
 
+## Optional: Enable x402 Facilitator
+
+The relay can expose a relay-local x402 facilitator at `/x402`. Frontends and
+configuration tools can read `/sdk/domain` for the current relay's facilitator
+URL and network, then call `/x402/supported` for mechanism details when needed.
+
+```yaml
+environment:
+  X402_FACILITATOR_ENABLED: "true"
+  X402_NETWORK: eip155:8453
+  X402_RPC_URL: https://base-mainnet.example
+```
+
+The relay-local facilitator uses the relay identity private key from
+`IDENTITY_PATH/identity.json`. Fund that identity only as required for
+settlement gas.
+
+For CLI-created x402 routes, pass the selected facilitator explicitly:
+
+```bash
+portal expose 3000 \
+  --relays https://relay.example.com:4017 \
+  --discovery=false \
+  --x402-facilitator-url https://relay.example.com:4017/x402 \
+  --x402-network eip155:8453 \
+  --x402-price "$0.001"
+```
+
+Native Go apps can use the same relay facilitator without putting payment
+policy in the tunnel config. The payment app includes a native paid image route:
+
+```bash
+go run ./cmd/payment-app \
+  --relays https://relay.example.com:4017 \
+  --discovery=false \
+  --x402-facilitator-url https://relay.example.com:4017/x402 \
+  --x402-network eip155:8453 \
+  --x402-price "$0.01"
+```
+
 ## Troubleshooting
 
 **Port already in use**

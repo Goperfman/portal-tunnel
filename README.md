@@ -22,6 +22,8 @@ Most tunneling services (ngrok, Cloudflare Tunnel) terminate your TLS connection
 
 - **No Accounts, No API Keys** — Authentication uses SIWE (Sign-In with Ethereum) with a locally generated secp256k1 key pair. No email, no registration, no vendor lock-in.
 
+- **x402 Payments** — Turn APIs, content, and local web apps into payable internet endpoints without centralized billing gateway.
+
 ## Comparison
 
 | | Portal | ngrok | Cloudflare Tunnel | frp |
@@ -67,6 +69,12 @@ portal expose 3000 --name myapp --relays https://portal.example.com --discovery=
 portal expose --name myapp \
   --http-route /api=http://127.0.0.1:3001 \
   --http-route /=http://127.0.0.1:5173
+
+# Require x402 payment before a local HTTP upstream receives traffic
+portal expose 3000 --name paid-api \
+  --x402-facilitator-url https://portal.example.com/x402 \
+  --x402-network eip155:8453 \
+  --x402-price "$0.001"
 
 # Raw TCP port (Minecraft, databases, SSH)
 portal expose localhost:25565 --name minecraft --tcp

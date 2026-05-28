@@ -19,6 +19,8 @@ import (
 	"github.com/andybalholm/brotli"
 	"github.com/rs/zerolog/log"
 
+	portalx402 "github.com/gosuda/portal-tunnel/v2/portal/x402"
+	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
@@ -131,6 +133,8 @@ type HTTPRoute struct {
 	Prefix string
 	// Upstream is the target HTTP URL, or a loopback host:port shorthand.
 	Upstream string
+	// X402 enables payment enforcement for this public route.
+	X402 *types.X402Config
 }
 
 type httpRoute struct {
@@ -140,10 +144,10 @@ type httpRoute struct {
 	upstreamPath      string
 	upstreamPathSlash string
 	upstreamDomain    string
-	proxy             *httputil.ReverseProxy
+	handler           http.Handler
 }
 
-func newHTTPRouteHandler(routeConfigs []HTTPRoute) (http.Handler, error) {
+func newHTTPRouteHandler(routeConfigs []HTTPRoute, tunnelIdentity types.Identity, metadata types.LeaseMetadata) (http.Handler, error) {
 	if len(routeConfigs) == 0 {
 		return nil, errors.New("at least one http route is required")
 	}
@@ -159,7 +163,20 @@ func newHTTPRouteHandler(routeConfigs []HTTPRoute) (http.Handler, error) {
 			return nil, fmt.Errorf("duplicate http route prefix %q", route.prefix)
 		}
 		seen[route.prefix] = struct{}{}
-		route.proxy = route.newReverseProxy()
+		var handler http.Handler = route.newReverseProxy()
+		if routeConfig.X402 != nil && !routeConfig.X402.Empty() {
+			handler, err = portalx402.NewHTTPRouteHandler(portalx402.HTTPRouteHandlerConfig{
+				Prefix:         route.prefix,
+				Next:           handler,
+				X402:           *routeConfig.X402,
+				TunnelIdentity: tunnelIdentity,
+				Metadata:       metadata,
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
+		route.handler = handler
 		routes = append(routes, route)
 	}
 
@@ -177,7 +194,7 @@ func newHTTPRouteHandler(routeConfigs []HTTPRoute) (http.Handler, error) {
 		}
 		for _, route := range routes {
 			if route.prefix == "/" || p == route.prefix || strings.HasPrefix(p, route.prefixSlash) {
-				route.proxy.ServeHTTP(w, r)
+				route.handler.ServeHTTP(w, r)
 				return
 			}
 		}

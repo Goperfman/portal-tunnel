@@ -24,6 +24,15 @@ interface DomainStatusResponse {
   ens?: {
     verified?: boolean;
   };
+  x402?: X402FacilitatorInfo;
+}
+
+interface X402FacilitatorInfo {
+  enabled?: boolean;
+  url?: string;
+  network?: string;
+  network_name?: string;
+  supported_url?: string;
 }
 
 const repoURL = "https://github.com/gosuda/portal-tunnel";
@@ -36,6 +45,10 @@ function formatWalletAddress(address: string): string {
   return `${trimmed.slice(0, 6)}...${trimmed.slice(-4)}`;
 }
 
+function facilitatorNetworkLabel(x402: X402FacilitatorInfo): string {
+  return x402.network_name?.trim() || x402.network?.trim() || "enabled";
+}
+
 export function Header({
   title = "PORTAL",
   isAdmin,
@@ -44,6 +57,7 @@ export function Header({
 }: HeaderProps) {
   const releaseVersion = getReleaseVersion();
   const [ensVerified, setENSVerified] = useState(false);
+  const [x402, setX402] = useState<X402FacilitatorInfo | null>(null);
   const {
     isAuthenticated,
     isLoading,
@@ -86,10 +100,12 @@ export function Header({
         );
         if (!cancelled) {
           setENSVerified(status?.ens?.verified === true);
+          setX402(status?.x402?.enabled === true ? status.x402 : null);
         }
       } catch {
         if (!cancelled) {
           setENSVerified(false);
+          setX402(null);
         }
       }
     })();
@@ -131,6 +147,14 @@ export function Header({
               {ensVerified && (
                 <span className="inline-flex h-6 items-center rounded-full bg-primary/12 px-2.5 text-xs font-semibold text-primary ring-1 ring-primary/20">
                   ENS verified
+                </span>
+              )}
+              {x402 && (
+                <span
+                  className="inline-flex h-6 max-w-40 cursor-default items-center overflow-hidden text-ellipsis whitespace-nowrap rounded-full bg-emerald-500/10 px-2.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-500/20 dark:text-emerald-300"
+                  title="x402 facilitator enabled"
+                >
+                  x402 {facilitatorNetworkLabel(x402)}
                 </span>
               )}
             </div>

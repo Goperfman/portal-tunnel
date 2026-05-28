@@ -12,8 +12,8 @@ related, but they do not all mean "connect a browser wallet".
 
 | Surface | Key material | Purpose |
 |---------|--------------|---------|
-| Tunnel identity | Local `identity.json` secp256k1 private key | Signs SIWE lease registration challenges |
-| Relay identity | Relay `IDENTITY_PATH/identity.json` secp256k1 private key | Signs relay descriptors, admin default wallet, lease access tokens, and ENS base-domain address |
+| Tunnel identity | Local `identity.json` secp256k1 private key, or BIP-39 mnemonic plus derivation path | Signs SIWE lease registration challenges |
+| Relay identity | Relay `IDENTITY_PATH/identity.json` secp256k1 private key, or BIP-39 mnemonic plus derivation path | Signs relay descriptors, admin default wallet, lease access tokens, and ENS base-domain address |
 | Relay admin wallet | Browser wallet address allowlist | Signs in to `/admin` with a SIWE wallet session |
 | Agent wallet | Optional browser wallet allowlist | Reads loopback agent status through `/v1/agent/status` |
 | ENS gasless DNS | DNSSEC plus `ENS1 ...` TXT records | Lets ENS-aware clients resolve the relay domain and lease hostnames to Portal identities |
@@ -32,7 +32,9 @@ Tunnel registration always uses a SIWE challenge internally:
    signing access, and UDP backhaul authentication.
 
 This does not require MetaMask or a user wallet. It is accountless identity
-proof based on the local tunnel key.
+proof based on the local tunnel key. `identity.json` may store a raw
+`private_key`, or a BIP-39 `mnemonic` with `derivation_path` such as
+`m/44'/60'/0'/0/0`.
 
 There is no `--auth siwe` flag. The current CLI command is:
 

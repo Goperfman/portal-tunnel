@@ -126,7 +126,7 @@ Dashboard panes:
 | Pane | Purpose |
 |------|---------|
 | Tunnels | Add, select, and delete simple target tunnels |
-| Settings | Edit max active relays and public metadata |
+| Settings | Edit max active relays, public metadata, and x402 facilitator URLs for x402 routes |
 | Relays | Connect or disconnect relays for the selected tunnel |
 | Multi-hop | Build and apply an ordered multi-hop route |
 
@@ -215,7 +215,7 @@ Control endpoints:
 | `GET` | `/v1/agent/status` | Bearer token or wallet session | Read agent and tunnel status |
 | `POST` | `/v1/agent/shutdown` | Bearer token | Ask the agent to stop |
 | `POST` | `/v1/agent/tunnels` | Bearer token | Add a simple target tunnel |
-| `PATCH` | `/v1/agent/tunnels/{id}` | Bearer token | Update metadata or max active relays |
+| `PATCH` | `/v1/agent/tunnels/{id}` | Bearer token | Update metadata, max active relays, or x402 facilitator URL |
 | `DELETE` | `/v1/agent/tunnels/{id}` | Bearer token | Delete a tunnel |
 | `POST` | `/v1/agent/tunnels/{id}/relays` | Bearer token | Connect a relay |
 | `DELETE` | `/v1/agent/tunnels/{id}/relays` | Bearer token | Disconnect a relay |
