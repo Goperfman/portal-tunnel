@@ -150,11 +150,12 @@ protected, err := portalx402.NewHTTPRouteHandler(portalx402.HTTPRouteHandlerConf
 })
 ```
 
-`cmd/demo-app` includes this native x402 pattern. Run it with:
+`cmd/payment-app` includes this native x402 pattern. Run it with:
 
 ```text
-demo-app --x402-facilitator-url https://portal.example.com:4017/x402 \
-  --x402-network eip155:8453
+payment-app --x402-facilitator-url https://portal.example.com:4017/x402 \
+  --x402-network eip155:8453 \
+  --x402-price "$0.01"
 ```
 
 Use dedicated raw TCP mode for non-HTTP services that need a public TCP port:

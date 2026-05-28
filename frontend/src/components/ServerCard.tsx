@@ -330,8 +330,8 @@ export function ServerCard({
               )}
 
               {tags && tags.length > 0 && (
-                <div className="w-full overflow-x-auto mt-1">
-                  <div className="flex gap-1.5 min-w-max">
+                <div className="mt-1 w-full overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  <div className="flex min-w-max gap-1.5">
                     {tags.map((tag, index) => (
                       <span
                         key={index}

@@ -216,10 +216,10 @@ protected, err := portalx402.NewHTTPRouteHandler(portalx402.HTTPRouteHandlerConf
 })
 ```
 
-The demo app exposes the same pattern:
+The payment app exposes the same pattern:
 
 ```bash
-go run ./cmd/demo-app --x402-facilitator-url https://portal.example.com/x402 --x402-network eip155:8453
+go run ./cmd/payment-app --x402-facilitator-url https://portal.example.com/x402 --x402-network eip155:8453 --x402-price "$0.01"
 ```
 
 Expose a Minecraft server:
