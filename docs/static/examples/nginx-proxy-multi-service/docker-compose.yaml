@@ -5,7 +5,7 @@
 # Architecture:
 #   nginx:443 (L4 stream, ssl_preread)
 #     - portal.example.com    -> nginx:8443 (L7 path split)
-#         - relay-owned API paths -> portal:4017 (portal, HTTPS, Docker network only)
+#         - relay-owned API paths -> portal:${API_PORT:-4017} (portal, HTTPS, Docker network only)
 #         - frontend/UI paths     -> portal-frontend:8080 (HTTP)
 #     - *.portal.example.com  -> portal:443 (portal SNI passthrough, Docker network only)
 #     - everything else       -> nginx:8443 (L7 for other apps)
@@ -117,7 +117,7 @@ services:
       # - headless-shell
     environment:
       PORT: 8081
-      PORTAL_API_BASE_URL: https://portal:4017
+      PORTAL_API_BASE_URL: "https://portal:${API_PORT:-4017}"
       LANDING_PAGE_ENABLED: ${LANDING_PAGE_ENABLED:-false}
       PORTAL_FRONTEND_STATE_PATH: /portal-frontend-state/state.json
       HEADLESS_SHELL_URL: ${HEADLESS_SHELL_URL:-}

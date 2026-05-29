@@ -44,7 +44,7 @@ Tunnel clients and public app visitors
 | Public request | nginx behavior | Upstream |
 |---|---|---|
 | `portal.example.com/`, `/admin`, SPA assets | Terminate TLS, HTTP proxy | `portal-frontend:8080` |
-| `/admin/auth/*`, `/sdk/*`, `/install.*`, `/discovery`, `/healthz`, `/x402/*` | Terminate TLS, HTTP proxy | `portal:4017` over HTTPS |
+| `/admin/auth/*`, `/sdk/*`, `/install.*`, `/discovery`, `/discovery/*`, `/healthz`, `/v1/sign`, `/x402/*` | Terminate TLS, HTTP proxy | `portal:4017` over HTTPS |
 | `/state`, `/policy/*`, `/service/status`, `/thumbnail/*` | Terminate TLS, HTTP proxy | `portal-frontend:8080`, then `portal-api:8081` |
 | `*.portal.example.com` | Raw TCP passthrough with `ssl_preread` | `portal` SNI listener |
 
@@ -165,7 +165,7 @@ TRUSTED_PROXY_CIDRS=
 LANDING_PAGE_ENABLED=false
 ```
 
-Keep `SNI_PORT=443` with the bundled nginx example because this is the public SNI port advertised to tunnel clients. The single-domain Compose example maps the relay container's SNI listener to `127.0.0.1:4443` on the host so nginx can own public `443/tcp` and still pass wildcard TCP traffic to the relay. Do not open `4443/tcp` publicly; it is only a host-local upstream in that example.
+`API_PORT` defaults to `4017`. If you change it, update the `portal_api` upstream in the bundled `nginx.conf` to the same port. Keep `SNI_PORT=443` because this is the public SNI port advertised to tunnel clients. The single-domain Compose example maps the relay container's SNI listener to `127.0.0.1:4443` on the host so nginx can own public `443/tcp` and still pass wildcard TCP traffic to the relay. Do not open `4443/tcp` publicly; it is only a host-local upstream in that example.
 
 If the relay joins public discovery, set `BOOTSTRAPS` to at least one reachable relay URL and keep `WIREGUARD_PORT/udp` open.
 

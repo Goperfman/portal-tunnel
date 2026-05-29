@@ -32,6 +32,8 @@ const CDP_TIMEOUT_MS = 5_000;
 const HTTP_TIMEOUT_MS = 5_000;
 const JSON_LIMIT = 1 << 20;
 const THUMBNAIL_CONTENT_TYPE = "image/jpeg";
+const CORS_ALLOW_HEADERS = "Accept, Authorization, Content-Type, X-Portal-Access-Token";
+const CORS_ALLOW_METHODS = "GET, HEAD, POST, DELETE, OPTIONS";
 
 type APIEnvelope<T> =
   | { ok: true; data: T }
@@ -841,6 +843,16 @@ async function serveThumbnail(req: IncomingMessage, res: ServerResponse): Promis
 
 const server = createServer((req, res) => {
   void (async () => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", CORS_ALLOW_METHODS);
+    res.setHeader("Access-Control-Allow-Headers", CORS_ALLOW_HEADERS);
+    res.setHeader("Access-Control-Max-Age", "600");
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
     const url = new URL(req.url || "/", "http://api.local");
     if (url.pathname === "/healthz") {
       writeData(res, 200, { status: "ok" });
