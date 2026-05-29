@@ -16,7 +16,7 @@ The relay server (`relay-server`) reads configuration from environment variables
 | Variable | Default | Type | Description |
 |----------|---------|------|-------------|
 | `PORTAL_URL` | `https://localhost:4017` | string | Public base URL of this relay server |
-| `IDENTITY_PATH` | `./.portal-certs` | string | Directory path for relay identity, admin state, and TLS materials |
+| `IDENTITY_PATH` | `./.portal-certs` | string | Directory path for relay identity, policy state, and TLS materials |
 | `API_PORT` | `4017` | int | Admin/API server listen port |
 | `SNI_PORT` | `443` | int | TCP SNI router listen port |
 | `WIREGUARD_PORT` | `51820` | int | Public and listen UDP port for relay discovery overlay |
@@ -34,7 +34,6 @@ The relay server (`relay-server`) reads configuration from environment variables
 
 | Variable | Default | Type | Description |
 |----------|---------|------|-------------|
-| `LANDING_PAGE_ENABLED` | `false` | bool | Enable the landing page by default when no admin setting has been saved yet |
 | `DISCOVERY` | `false` | bool | Serve relay discovery endpoints and poll discovery peers |
 | `BOOTSTRAPS` | `""` | string | Additional bootstrap relay API URLs used for discovery expansion (comma-separated) |
 
@@ -51,12 +50,6 @@ The relay server (`relay-server`) reads configuration from environment variables
 |----------|---------|------|-------------|
 | `ACME_DNS_PROVIDER` | `""` | string | DNS provider for managed DNS-01/A-record sync, ECH HTTPS records, and ENS gasless DNSSEC/TXT automation (`cloudflare` \| `gcloud` \| `hetzner` \| `njalla` \| `route53` \| `vultr`); leave empty to use manual `fullchain.pem`/`privatekey.pem` from `IDENTITY_PATH` |
 | `ENS_GASLESS_ENABLED` | `false` | bool | Enable ENS gasless DNS import automation for the managed DNS zone and lease hostnames |
-
-### Admin
-
-| Variable | Default | Type | Description |
-|----------|---------|------|-------------|
-| `HEADLESS_SHELL_URL` | `""` | string | Headless Chrome CDP WebSocket URL for thumbnail generation (e.g. `ws://headless-shell:9222`) |
 
 ### Diagnostics
 
@@ -76,6 +69,19 @@ The relay server (`relay-server`) reads configuration from environment variables
 The relay-local facilitator uses the relay identity private key from
 `IDENTITY_PATH/identity.json`. `/sdk/domain` exposes only the public facilitator
 URL and network; `X402_RPC_URL` is not returned to clients.
+
+### Frontend API Service
+
+The TypeScript API service reads these environment
+variables:
+
+| Variable | Default | Type | Description |
+|----------|---------|------|-------------|
+| `PORT` | `8081` | int | Frontend API HTTP listen port |
+| `PORTAL_API_BASE_URL` | `https://portal:4017` | string | Relay API base URL used to compose frontend-owned state |
+| `LANDING_PAGE_ENABLED` | `false` | bool | Default landing page flag when no frontend state has been saved yet |
+| `PORTAL_FRONTEND_STATE_PATH` | `""` | string | Optional JSON file path for persisted frontend-owned state |
+| `HEADLESS_SHELL_URL` | `""` | string | Headless Chrome CDP WebSocket URL; leave empty to disable generated thumbnails |
 
 ### Cloudflare
 
@@ -209,7 +215,7 @@ description = "Managed web tunnel"
 tags = ["web"]
 
 [[tunnels]]
-id = "frontend-api"
+id = "api"
 name = "myapp"
 
 [[tunnels.http_routes]]
@@ -308,11 +314,12 @@ and preserves the mnemonic form when rewriting `identity.json`. The same
 identity file or state directory can be reused across restarts to keep a stable
 address.
 
-### `admin_settings.json`
+### `policy.json`
 
-Persists admin-panel state for the relay server. Managed automatically by the relay on write; do not edit manually while the server is running.
+Persists relay policy state. Managed automatically by the relay on write; do not edit manually while the server is running.
 
-Relay admin settings are stored at `IDENTITY_PATH/admin_settings.json`.
+Relay policy settings are stored at `IDENTITY_PATH/policy.json`. Older
+`admin_settings.json` files are read once and migrated to `policy.json`.
 
 ---
 

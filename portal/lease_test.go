@@ -130,12 +130,12 @@ func TestLeaseRegistryAutomaticECHRouteFallsBackToPlainSNI(t *testing.T) {
 		t.Fatalf("PublicLeases()[0].Hostname = %q, want %q", leases[0].Hostname, publicHostname)
 	}
 
-	adminLeases := registry.AdminLeases(time.Now())
-	if len(adminLeases) != 1 {
-		t.Fatalf("AdminLeases() length = %d, want 1", len(adminLeases))
+	policyLeases := registry.PolicyLeases(time.Now())
+	if len(policyLeases) != 1 {
+		t.Fatalf("PolicyLeases() length = %d, want 1", len(policyLeases))
 	}
-	if adminLeases[0].Hostname != publicHostname {
-		t.Fatalf("AdminLeases()[0] hostname = %q, want %q", adminLeases[0].Hostname, publicHostname)
+	if policyLeases[0].Hostname != publicHostname {
+		t.Fatalf("PolicyLeases()[0] hostname = %q, want %q", policyLeases[0].Hostname, publicHostname)
 	}
 
 	if _, _, err := registry.Register(types.RegisterChallengeRequest{
@@ -254,7 +254,7 @@ func TestLeaseRegistryWildcardAndConflict(t *testing.T) {
 	}
 }
 
-func TestLeaseRegistryAdminLeasesAndRoutableUsePolicy(t *testing.T) {
+func TestLeaseRegistryPolicyLeasesAndRoutableUsePolicy(t *testing.T) {
 	t.Parallel()
 
 	registry := newTestRegistry(t)
@@ -273,12 +273,12 @@ func TestLeaseRegistryAdminLeasesAndRoutableUsePolicy(t *testing.T) {
 		t.Fatal("policy.IsIdentityRoutable() = true, want false before approval")
 	}
 
-	leases := registry.AdminLeases(time.Now())
+	leases := registry.PolicyLeases(time.Now())
 	if len(leases) != 1 {
-		t.Fatalf("AdminLeases() length = %d, want 1", len(leases))
+		t.Fatalf("PolicyLeases() length = %d, want 1", len(leases))
 	}
 	if leases[0].IsApproved {
-		t.Fatal("AdminLeases()[0].IsApproved = true, want false before approval")
+		t.Fatal("PolicyLeases()[0].IsApproved = true, want false before approval")
 	}
 	if got := runtime.IPFilter().IdentityIP(record.Key()); got != "203.0.113.20" {
 		t.Fatalf("Register() lease IP = %q, want %q", got, "203.0.113.20")
@@ -289,12 +289,12 @@ func TestLeaseRegistryAdminLeasesAndRoutableUsePolicy(t *testing.T) {
 		t.Fatal("policy.IsIdentityRoutable() = false, want true after approval")
 	}
 
-	leases = registry.AdminLeases(time.Now())
+	leases = registry.PolicyLeases(time.Now())
 	if len(leases) != 1 {
-		t.Fatalf("AdminLeases() length = %d, want 1", len(leases))
+		t.Fatalf("PolicyLeases() length = %d, want 1", len(leases))
 	}
 	if !leases[0].IsApproved {
-		t.Fatal("AdminLeases()[0].IsApproved = false, want true after approval")
+		t.Fatal("PolicyLeases()[0].IsApproved = false, want true after approval")
 	}
 }
 

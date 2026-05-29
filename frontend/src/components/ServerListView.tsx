@@ -182,7 +182,7 @@ export function ServerListView({
   isAdmin = false,
   banFilter = "all",
   approvalMode = "auto",
-  landingPageEnabled = true,
+  landingPageEnabled = false,
   onBanFilterChange,
   onBanStatusChange,
   onBPSChange,

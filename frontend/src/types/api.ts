@@ -38,7 +38,7 @@ export interface Lease {
   ready: number;
 }
 
-export interface AdminLease extends Lease {
+export interface PolicyLease extends Lease {
   identity_key: string;
   address: string;
   bps: number;
@@ -55,21 +55,21 @@ export interface PublicStateResponse {
   landing_page_enabled: boolean;
 }
 
-export interface AdminPortSettings {
+export interface PolicyPortSettings {
   enabled: boolean;
   max_leases: number;
 }
 
-export interface AdminStateResponse {
-  settings: AdminSettings;
-  leases?: AdminLease[];
+export interface PolicyStateResponse {
+  policy: PolicySettings;
+  leases?: PolicyLease[];
 }
 
-export interface AdminSettings {
+export interface PolicySettings {
   approval_mode: ApprovalMode;
   landing_page_enabled: boolean;
-  udp: AdminPortSettings;
-  tcp_port: AdminPortSettings;
+  udp: PolicyPortSettings;
+  tcp_port: PolicyPortSettings;
 }
 
 export interface WalletAuthStatusResponse {
@@ -128,7 +128,7 @@ export interface ServiceStatusResponse {
   service_alive: boolean;
 }
 
-export interface AdminLeasePolicy {
+export interface LeasePolicyUpdate {
   identity_key: string;
   bps?: number;
   is_approved?: boolean;
@@ -136,7 +136,7 @@ export interface AdminLeasePolicy {
   is_denied?: boolean;
 }
 
-export interface AdminIPPolicy {
+export interface IPPolicyUpdate {
   ip: string;
   is_banned: boolean;
 }

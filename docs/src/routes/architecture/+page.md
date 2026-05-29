@@ -199,7 +199,7 @@ UDP client
 - For non-localhost deployments, relay TLS can run from manual certificate files in the relay `IDENTITY_PATH` directory or from managed ACME.
 - When managed ACME is enabled, supported DNS providers are `cloudflare`, `gcloud`, `hetzner`, `njalla`, `route53`, and `vultr`.
 - ENS gasless automation reuses `ACME_DNS_PROVIDER` for DNSSEC and ENS TXT sync when the selected provider supports DNSSEC.
-- Relay stores its state under `IDENTITY_PATH`, including `identity.json`, `admin_settings.json`, and certificate material. Tunnel and demo-app identities still use `IDENTITY_PATH` / `--identity-path` as a direct JSON file path.
+- Relay stores its state under `IDENTITY_PATH`, including `identity.json`, `policy.json`, and certificate material. Tunnel and demo-app identities still use `IDENTITY_PATH` / `--identity-path` as a direct JSON file path.
 - Managed non-localhost ACME keeps both root and wildcard DNS A records in sync.
 - Relay certificate material lives under `IDENTITY_PATH` as `fullchain.pem` and `privatekey.pem`.
 - Localhost uses the development certificate path instead of public managed/manual certificate setup.
@@ -346,7 +346,7 @@ Notes:
 
 ## Admin API Surface
 
-The relay server is intentionally API-only: public/admin state endpoints, public status endpoints, installer endpoints, and a small set of admin action/auth routes. Route paths are enumerated in `types/paths.go` and `cmd/relay-server`.
+The relay server is intentionally API-only: public state endpoints, relay policy endpoints, public status endpoints, installer endpoints, and a small set of admin auth routes. Route paths are enumerated in `types/paths.go` and `cmd/relay-server`.
 
 ## Keyless TLS Trust Model
 

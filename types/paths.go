@@ -1,28 +1,27 @@
 package types
 
 const (
+	PathRoot    = "/"
 	PathV1Sign  = "/v1/sign"
 	PathHealthz = "/healthz"
-	PathRoot    = "/"
+	PathState   = "/state"
 
 	PathAdmin              = "/admin"
 	PathAdminPrefix        = "/admin/"
-	PathAdminState         = "/admin/state"
-	PathAdminSettings      = "/admin/settings"
-	PathAdminLeasePolicy   = "/admin/lease-policy"
-	PathAdminIPPolicy      = "/admin/ip-policy"
 	PathAdminAuthChallenge = "/admin/auth/challenge"
 	PathAdminAuthLogin     = "/admin/auth/login"
 	PathAdminLogout        = "/admin/auth/logout"
 	PathAdminAuthStatus    = "/admin/auth/status"
-	PathPublicState        = "/state"
+
+	PathPolicy       = "/policy"
+	PathPolicyPrefix = "/policy/"
+	PathPolicyState  = PathPolicy + "/state"
+	PathPolicyLeases = PathPolicy + "/leases"
+	PathPolicyIPs    = PathPolicy + "/ips"
 
 	PathInstallShell      = "/install.sh"
 	PathInstallPowerShell = "/install.ps1"
 	PathInstallBinPrefix  = "/install/bin/"
-
-	PathServiceStatus   = "/service/status"
-	PathThumbnailPrefix = "/thumbnail/"
 
 	PathSDKDomain            = "/sdk/domain"
 	PathSDKRegisterChallenge = "/sdk/register/challenge"

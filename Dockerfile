@@ -19,7 +19,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
   make build-tunnel && \
   GOOS=${TARGETOS} GOARCH=${TARGETARCH} make build-server
 
-FROM gcr.io/distroless/static-debian12:nonroot AS api
+FROM gcr.io/distroless/static-debian12:nonroot AS runtime
 
 COPY --from=go-builder /src/bin/relay-server /usr/bin/relay-server
 

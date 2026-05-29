@@ -114,7 +114,7 @@ func ResolveRelayStateDir(path string) string {
 		return ""
 	}
 	switch strings.ToLower(filepath.Base(trimmed)) {
-	case types.RelayIdentityFilename, types.RelayAdminSettingsFilename:
+	case types.RelayIdentityFilename, types.RelayPolicyFilename, types.LegacyRelayAdminSettingsFilename:
 		return filepath.Dir(trimmed)
 	default:
 		return trimmed
@@ -129,12 +129,20 @@ func resolveRelayIdentityPath(path string) string {
 	return filepath.Join(stateDir, types.RelayIdentityFilename)
 }
 
-func ResolveRelayAdminSettingsPath(path string) string {
+func ResolveRelayPolicyPath(path string) string {
 	stateDir := ResolveRelayStateDir(path)
 	if stateDir == "" {
 		return ""
 	}
-	return filepath.Join(stateDir, types.RelayAdminSettingsFilename)
+	return filepath.Join(stateDir, types.RelayPolicyFilename)
+}
+
+func ResolveLegacyRelayPolicyPath(path string) string {
+	stateDir := ResolveRelayStateDir(path)
+	if stateDir == "" {
+		return ""
+	}
+	return filepath.Join(stateDir, types.LegacyRelayAdminSettingsFilename)
 }
 
 func normalizeStoredIdentity(identity types.Identity) (types.Identity, error) {

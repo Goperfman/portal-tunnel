@@ -1,14 +1,14 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AdminLease, AdminSettings } from "@/types/api";
+import type { PolicyLease, PolicySettings } from "@/types/api";
 import { useAdmin } from "@/hooks/useAdmin";
 import { API_PATHS } from "@/lib/apiPaths";
 import { APIClientError, apiClient } from "@/lib/apiClient";
 
-type DeferredAdminState = {
-  leases: AdminLease[];
-  settings: AdminSettings;
+type DeferredPolicyState = {
+  leases: PolicyLease[];
+  policy: PolicySettings;
 };
 
 vi.mock("@/hooks/useList", () => ({
@@ -42,16 +42,16 @@ vi.mock("@/lib/apiClient", async () => {
   };
 });
 
-function buildSettings(approvalMode: "auto" | "manual" = "auto"): AdminSettings {
+function buildSettings(approvalMode: "auto" | "manual" = "auto"): PolicySettings {
   return {
     approval_mode: approvalMode,
-    landing_page_enabled: true,
+    landing_page_enabled: false,
     udp: { enabled: false, max_leases: 0 },
     tcp_port: { enabled: false, max_leases: 0 },
   };
 }
 
-function buildLease(address: string, name: string = "relay-1"): AdminLease {
+function buildLease(address: string, name: string = "relay-1"): PolicyLease {
   return {
     expires_at: "2026-03-04T00:00:00Z",
     first_seen_at: "2026-03-02T00:00:00Z",
@@ -91,17 +91,17 @@ describe("useAdmin", () => {
     vi.clearAllMocks();
 
     mockGet.mockImplementation(async (path: string) => {
-      if (path === API_PATHS.admin.state) {
+      if (path === API_PATHS.policy.state) {
         return {
           leases: [buildLease("0x00000000000000000000000000000000000000A1")],
-          settings: { ...buildSettings(), approval_mode: "not-a-mode" },
+          policy: { ...buildSettings(), approval_mode: "not-a-mode" },
         } as never;
       }
       throw new Error(`Unexpected GET path: ${path}`);
     });
 
     mockPost.mockImplementation(async <T,>(path: string, body?: unknown): Promise<T> => {
-      if (path === API_PATHS.admin.settings) {
+      if (path === API_PATHS.policy.root) {
         return body as T;
       }
       return {} as T;
@@ -122,7 +122,7 @@ describe("useAdmin", () => {
 
   it("surfaces fetchData API errors", async () => {
     mockGet.mockImplementation(async (path: string) => {
-      if (path === API_PATHS.admin.state) {
+      if (path === API_PATHS.policy.state) {
         throw new APIClientError("failed to load leases", 500, "server_error");
       }
       throw new Error(`Unexpected GET path: ${path}`);
@@ -180,8 +180,8 @@ describe("useAdmin", () => {
     });
 
     const calledPaths = mockPost.mock.calls.map(([path]) => path as string);
-    expect(calledPaths).toContain(API_PATHS.admin.leasePolicy);
-    expect(mockPost).toHaveBeenCalledWith(API_PATHS.admin.leasePolicy, {
+    expect(calledPaths).toContain(API_PATHS.policy.leases);
+    expect(mockPost).toHaveBeenCalledWith(API_PATHS.policy.leases, {
       identity_key: identityKey,
       is_approved: true,
     });
@@ -199,7 +199,7 @@ describe("useAdmin", () => {
     });
 
     expect(mockPost).toHaveBeenCalledWith(
-      API_PATHS.admin.leasePolicy,
+      API_PATHS.policy.leases,
       {
         identity_key: "relay-1:0x00000000000000000000000000000000000000a1",
         bps: 4096,
@@ -210,21 +210,21 @@ describe("useAdmin", () => {
   it("keeps loading false while refreshing bps in the background", async () => {
     let getCalls = 0;
     let resolveRefresh:
-      | ((value: DeferredAdminState | PromiseLike<DeferredAdminState>) => void)
+      | ((value: DeferredPolicyState | PromiseLike<DeferredPolicyState>) => void)
       | undefined;
 
     mockGet.mockImplementation((path: string) => {
-      if (path !== API_PATHS.admin.state) {
+      if (path !== API_PATHS.policy.state) {
         throw new Error(`Unexpected GET path: ${path}`);
       }
       getCalls++;
       if (getCalls === 1) {
         return Promise.resolve({
           leases: [buildLease("0x00000000000000000000000000000000000000A1")],
-          settings: buildSettings(),
+          policy: buildSettings(),
         } as never);
       }
-      return new Promise<DeferredAdminState>((resolve) => {
+      return new Promise<DeferredPolicyState>((resolve) => {
         resolveRefresh = resolve;
       }) as never;
     });
@@ -242,7 +242,7 @@ describe("useAdmin", () => {
       expect(result.current.loading).toBe(false);
       resolveRefresh?.({
         leases: [{ ...buildLease("0x00000000000000000000000000000000000000A1"), bps: 2048 }],
-        settings: buildSettings(),
+        policy: buildSettings(),
       });
       await pending;
     });
@@ -252,13 +252,13 @@ describe("useAdmin", () => {
 
   it("bulk deny posts deduped identity keys in lease policy bodies", async () => {
     mockGet.mockImplementation(async (path: string) => {
-      if (path === API_PATHS.admin.state) {
+      if (path === API_PATHS.policy.state) {
         return {
           leases: [
             buildLease("0x00000000000000000000000000000000000000A1", "relay-1"),
             buildLease("0x00000000000000000000000000000000000000B2", "relay-2"),
           ],
-          settings: buildSettings(),
+          policy: buildSettings(),
         } as never;
       }
       throw new Error(`Unexpected GET path: ${path}`);
@@ -283,8 +283,8 @@ describe("useAdmin", () => {
     expect(denyCalls).toHaveLength(2);
     expect(denyCalls).toEqual(
       expect.arrayContaining([
-        [API_PATHS.admin.leasePolicy, { identity_key: identityKeyA, is_denied: true }],
-        [API_PATHS.admin.leasePolicy, { identity_key: identityKeyB, is_denied: true }],
+        [API_PATHS.policy.leases, { identity_key: identityKeyA, is_denied: true }],
+        [API_PATHS.policy.leases, { identity_key: identityKeyB, is_denied: true }],
       ]),
     );
   });

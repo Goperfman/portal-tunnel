@@ -97,8 +97,10 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
       ...((init.headers as Record<string, string> | undefined) ?? {}),
     };
     const pathname = new URL(path, window.location.origin).pathname;
+    const requiresAdminAuth =
+      pathname === "/policy" || pathname.startsWith("/policy/") || pathname.startsWith("/admin/");
     if (
-      pathname.startsWith("/admin/") &&
+      requiresAdminAuth &&
       pathname !== API_PATHS.admin.authChallenge &&
       pathname !== API_PATHS.admin.authLogin
     ) {

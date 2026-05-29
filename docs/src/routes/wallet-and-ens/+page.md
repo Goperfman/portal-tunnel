@@ -237,6 +237,6 @@ A lease hostname has no ENS TXT record:
 
 ## Next Steps
 
-- [Deployment](/deployment#38-optional-ens-gasless-automation): production setup
+- [Deployment](/deployment#ens-gasless-automation): production setup
 - [Security Model](/security-model): identity and TLS trust boundaries
 - [Portal Agent](/portal-agent): local durable tunnel management

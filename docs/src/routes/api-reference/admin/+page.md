@@ -1,16 +1,16 @@
 ---
-title: Admin API
-description: Portal relay admin endpoints for auth, state, settings, and access control.
+title: Admin And Policy API
+description: Portal relay operator endpoints for auth and policy control.
 ---
 
-# Admin API
+# Admin And Policy API
 
-Admin endpoints are the operator control surface for a relay. They all return
+Operator endpoints are the control surface for a relay. They all return
 the standard JSON envelope described in [API Reference](/api-reference), except
 for internal operational endpoints that are not part of the stable API.
 
-`/admin` is reserved for the frontend route. The relay API begins under the
-specific paths listed below.
+`/admin` is reserved for the frontend route and wallet auth endpoints. Relay
+enforcement settings live under `/policy`.
 
 ## Auth Flow
 
@@ -30,10 +30,11 @@ Admin bearer tokens are separate from SDK lease tokens.
 | `POST` | `/admin/auth/login` | SIWE signature body | `WalletAuthLoginRequest` | `WalletAuthLoginResponse` |
 | `GET` | `/admin/auth/status` | Optional bearer | none | `WalletAuthStatusResponse` |
 | `POST` | `/admin/auth/logout` | Bearer | none | `{}` |
-| `GET` | `/admin/state` | Bearer | none | `AdminStateResponse` |
-| `POST` | `/admin/settings` | Bearer | `AdminSettings` | `AdminSettings` |
-| `POST` | `/admin/lease-policy` | Bearer | `AdminLeasePolicy` | `{}` |
-| `POST` | `/admin/ip-policy` | Bearer | `AdminIPPolicy` | `{}` |
+| `GET` | `/policy` | Bearer | none | `PolicySettings` |
+| `POST` | `/policy` | Bearer | `PolicySettings` | `PolicySettings` |
+| `GET` | `/policy/state` | Bearer | none | `PolicyStateResponse` |
+| `POST` | `/policy/leases` | Bearer | `LeasePolicyUpdate` | `{}` |
+| `POST` | `/policy/ips` | Bearer | `IPPolicyUpdate` | `{}` |
 
 ## Auth Payloads
 
@@ -75,14 +76,14 @@ Admin bearer tokens are separate from SDK lease tokens.
 
 ## State
 
-`GET /admin/state` returns the full operator view:
+`GET /policy/state` returns the full policy view:
 
 | Field | Type |
 |-------|------|
-| `settings` | `AdminSettings` |
-| `leases` | `AdminLease[]` |
+| `policy` | `PolicySettings` |
+| `leases` | `PolicyLease[]` |
 
-`AdminLease` uses the shared `Lease` fields from [API Reference](/api-reference#shared-types)
+`PolicyLease` uses the shared `Lease` fields from [API Reference](/api-reference#shared-types)
 and adds:
 
 | Field | Type | Notes |
@@ -97,15 +98,14 @@ and adds:
 | `is_denied` | `boolean` | identity is denied |
 | `is_ip_banned` | `boolean` | observed client IP is banned |
 
-## Settings
+## Policy
 
-Settings are written as one object through `POST /admin/settings` and returned
+Policy settings are written as one object through `POST /policy` and returned
 in the same shape:
 
 ```json
 {
   "approval_mode": "manual",
-  "landing_page_enabled": true,
   "udp": {
     "enabled": true,
     "max_leases": 10
@@ -128,7 +128,7 @@ Supported modes:
 
 ## Lease Policy
 
-`POST /admin/lease-policy` accepts a partial policy update for one identity:
+`POST /policy/leases` accepts a partial policy update for one identity:
 
 | Field | Type | Effect |
 |-------|------|--------|
@@ -138,11 +138,11 @@ Supported modes:
 | `is_denied` | `boolean` | deny or remove denial; `true` also revokes approval |
 | `bps` | `number` | set bytes-per-second limit; `0` removes the limit |
 
-Lease policy updates persist to the admin state file and return `{}` on success.
+Lease policy updates persist to `policy.json` and return `{}` on success.
 
 ## IP Policy
 
-`POST /admin/ip-policy` accepts:
+`POST /policy/ips` accepts:
 
 ```json
 { "ip": "203.0.113.10", "is_banned": true }

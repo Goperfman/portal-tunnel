@@ -4,10 +4,10 @@
 # Architecture:
 #   nginx:443/tcp  (L4 stream, ssl_preread)
 #     - portal.example.com    -> 127.0.0.1:8443 (nginx L7, TLS termination)
-#         - API/control paths -> 127.0.0.1:4017 (portal, HTTPS)
-#         - everything else   -> 127.0.0.1:8080 (portal-frontend, HTTP)
+#         - relay-owned API paths -> 127.0.0.1:4017 (portal, HTTPS, loopback only)
+#         - frontend/UI paths     -> 127.0.0.1:8080 (portal-frontend, HTTP, loopback only)
 #     - *.portal.example.com  -> 127.0.0.1:4443 (portal SNI, raw TCP passthrough)
-#   portal:4443/udp       (QUIC tunnel listener, only if UDP_ENABLED=true)
+#   portal:443/udp        (QUIC tunnel listener, only if UDP_ENABLED=true)
 #   portal:MIN-MAX/udp    (per-lease UDP relay ports, only if UDP_ENABLED=true)
 #   portal:MIN-MAX/tcp    (per-lease raw TCP ports, only if TCP_ENABLED=true)
 #
@@ -35,6 +35,7 @@ services:
     depends_on:
       - portal
       - portal-frontend
+      - portal-api
     restart: unless-stopped
 
   # Optional: uncomment to enable auto-generated thumbnails for tunnel apps.
@@ -46,14 +47,12 @@ services:
   portal:
     image: ghcr.io/gosuda/portal:latest
     container_name: portal
-    # depends_on:
-    #   - headless-shell
     ports:
-      - "${API_PORT:-4017}:${API_PORT:-4017}/tcp"
-      - "${SNI_PORT:-4443}:${SNI_PORT:-4443}/tcp"
+      - "127.0.0.1:${API_PORT:-4017}:${API_PORT:-4017}/tcp"
+      - "127.0.0.1:4443:${SNI_PORT:-443}/tcp"
       - "${WIREGUARD_PORT:-51820}:${WIREGUARD_PORT:-51820}/udp"
       # Uncomment when enabling UDP transport:
-      # - "${SNI_PORT:-4443}:${SNI_PORT:-4443}/udp"
+      # - "${SNI_PORT:-443}:${SNI_PORT:-443}/udp"
       # - "${MIN_PORT:-40000}-${MAX_PORT:-40009}:${MIN_PORT:-40000}-${MAX_PORT:-40009}/udp"
       # Uncomment when enabling raw TCP port transport:
       # - "${MIN_PORT:-40000}-${MAX_PORT:-40009}:${MIN_PORT:-40000}-${MAX_PORT:-40009}"
@@ -64,16 +63,15 @@ services:
       DISCOVERY: ${DISCOVERY:-true}
       WIREGUARD_PORT: ${WIREGUARD_PORT:-51820}
       API_PORT: ${API_PORT:-4017}
-      SNI_PORT: ${SNI_PORT:-4443}
+      SNI_PORT: ${SNI_PORT:-443}
       IDENTITY_PATH: ${IDENTITY_PATH:-/portal-certs}
       MIN_PORT: ${MIN_PORT:-0}
       MAX_PORT: ${MAX_PORT:-0}
       UDP_ENABLED: ${UDP_ENABLED:-false}
       TCP_ENABLED: ${TCP_ENABLED:-false}
-      LANDING_PAGE_ENABLED: ${LANDING_PAGE_ENABLED:-false}
-      # HEADLESS_SHELL_URL: ${HEADLESS_SHELL_URL:-ws://headless-shell:9222}
+      ADMIN_WALLETS: ${ADMIN_WALLETS:-}
       TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
-      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-127.0.0.0/8}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
       ACME_DNS_PROVIDER: ${ACME_DNS_PROVIDER:-}
       ENS_GASLESS_ENABLED: ${ENS_GASLESS_ENABLED:-false}
       CLOUDFLARE_TOKEN: ${CLOUDFLARE_TOKEN:-}
@@ -101,6 +99,25 @@ services:
     container_name: portal-frontend
     depends_on:
       - portal
+      - portal-api
     ports:
-      - "${FRONTEND_PORT:-8080}:8080"
+      - "127.0.0.1:${FRONTEND_PORT:-8080}:8080"
+    restart: unless-stopped
+
+  portal-api:
+    image: ghcr.io/gosuda/portal-api:latest
+    container_name: portal-api
+    depends_on:
+      - portal
+      # Uncomment with the headless-shell service above to enable generated screenshots.
+      # - headless-shell
+    environment:
+      PORT: 8081
+      PORTAL_API_BASE_URL: https://portal:4017
+      LANDING_PAGE_ENABLED: ${LANDING_PAGE_ENABLED:-false}
+      PORTAL_FRONTEND_STATE_PATH: /portal-frontend-state/state.json
+      HEADLESS_SHELL_URL: ${HEADLESS_SHELL_URL:-}
+      # HEADLESS_SHELL_URL: ${HEADLESS_SHELL_URL:-ws://headless-shell:9222}
+    volumes:
+      - ./.portal-frontend-state:/portal-frontend-state
     restart: unless-stopped

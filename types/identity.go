@@ -7,9 +7,10 @@ import (
 )
 
 const (
-	IdentityKeySeparator       = ":"
-	RelayIdentityFilename      = "identity.json"
-	RelayAdminSettingsFilename = "admin_settings.json"
+	IdentityKeySeparator             = ":"
+	RelayIdentityFilename            = "identity.json"
+	RelayPolicyFilename              = "policy.json"
+	LegacyRelayAdminSettingsFilename = "admin_settings.json"
 )
 
 type Identity struct {
@@ -90,7 +91,7 @@ type Lease struct {
 	Ready       int           `json:"ready"`
 }
 
-type AdminLease struct {
+type PolicyLease struct {
 	Lease
 	IdentityKey string `json:"identity_key,omitempty"`
 	Address     string `json:"address,omitempty"`

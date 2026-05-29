@@ -40,7 +40,6 @@ The envelope does not apply to streaming or delegated endpoints:
 |------|--------|
 | `/sdk/connect` | HTTP/1.1 connection hijack |
 | `/v1/sign` | keyless TLS signer protocol |
-| `/thumbnail/{hostname}` | image bytes |
 | `/install.sh`, `/install.ps1`, `/install/bin/*` | script or binary bytes |
 | `/x402/*` | x402 facilitator API |
 
@@ -70,10 +69,22 @@ interchangeable.
 | `GET` | `/` | None | service identity |
 | `GET` | `/healthz` | None | `{ "status": "ok" }` |
 | `GET` | `/state` | None | `PublicStateResponse` |
-| `GET` | `/service/status?hostname=...` | None | `ServiceStatusResponse` |
-| `GET` | `/thumbnail/{hostname}` | None | image bytes |
 | `GET`/`HEAD` | `/install.sh`, `/install.ps1` | None | install script |
 | `GET`/`HEAD` | `/install/bin/{slug}` | None | install binary or redirect |
+
+### Frontend Presentation API
+
+These paths are served by the TypeScript API service when the static frontend stack is
+enabled. They are derived from relay APIs plus frontend-owned presentation state.
+
+| Method | Path | Auth | Response |
+|--------|------|------|----------|
+| `GET` | `/state` | None | `PublicStateResponse` plus `landing_page_enabled` |
+| `GET` | `/service/status?hostname=...` | None | `ServiceStatusResponse` |
+| `GET` | `/policy/state` | Admin bearer | `PolicyStateResponse` plus `landing_page_enabled` in `policy` |
+| `GET`/`POST` | `/policy` | Admin bearer | `PolicySettings` plus `landing_page_enabled` |
+| `POST` | `/policy/leases`, `/policy/ips` | Admin bearer | relay policy update response |
+| `GET` | `/thumbnail/{hostname}` | None | generated image |
 
 ### SDK
 
@@ -97,12 +108,18 @@ SDK clients.
 | `POST` | `/admin/auth/login` | SIWE signature body | `WalletAuthLoginRequest` | `WalletAuthLoginResponse` |
 | `GET` | `/admin/auth/status` | Optional admin bearer | none | `WalletAuthStatusResponse` |
 | `POST` | `/admin/auth/logout` | Admin bearer | none | `{}` |
-| `GET` | `/admin/state` | Admin bearer | none | `AdminStateResponse` |
-| `POST` | `/admin/settings` | Admin bearer | `AdminSettings` | `AdminSettings` |
-| `POST` | `/admin/lease-policy` | Admin bearer | `AdminLeasePolicy` | `{}` |
-| `POST` | `/admin/ip-policy` | Admin bearer | `AdminIPPolicy` | `{}` |
 
 `/admin` itself is a frontend route, not a relay API endpoint.
+
+### Policy
+
+| Method | Path | Auth | Body | Response |
+|--------|------|------|------|----------|
+| `GET` | `/policy` | Admin bearer | none | `PolicySettings` |
+| `POST` | `/policy` | Admin bearer | `PolicySettings` | `PolicySettings` |
+| `GET` | `/policy/state` | Admin bearer | none | `PolicyStateResponse` |
+| `POST` | `/policy/leases` | Admin bearer | `LeasePolicyUpdate` | `{}` |
+| `POST` | `/policy/ips` | Admin bearer | `IPPolicyUpdate` | `{}` |
 
 ### Relay And Payment
 
@@ -146,7 +163,7 @@ Timestamps are JSON-encoded Go `time.Time` values.
 | `metadata` | `LeaseMetadata` |
 | `ready` | `number` |
 
-`AdminLease` extends `Lease` with:
+`PolicyLease` extends `Lease` with:
 
 | Field | Type |
 |-------|------|
@@ -155,23 +172,37 @@ Timestamps are JSON-encoded Go `time.Time` values.
 | `client_ip`, `reported_ip` | `string` |
 | `is_approved`, `is_banned`, `is_denied`, `is_ip_banned` | `boolean` |
 
-`AdminPortSettings`:
+`ServiceStatusResponse`:
+
+| Field | Type |
+|-------|------|
+| `hostname` | `string` |
+| `registered` | `boolean` |
+| `service_alive` | `boolean` |
+
+`PolicyStateResponse`:
+
+| Field | Type |
+|-------|------|
+| `policy` | `PolicySettings` |
+| `leases` | `PolicyLease[]` |
+
+`PolicyPortSettings`:
 
 | Field | Type | Notes |
 |-------|------|-------|
 | `enabled` | `boolean` | enables the transport |
 | `max_leases` | `number` | `0` means unlimited |
 
-`AdminSettings`:
+`PolicySettings`:
 
 | Field | Type |
 |-------|------|
 | `approval_mode` | `"auto"` or `"manual"` |
-| `landing_page_enabled` | `boolean` |
-| `udp` | `AdminPortSettings` |
-| `tcp_port` | `AdminPortSettings` |
+| `udp` | `PolicyPortSettings` |
+| `tcp_port` | `PolicyPortSettings` |
 
-`AdminLeasePolicy`:
+`LeasePolicyUpdate`:
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -181,7 +212,7 @@ Timestamps are JSON-encoded Go `time.Time` values.
 | `is_denied` | `boolean` | optional; `true` also revokes approval |
 | `bps` | `number` | optional; `0` removes the limit |
 
-`AdminIPPolicy`:
+`IPPolicyUpdate`:
 
 | Field | Type |
 |-------|------|

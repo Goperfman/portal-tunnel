@@ -27,11 +27,16 @@ jobs:
           - image: gosuda/portal
             context: .
             file: Dockerfile
-            cache_scope: api
+            cache_scope: portal
           - image: gosuda/portal-frontend
             context: ./frontend
             file: ./frontend/Dockerfile
             cache_scope: frontend
+          - image: gosuda/portal-api
+            context: ./frontend
+            file: ./frontend/Dockerfile
+            target: api
+            cache_scope: portal-api
 
     steps:
       - name: Checkout code
@@ -67,6 +72,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
           platforms: ${{ env.PLATFORMS }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}

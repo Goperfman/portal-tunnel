@@ -159,4 +159,21 @@ describe("apiClient", () => {
       Authorization: "Bearer admin-token",
     });
   });
+
+  it("sends bearer token for policy API calls", async () => {
+    writeAdminAuthToken("admin-token");
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, data: {} }));
+
+    await apiClient.post("/policy/leases", {
+      identity_key: "relay:0x1",
+      is_approved: true,
+    });
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.headers).toEqual({
+      Accept: "application/json",
+      Authorization: "Bearer admin-token",
+      "Content-Type": "application/json",
+    });
+  });
 });

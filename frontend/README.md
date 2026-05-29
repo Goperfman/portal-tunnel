@@ -20,9 +20,9 @@ the relay over the JSON API and does not receive server-side injected lease
 data.
 
 - Public relay state is loaded from `/state`.
-- Admin state is loaded from `/admin/state`.
+- Operator policy state is loaded from `/policy/state`.
 - All JSON API responses use the `{ ok, data?, error? }` envelope parsed by `src/lib/apiClient.ts`.
-- `VITE_PORTAL_API_BASE_URL` points the frontend at a relay API origin. Admin auth uses a bearer token returned by `/admin/auth/login`.
+- `VITE_PORTAL_API_BASE_URL` points the frontend at the same API surface exposed by the frontend nginx/API service. Admin auth uses a bearer token returned by `/admin/auth/login`.
 
 ## Project Structure
 
@@ -48,9 +48,12 @@ frontend/
     App.tsx
     main.tsx
     index.css
+  api/
+    server.ts
   index.html
   package.json
   tsconfig.json
+  tsconfig.api.json
   vite.config.ts
 ```
 
@@ -73,16 +76,17 @@ npm run dev
 
 Default dev URL: `http://localhost:5173`.
 
-To run against a relay server on another origin, build or run the frontend with the public relay API URL:
+To run against another origin, build or run the frontend with the public frontend/API URL:
 
 ```bash
-VITE_PORTAL_API_BASE_URL=https://relay.example.com npm run dev
+VITE_PORTAL_API_BASE_URL=https://portal.example.com npm run dev
 ```
 
 ## Docker
 
-The frontend Docker image serves the built Vite app with nginx over HTTP and
-proxies API paths to the HTTPS relay at `portal:4017` in Docker Compose.
+The frontend Docker image serves the built Vite app with nginx over HTTP,
+proxies relay-owned API paths to the HTTPS relay at `portal:4017`, and proxies
+presentation-owned paths to `portal-api:8081` in Docker Compose.
 TLS for public domains should live in the outer reverse proxy. The app uses
 same-origin relative API paths, so it does not need runtime config file
 generation.
@@ -97,6 +101,7 @@ docker compose up -d portal-frontend
 | --- | --- |
 | `npm run dev` | Start the Vite development server. |
 | `npm run build` | Type-check and build production assets. |
+| `npm run build:api` | Build the TypeScript API service. |
 | `npm run lint` | Run ESLint. |
 | `npm run typecheck` | Run TypeScript checking. |
 | `npm test` | Run Vitest. |
@@ -107,16 +112,23 @@ docker compose up -d portal-frontend
 Relay server exposes:
 
 - `/` - relay API identity response
-- `/state` - public leases and landing-page state
-- `/service/status` - public hostname and service readiness check used by the command form
-- `/thumbnail/{hostname}` - cached generated screenshots
+- `/state` - public leases
 - `/install.sh` and `/install.ps1` - CLI installers
-- `/admin/*` - admin API/control endpoints
+- `/admin/auth/*` - admin wallet auth endpoints
+- `/policy/*` - relay policy endpoints
 - `/sdk/*` - SDK/control endpoints
 - `/discovery` - relay discovery when enabled
 
+The TypeScript API service composes frontend-owned presentation
+state on top of relay data:
+
+- `/state` - relay leases plus `landing_page_enabled`
+- `/policy/*` - relay policy, with `landing_page_enabled` composed into `/policy` and `/policy/state`
+- `/service/status` - hostname and service readiness derived from relay `/state`
+- `/thumbnail/{hostname}` - generated screenshots, disabled when `HEADLESS_SHELL_URL` is empty
+
 ## Notes
 
-- API path constants are duplicated in Go (`types/paths.go`) and TS (`src/lib/apiPaths.ts`).
+- Relay path constants live in Go (`types/paths.go`); frontend facade paths also need matching entries in `api/server.ts`, `nginx.conf`, and `src/lib/apiPaths.ts`.
 - Frontend API wire types live in `src/types/api.ts`.
 - Radix Select values cannot be empty strings. Use stable values such as `"all"` and `"default"`.

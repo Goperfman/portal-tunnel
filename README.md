@@ -109,7 +109,7 @@ cd portal-tunnel && cp .env.example .env
 docker compose up
 ```
 
-For public deployment with DNS automation (ACME), TCP/UDP port ranges, and admin settings, see [Deployment](docs/src/routes/deployment/+page.md).
+For public deployment with DNS automation (ACME), TCP/UDP port ranges, and relay policy, see [Deployment](docs/src/routes/deployment/+page.md).
 
 ## How End-to-End Encryption Works
 

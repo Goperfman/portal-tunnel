@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import clsx from "clsx";
 import {
@@ -82,6 +82,12 @@ export function ServerCard({
 }: ServerCardProps) {
   const [showBPSModal, setShowBPSModal] = useState(false);
   const [bpsInput, setBpsInput] = useState(bps.toString());
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
+  const effectiveThumbnail = thumbnailFailed ? "" : thumbnail;
+
+  useEffect(() => {
+    setThumbnailFailed(false);
+  }, [thumbnail]);
 
   const bpsSteps = [0, 10, 100, 1000, 10000, 100000, 1000000, 10000000];
 
@@ -233,11 +239,20 @@ export function ServerCard({
       <div
         className="absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-105"
         style={{
-          backgroundImage: thumbnail
-            ? `url(${thumbnail})`
+          backgroundImage: effectiveThumbnail
+            ? `url(${effectiveThumbnail})`
             : "linear-gradient(135deg, var(--card) 0%, var(--background) 100%)",
         }}
       />
+      {effectiveThumbnail && (
+        <img
+          alt=""
+          aria-hidden="true"
+          className="hidden"
+          src={effectiveThumbnail}
+          onError={() => setThumbnailFailed(true)}
+        />
+      )}
 
       <div className="absolute inset-0 bg-linear-to-t from-black via-black/60 to-transparent" />
 
@@ -351,13 +366,14 @@ export function ServerCard({
               )}
             </div>
 
-            {!showAdminControls && thumbnail && (
+            {!showAdminControls && effectiveThumbnail && (
               <div className="shrink-0">
                 <div className="size-10 overflow-hidden rounded-xl border border-white/20 shadow-lg">
                   <img
                     alt={`${name} avatar`}
                     className="h-full w-full object-cover"
-                    src={thumbnail}
+                    src={effectiveThumbnail}
+                    onError={() => setThumbnailFailed(true)}
                   />
                 </div>
               </div>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useList, type BaseServer } from "@/hooks/useList";
 import { apiClient } from "@/lib/apiClient";
 import { API_PATHS } from "@/lib/apiPaths";
-import { parseLeaseMetadata } from "@/lib/metadata";
+import { parseLeaseMetadata, resolveLeaseThumbnail } from "@/lib/metadata";
 import type { Lease, PublicStateResponse } from "@/types/api";
 
 type PublicState = {
@@ -21,7 +21,7 @@ function convertPublicLeasesToServers(leases: Lease[]): BaseServer[] {
       name: serviceName || hostname || "(unnamed)",
       description: metadata.description || "",
       tags: metadata.tags,
-      thumbnail: metadata.thumbnail || "",
+      thumbnail: resolveLeaseThumbnail(metadata, hostname),
       owner: metadata.owner || "",
       online: (row.ready || 0) > 0,
       dns: hostname,
@@ -35,7 +35,7 @@ function convertPublicLeasesToServers(leases: Lease[]): BaseServer[] {
 export function useServerList() {
   const [publicState, setPublicState] = useState<PublicState>({
     leases: [],
-    landingPageEnabled: true,
+    landingPageEnabled: false,
   });
 
   useEffect(() => {
@@ -51,12 +51,12 @@ export function useServerList() {
         }
         setPublicState({
           leases: Array.isArray(data?.leases) ? data.leases : [],
-          landingPageEnabled: data?.landing_page_enabled ?? true,
+          landingPageEnabled: data?.landing_page_enabled ?? false,
         });
       } catch (error) {
         console.error("Failed to load public relay state", error);
         if (!cancelled) {
-          setPublicState({ leases: [], landingPageEnabled: true });
+          setPublicState({ leases: [], landingPageEnabled: false });
         }
       }
     })();

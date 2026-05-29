@@ -3,15 +3,15 @@ import { useList, type BaseServer } from "@/hooks/useList";
 import type { BanFilter } from "@/types/filters";
 import { API_PATHS } from "@/lib/apiPaths";
 import { APIClientError, apiClient } from "@/lib/apiClient";
-import { parseLeaseMetadata } from "@/lib/metadata";
+import { parseLeaseMetadata, resolveLeaseThumbnail } from "@/lib/metadata";
 import type {
-  AdminIPPolicy,
-  AdminLease,
-  AdminLeasePolicy,
-  AdminPortSettings,
-  AdminSettings,
-  AdminStateResponse,
   ApprovalMode,
+  IPPolicyUpdate,
+  LeasePolicyUpdate,
+  PolicyLease,
+  PolicyPortSettings,
+  PolicySettings,
+  PolicyStateResponse,
 } from "@/types/api";
 
 export type { ApprovalMode } from "@/types/api";
@@ -40,9 +40,9 @@ export interface TCPPortSettings {
   maxLeases: number;
 }
 
-const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
+const DEFAULT_POLICY_SETTINGS: PolicySettings = {
   approval_mode: "auto",
-  landing_page_enabled: true,
+  landing_page_enabled: false,
   udp: { enabled: false, max_leases: 0 },
   tcp_port: { enabled: false, max_leases: 0 },
 };
@@ -84,7 +84,7 @@ function toAdminErrorMessage(error: unknown, fallback: string): string {
 }
 
 function toAdminServer(
-  row: AdminLease,
+  row: PolicyLease,
 ): AdminServer {
   const metadata = parseLeaseMetadata(row.metadata);
   const hostname = row.hostname || "";
@@ -96,7 +96,7 @@ function toAdminServer(
     name: serviceName || hostname || "(unnamed)",
     description: metadata.description,
     tags: metadata.tags,
-    thumbnail: metadata.thumbnail,
+    thumbnail: resolveLeaseThumbnail(metadata, hostname),
     owner: metadata.owner,
     online: (row.ready || 0) > 0,
     dns: hostname,
@@ -119,55 +119,55 @@ function normalizeApprovalMode(value: string | undefined): ApprovalMode {
   return value === "manual" ? "manual" : "auto";
 }
 
-function normalizeAdminSettings(settings: AdminSettings | undefined): AdminSettings {
+function normalizePolicySettings(settings: PolicySettings | undefined): PolicySettings {
   return {
     approval_mode: normalizeApprovalMode(settings?.approval_mode),
     landing_page_enabled:
-      settings?.landing_page_enabled ?? DEFAULT_ADMIN_SETTINGS.landing_page_enabled,
+      settings?.landing_page_enabled ?? DEFAULT_POLICY_SETTINGS.landing_page_enabled,
     udp: {
-      enabled: settings?.udp?.enabled ?? DEFAULT_ADMIN_SETTINGS.udp.enabled,
-      max_leases: settings?.udp?.max_leases ?? DEFAULT_ADMIN_SETTINGS.udp.max_leases,
+      enabled: settings?.udp?.enabled ?? DEFAULT_POLICY_SETTINGS.udp.enabled,
+      max_leases: settings?.udp?.max_leases ?? DEFAULT_POLICY_SETTINGS.udp.max_leases,
     },
     tcp_port: {
-      enabled: settings?.tcp_port?.enabled ?? DEFAULT_ADMIN_SETTINGS.tcp_port.enabled,
-      max_leases: settings?.tcp_port?.max_leases ?? DEFAULT_ADMIN_SETTINGS.tcp_port.max_leases,
+      enabled: settings?.tcp_port?.enabled ?? DEFAULT_POLICY_SETTINGS.tcp_port.enabled,
+      max_leases: settings?.tcp_port?.max_leases ?? DEFAULT_POLICY_SETTINGS.tcp_port.max_leases,
     },
   };
 }
 
-interface AdminState {
-  serverData: AdminLease[];
-  settings: AdminSettings;
+interface PolicyViewState {
+  serverData: PolicyLease[];
+  settings: PolicySettings;
 }
 
-async function loadAdminState(): Promise<AdminState> {
-  const state = await apiClient.get<AdminStateResponse>(API_PATHS.admin.state);
+async function loadPolicyState(): Promise<PolicyViewState> {
+  const state = await apiClient.get<PolicyStateResponse>(API_PATHS.policy.state);
   const normalizedLeases = Array.isArray(state?.leases) ? state.leases : [];
 
   return {
     serverData: normalizedLeases,
-    settings: normalizeAdminSettings(state?.settings),
+    settings: normalizePolicySettings(state?.policy),
   };
 }
 
 export function useAdmin(enabled = true) {
-  const [serverData, setServerData] = useState<AdminLease[]>([]);
-  const [adminSettings, setAdminSettings] = useState<AdminSettings>(DEFAULT_ADMIN_SETTINGS);
+  const [serverData, setServerData] = useState<PolicyLease[]>([]);
+  const [policySettings, setPolicySettings] = useState<PolicySettings>(DEFAULT_POLICY_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const [banFilter, setBanFilter] = useState<BanFilter>("all");
 
-  const applyAdminState = (state: AdminState) => {
+  const applyPolicyState = (state: PolicyViewState) => {
     setServerData(state.serverData);
-    setAdminSettings(state.settings);
+    setPolicySettings(state.settings);
   };
 
   const fetchData = async () => {
     setError("");
 
     try {
-      applyAdminState(await loadAdminState());
+      applyPolicyState(await loadPolicyState());
     } catch (err: unknown) {
       setError(toAdminErrorMessage(err, "Failed to load admin data"));
     }
@@ -187,11 +187,11 @@ export function useAdmin(enabled = true) {
       setError("");
       setLoading(true);
       try {
-        const state = await loadAdminState();
+        const state = await loadPolicyState();
         if (!mounted) {
           return;
         }
-        applyAdminState(state);
+        applyPolicyState(state);
       } catch (err: unknown) {
         if (!mounted) {
           return;
@@ -244,27 +244,27 @@ export function useAdmin(enabled = true) {
     }
   };
 
-  const postAdminSettings = async (settings: AdminSettings) => {
-    const response = await apiClient.post<AdminSettings>(API_PATHS.admin.settings, settings);
-    setAdminSettings(normalizeAdminSettings(response));
+  const postPolicySettings = async (settings: PolicySettings) => {
+    const response = await apiClient.post<PolicySettings>(API_PATHS.policy.root, settings);
+    setPolicySettings(normalizePolicySettings(response));
   };
 
-  const currentAdminSettings = (overrides: Partial<AdminSettings> = {}): AdminSettings => ({
-    ...adminSettings,
+  const currentPolicySettings = (overrides: Partial<PolicySettings> = {}): PolicySettings => ({
+    ...policySettings,
     ...overrides,
   });
 
   const updateLeasePolicy = async (
     identityKey: string,
-    policy: Omit<AdminLeasePolicy, "identity_key">,
+    policy: Omit<LeasePolicyUpdate, "identity_key">,
   ) => {
     if (!identityKey) {
       throw new Error("Missing lease identity");
     }
-    await apiClient.post<unknown>(API_PATHS.admin.leasePolicy, {
+    await apiClient.post<unknown>(API_PATHS.policy.leases, {
       identity_key: identityKey,
       ...policy,
-    } satisfies AdminLeasePolicy);
+    } satisfies LeasePolicyUpdate);
   };
 
   const handleBanFilterChange = (value: BanFilter) => {
@@ -313,22 +313,22 @@ export function useAdmin(enabled = true) {
 
   const handleApprovalModeChange = async (mode: ApprovalMode) => {
     await runAdminAction(async () => {
-      await postAdminSettings(currentAdminSettings({ approval_mode: mode }));
+      await postPolicySettings(currentPolicySettings({ approval_mode: mode }));
     });
   };
 
   const handleSettingsChange = (key: "udp" | "tcp_port") =>
     async (settings: { enabled: boolean; maxLeases: number }) => {
       await runAdminAction(async () => {
-        const nextPortSettings: AdminPortSettings = {
+        const nextPortSettings: PolicyPortSettings = {
           enabled: settings.enabled,
           max_leases: settings.maxLeases,
         };
         const nextSettings =
           key === "udp"
-            ? currentAdminSettings({ udp: nextPortSettings })
-            : currentAdminSettings({ tcp_port: nextPortSettings });
-        await postAdminSettings(nextSettings);
+            ? currentPolicySettings({ udp: nextPortSettings })
+            : currentPolicySettings({ tcp_port: nextPortSettings });
+        await postPolicySettings(nextSettings);
       });
     };
 
@@ -337,7 +337,7 @@ export function useAdmin(enabled = true) {
 
   const handleLandingPageEnabledChange = async (enabled: boolean) => {
     await runAdminAction(async () => {
-      await postAdminSettings(currentAdminSettings({ landing_page_enabled: enabled }));
+      await postPolicySettings(currentPolicySettings({ landing_page_enabled: enabled }));
     });
   };
 
@@ -353,10 +353,10 @@ export function useAdmin(enabled = true) {
       if (!normalizedIP) {
         throw new Error("Missing IP address");
       }
-      await apiClient.post<unknown>(API_PATHS.admin.ipPolicy, {
+      await apiClient.post<unknown>(API_PATHS.policy.ips, {
         ip: normalizedIP,
         is_banned: isBan,
-      } satisfies AdminIPPolicy);
+      } satisfies IPPolicyUpdate);
     });
 
   const runBulkLeaseAction = async (identityKeys: string[], action: LeaseAction) => {
@@ -369,13 +369,13 @@ export function useAdmin(enabled = true) {
 
     const results = await Promise.allSettled(
       normalizedIdentityKeys.map((identityKey) => {
-        const policy: AdminLeasePolicy =
+        const policy: LeasePolicyUpdate =
           action === "approve"
             ? { identity_key: identityKey, is_approved: true }
             : action === "deny"
               ? { identity_key: identityKey, is_denied: true }
               : { identity_key: identityKey, is_banned: true };
-        return apiClient.post<unknown>(API_PATHS.admin.leasePolicy, policy);
+        return apiClient.post<unknown>(API_PATHS.policy.leases, policy);
       })
     );
 
@@ -401,15 +401,15 @@ export function useAdmin(enabled = true) {
 
   const handleBulkBan = (identityKeys: string[]) => handleBulkAction(identityKeys, "ban");
 
-  const approvalMode = normalizeApprovalMode(adminSettings.approval_mode);
-  const landingPageEnabled = adminSettings.landing_page_enabled;
+  const approvalMode = normalizeApprovalMode(policySettings.approval_mode);
+  const landingPageEnabled = policySettings.landing_page_enabled;
   const udpSettings: UDPSettings = {
-    enabled: adminSettings.udp.enabled,
-    maxLeases: adminSettings.udp.max_leases,
+    enabled: policySettings.udp.enabled,
+    maxLeases: policySettings.udp.max_leases,
   };
   const tcpPortSettings: TCPPortSettings = {
-    enabled: adminSettings.tcp_port.enabled,
-    maxLeases: adminSettings.tcp_port.max_leases,
+    enabled: policySettings.tcp_port.enabled,
+    maxLeases: policySettings.tcp_port.max_leases,
   };
 
   return {

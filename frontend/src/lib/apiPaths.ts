@@ -3,20 +3,25 @@ export const API_PATHS = {
     state: "/state",
   },
   admin: {
-    state: "/admin/state",
     authChallenge: "/admin/auth/challenge",
     authLogin: "/admin/auth/login",
     logout: "/admin/auth/logout",
     authStatus: "/admin/auth/status",
-    settings: "/admin/settings",
-    leasePolicy: "/admin/lease-policy",
-    ipPolicy: "/admin/ip-policy",
+  },
+  policy: {
+    root: "/policy",
+    state: "/policy/state",
+    leases: "/policy/leases",
+    ips: "/policy/ips",
   },
   sdk: {
     domain: "/sdk/domain",
   },
   service: {
     status: "/service/status",
+  },
+  thumbnail: {
+    prefix: "/thumbnail/",
   },
   discovery: "/discovery",
   install: {

@@ -1,3 +1,5 @@
+import { API_PATHS } from "./apiPaths.js";
+
 interface Metadata {
   description: string;
   tags: string[];
@@ -52,4 +54,17 @@ export function parseLeaseMetadata(metadataValue: unknown): Metadata {
   } catch {
     return EMPTY_METADATA;
   }
+}
+
+export function resolveLeaseThumbnail(metadata: Metadata, hostname: string): string {
+  const configuredThumbnail = metadata.thumbnail.trim();
+  if (configuredThumbnail !== "") {
+    return configuredThumbnail;
+  }
+
+  const normalizedHostname = hostname.trim().toLowerCase().replace(/\.$/, "");
+  if (normalizedHostname === "" || normalizedHostname.startsWith("*.")) {
+    return "";
+  }
+  return `${API_PATHS.thumbnail.prefix}${encodeURIComponent(normalizedHostname)}`;
 }

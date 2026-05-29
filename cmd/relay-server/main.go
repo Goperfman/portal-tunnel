@@ -34,27 +34,25 @@ func main() {
 }
 
 type relayServerConfig struct {
-	PortalURL          string
-	IdentityPath       string
-	Bootstraps         string
-	DiscoveryEnabled   bool
-	WireGuardPort      int
-	APIPort            int
-	SNIPort            int
-	TrustProxyHeaders  bool
-	TrustedProxyCIDRs  string
-	UDPEnabled         bool
-	TCPEnabled         bool
-	MinPort            int
-	MaxPort            int
-	AdminWallets       string
-	LandingPageEnabled bool
-	HeadlessShellURL   string
-	PProfEnabled       bool
-	PProfAddr          string
-	X402Enabled        bool
-	X402Network        string
-	X402RPCURL         string
+	PortalURL         string
+	IdentityPath      string
+	Bootstraps        string
+	DiscoveryEnabled  bool
+	WireGuardPort     int
+	APIPort           int
+	SNIPort           int
+	TrustProxyHeaders bool
+	TrustedProxyCIDRs string
+	UDPEnabled        bool
+	TCPEnabled        bool
+	MinPort           int
+	MaxPort           int
+	AdminWallets      string
+	PProfEnabled      bool
+	PProfAddr         string
+	X402Enabled       bool
+	X402Network       string
+	X402RPCURL        string
 
 	ACMEDNSProvider    string
 	ENSGaslessEnabled  bool
@@ -77,7 +75,7 @@ func runServeCommand(args []string) error {
 	fs := utils.NewFlagSet("relay-server", printRootUsage)
 
 	utils.StringFlagEnv(fs, &cfg.PortalURL, "portal-url", "https://localhost:4017", "portal base URL", "PORTAL_URL")
-	utils.StringFlagEnv(fs, &cfg.IdentityPath, "identity-path", "./.portal-certs", "directory path for relay identity, admin state, and keyless materials", "IDENTITY_PATH")
+	utils.StringFlagEnv(fs, &cfg.IdentityPath, "identity-path", "./.portal-certs", "directory path for relay identity, policy state, and keyless materials", "IDENTITY_PATH")
 	utils.StringFlagEnv(fs, &cfg.Bootstraps, "bootstraps", "", "bootstrap relay API URLs; merged with bootstrap relays when discovery is enabled", "BOOTSTRAPS")
 	utils.BoolFlagEnv(fs, &cfg.DiscoveryEnabled, "discovery", false, "serve relay discovery endpoints and poll discovery peers", "DISCOVERY")
 	utils.IntFlagEnv(fs, &cfg.WireGuardPort, "wireguard-port", overlay.DefaultListenPort, utils.ParsePortNumber, "public and listen UDP port for relay overlay", "WIREGUARD_PORT")
@@ -93,8 +91,6 @@ func runServeCommand(args []string) error {
 	utils.IntFlagEnv(fs, &cfg.MaxPort, "max-port", 0, utils.ParseOptionalPortNumber, "inclusive maximum lease port shared by UDP and raw TCP transports (0=disabled)", "MAX_PORT")
 
 	utils.StringFlagEnv(fs, &cfg.AdminWallets, "admin-wallets", "", "admin wallet address allowlist, comma-separated; relay identity address is always allowed", "ADMIN_WALLETS")
-	utils.BoolFlagEnv(fs, &cfg.LandingPageEnabled, "landing-page-enabled", false, "enable landing page by default when no admin setting has been saved yet", "LANDING_PAGE_ENABLED")
-	utils.StringFlagEnv(fs, &cfg.HeadlessShellURL, "headless-shell-url", "", "headless Chrome CDP WebSocket URL for thumbnail generation (e.g. ws://headless-shell:9222)", "HEADLESS_SHELL_URL")
 	utils.BoolFlagEnv(fs, &cfg.PProfEnabled, "pprof-enabled", false, "enable pprof diagnostics HTTP server", "PPROF_ENABLED")
 	utils.StringFlagEnv(fs, &cfg.PProfAddr, "pprof-addr", portal.DefaultPProfListenAddr, "pprof diagnostics listen address when enabled", "PPROF_ADDR")
 	utils.BoolFlagEnv(fs, &cfg.X402Enabled, "x402-facilitator-enabled", false, "enable relay-local x402 facilitator endpoints under /x402", "X402_FACILITATOR_ENABLED")
@@ -144,8 +140,6 @@ func runServeCommand(args []string) error {
 		Int("min_port", cfg.MinPort).
 		Int("max_port", cfg.MaxPort).
 		Bool("admin_wallets_configured", len(utils.SplitCSV(cfg.AdminWallets)) > 0).
-		Bool("landing_page_enabled", cfg.LandingPageEnabled).
-		Bool("headless_shell_enabled", strings.TrimSpace(cfg.HeadlessShellURL) != "").
 		Bool("pprof_enabled", cfg.PProfEnabled).
 		Str("pprof_addr", cfg.PProfAddr).
 		Bool("x402_facilitator_enabled", cfg.X402Enabled).
@@ -201,11 +195,10 @@ func runServer(ctx context.Context, cfg relayServerConfig) error {
 		return fmt.Errorf("create relay server: %w", err)
 	}
 
-	relayAPI, err := NewRelayAPI(server, cfg.IdentityPath, cfg.LandingPageEnabled, cfg.HeadlessShellURL, utils.SplitCSV(cfg.AdminWallets))
+	relayAPI, err := NewRelayAPI(server, cfg.IdentityPath, utils.SplitCSV(cfg.AdminWallets))
 	if err != nil {
 		return fmt.Errorf("create relay api: %w", err)
 	}
-	defer relayAPI.Close()
 
 	apiMux := relayAPI.Handler()
 	if cfg.X402Enabled {
@@ -263,7 +256,6 @@ func printRootUsage(w io.Writer) {
 			"relay-server --portal-url https://portal.example.com",
 			"relay-server --discovery --bootstraps https://bootstrap.example.com",
 			"relay-server --udp-enabled --min-port 40000 --max-port 40099",
-			"relay-server --landing-page-enabled",
 			"relay-server help",
 		},
 	)

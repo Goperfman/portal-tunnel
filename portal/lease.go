@@ -893,18 +893,18 @@ func (r *leaseRegistry) PublicLeases(now time.Time) []types.Lease {
 	return leases
 }
 
-func (r *leaseRegistry) AdminLeases(now time.Time) []types.AdminLease {
+func (r *leaseRegistry) PolicyLeases(now time.Time) []types.PolicyLease {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	leases := make([]types.AdminLease, 0, len(r.records))
+	leases := make([]types.PolicyLease, 0, len(r.records))
 	for _, record := range r.records {
 		if record == nil || record.stream == nil || record.isExpired(now) {
 			continue
 		}
 		clientIP := record.ClientIP
 		identityKey := record.Key()
-		leases = append(leases, types.AdminLease{
+		leases = append(leases, types.PolicyLease{
 			Lease:       r.publicLease(record),
 			IdentityKey: identityKey,
 			Address:     record.Address,
