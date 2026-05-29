@@ -9,7 +9,7 @@ High-signal constraints for the relay-server frontend. Only items expensive to r
    - Why: the Go relay is API-only. Do not reintroduce Go HTML data injection for public lease state.
 
 2. **API path constants require dual maintenance.**
-   Go relay definitions live in `../types/paths.go`; frontend facade paths live in `api/server.ts`, `nginx.conf`, and `src/lib/apiPaths.ts`.
+   Go relay definitions live in `../types/paths.go`; frontend facade paths live in `api/server.ts`, the edge nginx template, and `src/lib/apiPaths.ts`.
    - Why: no codegen. A path mismatch produces 404s.
 
 3. **API envelope shape must match across Go and TS.**

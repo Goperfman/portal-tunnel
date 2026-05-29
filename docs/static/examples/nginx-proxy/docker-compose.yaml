@@ -5,6 +5,7 @@
 #   nginx:443/tcp  (L4 stream, ssl_preread)
 #     - portal.example.com    -> 127.0.0.1:8443 (nginx L7, TLS termination)
 #         - relay-owned API paths -> 127.0.0.1:${API_PORT:-4017} (portal, HTTPS, loopback only)
+#         - presentation API paths -> 127.0.0.1:8081 (portal-api, HTTP, loopback only)
 #         - frontend/UI paths     -> 127.0.0.1:8080 (portal-frontend, HTTP, loopback only)
 #     - *.portal.example.com  -> 127.0.0.1:4443 (portal SNI, raw TCP passthrough)
 #   portal:443/udp        (QUIC tunnel listener, only if UDP_ENABLED=true)
@@ -112,6 +113,8 @@ services:
       - portal
       # Uncomment with the headless-shell service above to enable generated screenshots.
       # - headless-shell
+    ports:
+      - "127.0.0.1:8081:8081"
     environment:
       PORT: 8081
       PORTAL_API_BASE_URL: "https://portal:${API_PORT:-4017}"

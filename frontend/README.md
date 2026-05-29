@@ -22,7 +22,7 @@ data.
 - Public relay state is loaded from `/state`.
 - Operator policy state is loaded from `/policy/state`.
 - All JSON API responses use the `{ ok, data?, error? }` envelope parsed by `src/lib/apiClient.ts`.
-- `VITE_PORTAL_API_BASE_URL` points the frontend at the same API surface exposed by the frontend nginx/API service. Admin auth uses a bearer token returned by `/admin/auth/login`.
+- `VITE_PORTAL_API_BASE_URL` points the frontend at the same API surface exposed by the public edge nginx. Admin auth uses a bearer token returned by `/admin/auth/login`.
 
 ## Project Structure
 
@@ -84,9 +84,9 @@ VITE_PORTAL_API_BASE_URL=https://portal.example.com npm run dev
 
 ## Docker
 
-The frontend Docker image serves the built Vite app with nginx over HTTP,
-proxies relay-owned API paths to the HTTPS relay at `portal:4017`, and proxies
-presentation-owned paths to `portal-api:8081` in Docker Compose.
+The frontend Docker image serves the built Vite app with nginx over HTTP. It
+does not own API path routing; the public edge nginx routes relay-owned paths to
+`portal:4017` and presentation-owned paths to `portal-api:8081`.
 TLS for public domains should live in the outer reverse proxy. The app uses
 same-origin relative API paths, so it does not need runtime config file
 generation.
@@ -129,6 +129,6 @@ state on top of relay data:
 
 ## Notes
 
-- Relay path constants live in Go (`types/paths.go`); frontend facade paths also need matching entries in `api/server.ts`, `nginx.conf`, and `src/lib/apiPaths.ts`.
+- Relay path constants live in Go (`types/paths.go`); frontend facade paths also need matching entries in `api/server.ts`, the edge nginx config, and `src/lib/apiPaths.ts`.
 - Frontend API wire types live in `src/types/api.ts`.
 - Radix Select values cannot be empty strings. Use stable values such as `"all"` and `"default"`.

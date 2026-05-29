@@ -20,7 +20,7 @@ The production deployment has four roles:
 |---|---|---|---|
 | Public edge | `nginx` | yes, `443/tcp` | Public TLS termination, path routing, wildcard SNI passthrough |
 | Relay | `portal`, `ghcr.io/gosuda/portal` | no direct public API port | Relay API, wallet auth, policy enforcement, tunnel ingress |
-| Static frontend | `portal-frontend`, `ghcr.io/gosuda/portal-frontend` | no direct public port | SPA assets and same-origin frontend proxy |
+| Static frontend | `portal-frontend`, `ghcr.io/gosuda/portal-frontend` | no direct public port | SPA assets |
 | Presentation API | `portal-api`, `ghcr.io/gosuda/portal-api` | no direct public port | Frontend-owned state, policy composition, service status, thumbnails |
 
 Traffic should flow through one public HTTPS origin:
@@ -31,7 +31,7 @@ Browser
   -> nginx public TLS edge
       -> portal-frontend for SPA routes and assets
       -> portal for relay-owned API paths
-      -> portal-frontend -> portal-api for presentation-owned API paths
+      -> portal-api for presentation-owned API paths
 
 Tunnel clients and public app visitors
   -> https://*.portal.example.com
@@ -45,7 +45,7 @@ Tunnel clients and public app visitors
 |---|---|---|
 | `portal.example.com/`, `/admin`, SPA assets | Terminate TLS, HTTP proxy | `portal-frontend:8080` |
 | `/admin/auth/*`, `/sdk/*`, `/install.*`, `/discovery`, `/discovery/*`, `/healthz`, `/v1/sign`, `/x402/*` | Terminate TLS, HTTP proxy | `portal:4017` over HTTPS |
-| `/state`, `/policy/*`, `/service/status`, `/thumbnail/*` | Terminate TLS, HTTP proxy | `portal-frontend:8080`, then `portal-api:8081` |
+| `/state`, `/policy/*`, `/service/status`, `/thumbnail/*` | Terminate TLS, HTTP proxy | `portal-api:8081` |
 | `*.portal.example.com` | Raw TCP passthrough with `ssl_preread` | `portal` SNI listener |
 
 The root relay host needs HTTP path routing, so it is not TCP-passthrough. Wildcard app hosts need TCP passthrough, so nginx must not terminate TLS for them.
@@ -67,7 +67,7 @@ To keep the same practical security level as the embedded frontend deployment:
 
 - Public users reach the dashboard only through `https://portal.example.com`.
 - `portal:4017`, `portal-frontend:8080`, and `portal-api:8081` are not exposed directly to the internet.
-- Root-host API paths are HTTP reverse-proxied by nginx to the relay API upstream.
+- Root-host API paths are HTTP reverse-proxied by nginx to either the relay API upstream or presentation API upstream.
 - Wildcard app hosts are TCP-passthrough to the relay SNI listener.
 - The nginx browser certificate and the relay API certificate are separate operational concerns unless you intentionally share the same certificate files.
 

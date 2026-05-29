@@ -1,4 +1,43 @@
 services:
+  nginx:
+    image: nginx:stable-alpine
+    depends_on:
+      - portal
+      - portal-frontend
+      - portal-api
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      PORTAL_URL: ${PORTAL_URL:-https://localhost}
+      PORTAL_HOST: ${PORTAL_HOST:-}
+      NGINX_CERT_FILE: ${NGINX_CERT_FILE:-/etc/nginx/certs/fullchain.pem}
+      NGINX_CERT_KEY: ${NGINX_CERT_KEY:-/etc/nginx/certs/privatekey.pem}
+    volumes:
+      - ./nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
+      - ./.portal-certs:/etc/nginx/certs:ro
+    command:
+      - /bin/sh
+      - -c
+      - |
+        portal_host="$${PORTAL_HOST:-$${PORTAL_URL#*://}}"
+        portal_host="$${portal_host%%/*}"
+        portal_host="$${portal_host%%:*}"
+        export PORTAL_HOST="$${portal_host:-localhost}"
+
+        export NGINX_CERT_FILE="$${NGINX_CERT_FILE:-/etc/nginx/certs/fullchain.pem}"
+        export NGINX_CERT_KEY="$${NGINX_CERT_KEY:-/etc/nginx/certs/privatekey.pem}"
+        envsubst '$$PORTAL_HOST $$NGINX_CERT_FILE $$NGINX_CERT_KEY' \
+          < /etc/nginx/templates/nginx.conf.template \
+          > /etc/nginx/nginx.conf
+
+        until [ -s "$$NGINX_CERT_FILE" ] && [ -s "$$NGINX_CERT_KEY" ]; do
+          echo "waiting for TLS certificate files: $$NGINX_CERT_FILE and $$NGINX_CERT_KEY"
+          sleep 1
+        done
+        exec nginx -g 'daemon off;'
+    restart: unless-stopped
+
   # Optional: uncomment to enable auto-generated thumbnails for tunnel apps.
   # See docs/src/routes/deployment/+page.md for details.
   # headless-shell:
@@ -35,8 +74,6 @@ services:
     depends_on:
       - portal
       - portal-api
-    ports:
-      - "${FRONTEND_PORT:-8080}:8080"
     restart: unless-stopped
 
   portal:
@@ -46,24 +83,22 @@ services:
       dockerfile: Dockerfile
     stop_grace_period: 30s
     ports:
-      - "${API_PORT:-4017}:4017"
-      - "${SNI_PORT:-443}:${SNI_PORT:-443}"
       - "${WIREGUARD_PORT:-51820}:${WIREGUARD_PORT:-51820}/udp"
       # Uncomment for UDP backhaul, public UDP lease ports, and raw TCP lease ports as needed.
-      # - "${SNI_PORT:-443}:${SNI_PORT:-443}/udp"
+      # - "443:443/udp"
       # - "${MIN_PORT:-40000}-${MAX_PORT:-40009}:${MIN_PORT:-40000}-${MAX_PORT:-40009}/udp"
       # - "${MIN_PORT:-40000}-${MAX_PORT:-40009}:${MIN_PORT:-40000}-${MAX_PORT:-40009}"
       # Uncomment with PPROF_ENABLED=true and PPROF_ADDR=:6060 to inspect pprof from the host.
       # - "${PPROF_PORT:-6060}:${PPROF_PORT:-6060}"
     environment:
       # Public routing, discovery, and relay identity persistence
-      PORTAL_URL: ${PORTAL_URL:-https://localhost:${API_PORT:-4017}}
+      PORTAL_URL: ${PORTAL_URL:-https://localhost}
       BOOTSTRAPS: ${BOOTSTRAPS:-}
       DISCOVERY: ${DISCOVERY:-true}
       IDENTITY_PATH: ${IDENTITY_PATH:-/portal-certs}
 
       API_PORT: 4017
-      SNI_PORT: ${SNI_PORT:-443}
+      SNI_PORT: 443
       WIREGUARD_PORT: ${WIREGUARD_PORT:-51820}
 
       # Shared lease port range.
@@ -74,7 +109,7 @@ services:
 
       # Admin/auth configuration
       ADMIN_WALLETS: ${ADMIN_WALLETS:-}
-      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
 
       # Optional: relay-local x402 facilitator exposed under /x402

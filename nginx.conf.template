@@ -1,16 +1,16 @@
-# Portal relay + frontend - nginx reverse proxy configuration example.
-# Replace "portal.example.com" with your actual domain throughout.
+# Portal relay + frontend edge nginx for the bundled Docker Compose stack.
+# docker-compose.yml renders this template from environment variables.
 #
 # Traffic flow:
 #   :80  -> redirect to HTTPS
-#   :443 -> L4 SNI inspection (ssl_preread, no TLS termination)
-#            portal.example.com    -> :8443 (nginx L7, terminates TLS)
-#            *.portal.example.com  -> 127.0.0.1:4443 (portal SNI, raw TCP passthrough)
+#   :443 -> L4 SNI inspection
+#            ${PORTAL_HOST}   -> nginx L7 TLS termination and path routing
+#            *.${PORTAL_HOST} -> portal SNI listener, raw TCP passthrough
 #
-# L7 path routing on portal.example.com:
-#   Relay API paths        -> https://127.0.0.1:4017 (portal)
-#   Presentation API paths -> http://127.0.0.1:8081  (portal-api)
-#   Frontend/UI paths      -> http://127.0.0.1:8080  (portal-frontend)
+# The browser-facing certificate is read from ./.portal-certs by docker-compose.
+# That is the same default directory used by the relay certificate.
+
+include /usr/share/nginx/modules/*.conf;
 
 events {
     worker_connections 4096;
@@ -18,9 +18,10 @@ events {
 
 stream {
     map $ssl_preread_server_name $backend {
-        portal.example.com          portal_web;
-        ~\.portal\.example\.com$    portal_sni;
-        default                     portal_web;
+        hostnames;
+        ${PORTAL_HOST}    portal_web;
+        *.${PORTAL_HOST}  portal_sni;
+        default           portal_web;
     }
 
     upstream portal_web {
@@ -28,8 +29,7 @@ stream {
     }
 
     upstream portal_sni {
-        # Portal SNI listener. TLS is not terminated here.
-        server 127.0.0.1:4443;
+        server portal:443;
     }
 
     server {
@@ -57,29 +57,27 @@ http {
                text/xml application/xml application/xml+rss text/javascript;
 
     upstream portal_api {
-        # Portal API listener is HTTPS even though it is reached only internally.
-        server 127.0.0.1:4017;
-        keepalive 16;
-    }
-
-    upstream portal_frontend {
-        # Static frontend nginx container.
-        server 127.0.0.1:8080;
+        server portal:4017;
         keepalive 16;
     }
 
     upstream portal_presentation_api {
-        server 127.0.0.1:8081;
+        server portal-api:8081;
+        keepalive 16;
+    }
+
+    upstream portal_frontend {
+        server portal-frontend:8080;
         keepalive 16;
     }
 
     server {
         listen 8443 ssl;
-        server_name portal.example.com;
+        server_name ${PORTAL_HOST};
         server_tokens off;
 
-        ssl_certificate     /etc/nginx/certs/fullchain.pem;
-        ssl_certificate_key /etc/nginx/certs/privkey.pem;
+        ssl_certificate     ${NGINX_CERT_FILE};
+        ssl_certificate_key ${NGINX_CERT_KEY};
 
         ssl_protocols TLSv1.2 TLSv1.3;
         ssl_ciphers HIGH:!aNULL:!MD5;
@@ -87,8 +85,6 @@ http {
         ssl_session_cache shared:SSL:10m;
         ssl_session_timeout 10m;
 
-        # /sdk/connect is hijacked by the relay into a long-lived raw TCP
-        # reverse session. Keep HTTP/1.1, disable buffering, and use long timeouts.
         location = /sdk/connect {
             proxy_pass https://portal_api;
             proxy_ssl_verify off;
@@ -109,7 +105,6 @@ http {
             proxy_send_timeout      86400s;
         }
 
-        # Presentation-owned API paths belong to portal-api.
         location = /state {
             proxy_pass http://portal_presentation_api;
             proxy_http_version 1.1;
@@ -137,9 +132,6 @@ http {
             proxy_read_timeout 60s;
         }
 
-        # Relay API/control endpoints belong to portal. Exact /admin is
-        # intentionally not matched so the React admin route can be served by
-        # portal-frontend.
         location ~ ^/(admin/|sdk/|install\.sh$|install\.ps1$|install/bin/|discovery($|/)|healthz$|v1/sign$|x402(/|$)) {
             proxy_pass https://portal_api;
             proxy_ssl_verify off;
@@ -151,6 +143,7 @@ http {
             proxy_set_header X-Real-IP         $remote_addr;
             proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header Authorization     $http_authorization;
             proxy_set_header Connection        "";
 
             proxy_read_timeout 60s;
