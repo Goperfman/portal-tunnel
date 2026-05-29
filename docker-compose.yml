@@ -10,7 +10,6 @@ services:
       - "${HTTPS_PORT:-443}:443"
     environment:
       PORTAL_URL: ${PORTAL_URL:-https://localhost}
-      PORTAL_HOST: ${PORTAL_HOST:-}
       NGINX_CERT_FILE: ${NGINX_CERT_FILE:-/etc/nginx/certs/fullchain.pem}
       NGINX_CERT_KEY: ${NGINX_CERT_KEY:-/etc/nginx/certs/privatekey.pem}
     volumes:
@@ -20,7 +19,7 @@ services:
       - /bin/sh
       - -c
       - |
-        portal_host="$${PORTAL_HOST:-$${PORTAL_URL#*://}}"
+        portal_host="$${PORTAL_URL#*://}"
         portal_host="$${portal_host%%/*}"
         portal_host="$${portal_host%%:*}"
         export PORTAL_HOST="$${portal_host:-localhost}"

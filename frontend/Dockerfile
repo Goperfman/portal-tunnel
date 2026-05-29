@@ -14,7 +14,7 @@ FROM deps AS api-builder
 COPY . .
 RUN npm run build:api
 
-FROM node:22-slim AS api
+FROM node:22-alpine AS api
 WORKDIR /app
 
 COPY --from=api-builder /src/dist-api ./dist-api
