@@ -29,10 +29,9 @@ function resolveAPIURL(path: string): string {
   if (!baseURL) {
     return path;
   }
-  return new URL(
-    path,
-    baseURL.endsWith("/") ? baseURL : `${baseURL}/`
-  ).toString();
+  const normalizedBase = baseURL.endsWith("/") ? baseURL.slice(0, -1) : baseURL;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${normalizedBase}${normalizedPath}`;
 }
 
 function ensureJsonEnvelope<T>(raw: unknown, path: string, status: number): APIEnvelope<T> {

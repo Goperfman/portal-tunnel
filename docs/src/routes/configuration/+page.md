@@ -318,8 +318,7 @@ address.
 
 Persists relay policy state. Managed automatically by the relay on write; do not edit manually while the server is running.
 
-Relay policy settings are stored at `IDENTITY_PATH/policy.json`. Older
-`admin_settings.json` files are read once and migrated to `policy.json`.
+Relay policy settings are stored at `IDENTITY_PATH/policy.json`.
 
 ---
 

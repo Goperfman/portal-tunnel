@@ -14,6 +14,7 @@ describe("apiClient", () => {
   const fetchMock = vi.fn();
 
   beforeEach(() => {
+    vi.unstubAllEnvs();
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
     localStorage.clear();
@@ -31,6 +32,17 @@ describe("apiClient", () => {
     expect(init.method).toBe("GET");
     expect(init.credentials).toBe("same-origin");
     expect(init.headers).toEqual({ Accept: "application/json" });
+  });
+
+  it("preserves API base URL subpaths", async () => {
+    vi.stubEnv("VITE_PORTAL_API_BASE_URL", "https://portal.example.com/api");
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ ok: true, data: { status: "ok" } }),
+    );
+
+    await apiClient.get("/state");
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://portal.example.com/api/state");
   });
 
   it("rejects successful non-envelope JSON payloads", async () => {

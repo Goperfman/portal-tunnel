@@ -108,6 +108,12 @@ interface CDPWaiter {
   method: string;
   sessionId?: string;
   resolve: (message: CDPReply) => void;
+  reject: (error: Error) => void;
+}
+
+interface CDPPendingReply {
+  resolve: (result: Record<string, unknown>) => void;
+  reject: (error: Error) => void;
 }
 
 const thumbnailCache = new Map<string, ThumbnailEntry>();
@@ -551,21 +557,23 @@ async function resolveCDPWebSocketURL(): Promise<string> {
 
 class CDPClient {
   private nextID = 1;
-  private readonly pendingReplies = new Map<
-    number,
-    { resolve: (result: Record<string, unknown>) => void; reject: (error: Error) => void }
-  >();
+  private readonly pendingReplies = new Map<number, CDPPendingReply>();
   private readonly waiters: CDPWaiter[] = [];
   private readonly socket: WebSocket;
 
   constructor(url: string) {
     this.socket = new WebSocket(url);
     this.socket.addEventListener("message", (event) => this.handleMessage(event));
+    this.socket.addEventListener("close", () => this.handleClose());
+    this.socket.addEventListener("error", () => this.handleClose(new Error("WebSocket error")));
   }
 
   connect(): Promise<void> {
     if (this.socket.readyState === WebSocket.OPEN) {
       return Promise.resolve();
+    }
+    if (this.socket.readyState === WebSocket.CLOSING || this.socket.readyState === WebSocket.CLOSED) {
+      return Promise.reject(new Error("WebSocket connection closed"));
     }
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -585,6 +593,14 @@ class CDPClient {
         () => {
           clearTimeout(timeout);
           reject(new Error("connect to headless shell failed"));
+        },
+        { once: true }
+      );
+      this.socket.addEventListener(
+        "close",
+        () => {
+          clearTimeout(timeout);
+          reject(new Error("WebSocket connection closed"));
         },
         { once: true }
       );
@@ -608,11 +624,15 @@ class CDPClient {
     }
 
     return new Promise((resolve, reject) => {
+      if (this.socket.readyState !== WebSocket.OPEN) {
+        reject(new Error("WebSocket connection is not open"));
+        return;
+      }
       const timeout = setTimeout(() => {
         this.pendingReplies.delete(id);
         reject(new Error(`${method} timed out`));
       }, timeoutMs);
-      this.pendingReplies.set(id, {
+      const pendingReply: CDPPendingReply = {
         resolve: (result) => {
           clearTimeout(timeout);
           resolve(result);
@@ -621,14 +641,24 @@ class CDPClient {
           clearTimeout(timeout);
           reject(error);
         },
-      });
-      this.socket.send(JSON.stringify(payload));
+      };
+      this.pendingReplies.set(id, pendingReply);
+      try {
+        this.socket.send(JSON.stringify(payload));
+      } catch (error) {
+        this.pendingReplies.delete(id);
+        pendingReply.reject(error instanceof Error ? error : new Error("CDP send failed"));
+      }
     });
   }
 
   waitForEvent(method: string, sessionId: string, timeoutMs: number): Promise<CDPReply> {
     return new Promise((resolve, reject) => {
-      const waiter: CDPWaiter = { method, sessionId, resolve };
+      if (this.socket.readyState !== WebSocket.OPEN) {
+        reject(new Error("WebSocket connection is not open"));
+        return;
+      }
+      const waiter: CDPWaiter = { method, sessionId, resolve, reject };
       this.waiters.push(waiter);
       const timeout = setTimeout(() => {
         const index = this.waiters.indexOf(waiter);
@@ -642,7 +672,23 @@ class CDPClient {
         clearTimeout(timeout);
         resolve(message);
       };
+      waiter.reject = (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      };
     });
+  }
+
+  private handleClose(error = new Error("WebSocket connection closed")): void {
+    for (const pendingReply of this.pendingReplies.values()) {
+      pendingReply.reject(error);
+    }
+    this.pendingReplies.clear();
+
+    const waiters = this.waiters.splice(0);
+    for (const waiter of waiters) {
+      waiter.reject(error);
+    }
   }
 
   private handleMessage(event: MessageEvent): void {

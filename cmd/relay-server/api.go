@@ -47,7 +47,7 @@ func NewRelayAPI(server *portal.Server, identityPath string, adminWallets []stri
 	if policyStatePath == "" {
 		return nil, errors.New("relay api requires identity path")
 	}
-	if err := loadPolicyState(policyStatePath, identity.ResolveLegacyRelayPolicyPath(identityPath), server); err != nil {
+	if err := loadPolicyState(policyStatePath, server); err != nil {
 		return nil, err
 	}
 	relayIdentity := server.RelayIdentity()
@@ -107,9 +107,8 @@ func (api *RelayAPI) servePublicState(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func loadPolicyState(path, legacyPath string, server *portal.Server) error {
+func loadPolicyState(path string, server *portal.Server) error {
 	path = strings.TrimSpace(path)
-	legacyPath = strings.TrimSpace(legacyPath)
 	if path == "" {
 		return nil
 	}
@@ -119,24 +118,10 @@ func loadPolicyState(path, legacyPath string, server *portal.Server) error {
 	if err != nil {
 		return err
 	}
-	loadedFromLegacy := false
-	if !loaded && legacyPath != "" && legacyPath != path {
-		loaded, err = utils.ReadJSONFileIfExists(legacyPath, &payload)
-		if err != nil {
-			return err
-		}
-		loadedFromLegacy = loaded
-	}
 	if !loaded {
 		return nil
 	}
-	if err := payload.apply(server); err != nil {
-		return err
-	}
-	if loadedFromLegacy {
-		savePolicyState(path, server.PolicyRuntime())
-	}
-	return nil
+	return payload.apply(server)
 }
 
 func (api *RelayAPI) serveAdmin(w http.ResponseWriter, r *http.Request) {

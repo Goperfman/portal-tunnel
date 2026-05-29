@@ -7,10 +7,9 @@ import (
 )
 
 const (
-	IdentityKeySeparator             = ":"
-	RelayIdentityFilename            = "identity.json"
-	RelayPolicyFilename              = "policy.json"
-	LegacyRelayAdminSettingsFilename = "admin_settings.json"
+	IdentityKeySeparator  = ":"
+	RelayIdentityFilename = "identity.json"
+	RelayPolicyFilename   = "policy.json"
 )
 
 type Identity struct {
