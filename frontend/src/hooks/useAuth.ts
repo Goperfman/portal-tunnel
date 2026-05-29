@@ -9,11 +9,15 @@ import {
 import { API_PATHS } from "@/lib/apiPaths";
 import { APIClientError, apiClient } from "@/lib/apiClient";
 import { writeAdminAuthToken } from "@/lib/adminAuthToken";
+import type {
+  WalletAuthChallengeResponse,
+  WalletAuthLoginResponse,
+  WalletAuthStatusResponse,
+} from "@/types/api";
 
 interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
-  authTarget: ResolvedAuthTarget | "";
   walletAddress: string;
 }
 
@@ -22,79 +26,30 @@ interface LoginResult {
   error?: string;
 }
 
-interface WalletAuthStatusPayload {
-  authenticated: boolean;
-  wallet_address?: string;
-}
-
-interface WalletAuthChallengePayload {
-  challenge_id: string;
-  siwe_message: string;
-}
-
-interface WalletAuthLoginPayload {
-  access_token?: string;
-  wallet_address?: string;
-}
-
-type AuthTarget = "admin" | "agent" | "auto";
-type ResolvedAuthTarget = "admin" | "agent";
-
-const authPaths = {
-  admin: {
-    challenge: API_PATHS.admin.authChallenge,
-    login: API_PATHS.admin.authLogin,
-    logout: API_PATHS.admin.logout,
-    status: API_PATHS.admin.authStatus,
-  },
-  agent: {
-    challenge: API_PATHS.agent.authChallenge,
-    login: API_PATHS.agent.authLogin,
-    logout: API_PATHS.agent.authLogout,
-    status: API_PATHS.agent.authStatus,
-  },
-} as const;
-
-function authCandidates(target: AuthTarget, preferred?: ResolvedAuthTarget | ""): ResolvedAuthTarget[] {
-  if (target === "admin" || target === "agent") {
-    return [target];
-  }
-  if (preferred === "admin") {
-    return ["admin", "agent"];
-  }
-  if (preferred === "agent") {
-    return ["agent", "admin"];
-  }
-  return ["admin", "agent"];
-}
-
-function emptyAuthState(target: ResolvedAuthTarget | "" = ""): AuthState {
+function emptyAuthState(): AuthState {
   return {
     isAuthenticated: false,
     isLoading: false,
-    authTarget: target,
     walletAddress: "",
   };
 }
 
-async function fetchAuthState(target: AuthTarget, preferred?: ResolvedAuthTarget | ""): Promise<AuthState> {
-  for (const candidate of authCandidates(target, preferred)) {
-    try {
-      const data = await apiClient.get<WalletAuthStatusPayload>(authPaths[candidate].status);
-      return {
-        isAuthenticated: data.authenticated,
-        isLoading: false,
-        authTarget: candidate,
-        walletAddress: data.wallet_address || "",
-      };
-    } catch {
-      continue;
-    }
+async function fetchAuthState(): Promise<AuthState> {
+  try {
+    const data = await apiClient.get<WalletAuthStatusResponse>(
+      API_PATHS.admin.authStatus
+    );
+    return {
+      isAuthenticated: data.authenticated,
+      isLoading: false,
+      walletAddress: data.wallet_address || "",
+    };
+  } catch {
+    return emptyAuthState();
   }
-  return emptyAuthState(target === "admin" || target === "agent" ? target : "");
 }
 
-export function useAuth(target: AuthTarget = "admin") {
+export function useAuth() {
   const { address: connectedAddress, isConnected } = useAccount();
   const connectors = useConnectors();
   const { connectAsync } = useConnect();
@@ -103,19 +58,18 @@ export function useAuth(target: AuthTarget = "admin") {
   const [authState, setAuthState] = useState<AuthState>({
     isAuthenticated: false,
     isLoading: true,
-    authTarget: "",
     walletAddress: "",
   });
 
   const checkAuth = async () => {
-    setAuthState(await fetchAuthState(target, authState.authTarget));
+    setAuthState(await fetchAuthState());
   };
 
   useEffect(() => {
     void (async () => {
-      setAuthState(await fetchAuthState(target));
+      setAuthState(await fetchAuthState());
     })();
-  }, [target]);
+  }, []);
 
   const login = async (): Promise<LoginResult> => {
     try {
@@ -131,44 +85,31 @@ export function useAuth(target: AuthTarget = "admin") {
       if (!address) {
         return { success: false, error: "Wallet provider is unavailable." };
       }
-      let authTarget = authState.authTarget;
-      if (!authTarget) {
-        const nextState = await fetchAuthState(target);
-        setAuthState(nextState);
-        authTarget = nextState.authTarget;
-      }
-      if (!authTarget) {
-        return { success: false, error: "Wallet login is unavailable." };
-      }
-
-      const challenge = await apiClient.post<WalletAuthChallengePayload>(
-        authPaths[authTarget].challenge,
+      const challenge = await apiClient.post<WalletAuthChallengeResponse>(
+        API_PATHS.admin.authChallenge,
         { address }
       );
       const signature = await signMessageAsync({
         account: address,
         message: challenge.siwe_message,
       });
-      const data = await apiClient.post<WalletAuthLoginPayload>(
-        authPaths[authTarget].login,
+      const data = await apiClient.post<WalletAuthLoginResponse>(
+        API_PATHS.admin.authLogin,
         {
           challenge_id: challenge.challenge_id,
           siwe_message: challenge.siwe_message,
           siwe_signature: signature,
         }
       );
-      if (authTarget === "admin") {
-        const accessToken = data.access_token?.trim() || "";
-        if (!accessToken) {
-          writeAdminAuthToken("");
-          return { success: false, error: "Admin login did not return an access token." };
-        }
-        writeAdminAuthToken(accessToken);
+      const accessToken = data.access_token?.trim() || "";
+      if (!accessToken) {
+        writeAdminAuthToken("");
+        return { success: false, error: "Admin login did not return an access token." };
       }
+      writeAdminAuthToken(accessToken);
       setAuthState((prev) => ({
         ...prev,
         isAuthenticated: true,
-        authTarget,
         walletAddress: data.wallet_address || address,
       }));
       return { success: true };
@@ -188,20 +129,12 @@ export function useAuth(target: AuthTarget = "admin") {
   };
 
   const logout = async () => {
-    const candidates = authCandidates(target, authState.authTarget);
-    for (const candidate of candidates) {
-      try {
-        await apiClient.post<unknown>(authPaths[candidate].logout);
-        if (candidate === "admin") {
-          writeAdminAuthToken("");
-        }
-        break;
-      } catch {
-        if (candidate === "admin") {
-          writeAdminAuthToken("");
-        }
-        continue;
-      }
+    try {
+      await apiClient.post<unknown>(API_PATHS.admin.logout);
+    } catch {
+      // Logging out should clear local state even if the remote token is stale.
+    } finally {
+      writeAdminAuthToken("");
     }
     setAuthState((prev) => ({ ...prev, isAuthenticated: false, walletAddress: "" }));
     try {

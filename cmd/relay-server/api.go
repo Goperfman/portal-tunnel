@@ -84,8 +84,8 @@ func (api *RelayAPI) Handler() *http.ServeMux {
 	})
 	mux.HandleFunc(types.PathAdmin, api.serveAdmin)
 	mux.HandleFunc(types.PathAdminPrefix, api.serveAdmin)
-	mux.HandleFunc(types.PathPublicSnapshot, api.servePublicSnapshot)
-	mux.HandleFunc(types.PathTunnelStatus, api.serveTunnelStatus)
+	mux.HandleFunc(types.PathPublicState, api.servePublicState)
+	mux.HandleFunc(types.PathServiceStatus, api.serveServiceStatus)
 	mux.HandleFunc(types.PathThumbnailPrefix, api.serveThumbnail)
 	mux.HandleFunc(types.PathInstallShell, func(w http.ResponseWriter, r *http.Request) {
 		serveInstallScript(w, r, api.server.PortalURL(), false)
@@ -98,20 +98,20 @@ func (api *RelayAPI) Handler() *http.ServeMux {
 	return mux
 }
 
-func (api *RelayAPI) servePublicSnapshot(w http.ResponseWriter, r *http.Request) {
+func (api *RelayAPI) servePublicState(w http.ResponseWriter, r *http.Request) {
 	if !utils.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
 
 	leases := api.server.PublicLeases()
 	api.attachAutomaticThumbnails(leases)
-	utils.WriteAPIData(w, http.StatusOK, types.PublicSnapshotResponse{
+	utils.WriteAPIData(w, http.StatusOK, types.PublicStateResponse{
 		Leases:             leases,
 		LandingPageEnabled: api.landingPageEnabled.Load(),
 	})
 }
 
-func (api *RelayAPI) serveTunnelStatus(w http.ResponseWriter, r *http.Request) {
+func (api *RelayAPI) serveServiceStatus(w http.ResponseWriter, r *http.Request) {
 	if !utils.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
@@ -122,7 +122,7 @@ func (api *RelayAPI) serveTunnelStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := types.TunnelStatusResponse{
+	resp := types.ServiceStatusResponse{
 		Hostname: hostname,
 	}
 	if lease, ok := api.publicLeaseByHostname(hostname); ok {

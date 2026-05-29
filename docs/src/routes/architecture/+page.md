@@ -346,7 +346,7 @@ Notes:
 
 ## Admin API Surface
 
-The relay server is intentionally API-only: one JSON snapshot endpoint, public snapshot/status endpoints, installer endpoints, and a small set of admin action/auth routes. Route paths are enumerated in `types/paths.go` and `cmd/relay-server`.
+The relay server is intentionally API-only: public/admin state endpoints, public status endpoints, installer endpoints, and a small set of admin action/auth routes. Route paths are enumerated in `types/paths.go` and `cmd/relay-server`.
 
 ## Keyless TLS Trust Model
 

@@ -232,7 +232,7 @@ Agent fields:
 
 The local agent dashboard and mutating control API calls use the bearer token in
 the agent state directory. Wallet-authenticated agent requests are read-only and
-can only read `/v1/agent/status`.
+can only read `/agent/status`.
 
 Tunnel fields mirror `portal expose` flags:
 

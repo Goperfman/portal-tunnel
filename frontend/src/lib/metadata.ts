@@ -1,4 +1,9 @@
-import type { Metadata } from "@/types/lease";
+interface Metadata {
+  description: string;
+  tags: string[];
+  thumbnail: string;
+  owner: string;
+}
 
 const EMPTY_METADATA: Metadata = {
   description: "",

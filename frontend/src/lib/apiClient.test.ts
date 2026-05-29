@@ -133,7 +133,7 @@ describe("apiClient", () => {
     } satisfies Partial<APIClientError>);
   });
 
-  it("sends JSON bodies for post and omits content-type for delete without body", async () => {
+  it("sends JSON bodies for post", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, data: {} }));
     await apiClient.post("/api/post", { id: 1 });
 
@@ -144,22 +144,13 @@ describe("apiClient", () => {
       Accept: "application/json",
       "Content-Type": "application/json",
     });
-
-    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, data: {} }));
-    await apiClient.delete("/api/post");
-
-    const deleteInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
-    expect(deleteInit.method).toBe("DELETE");
-    expect(deleteInit.headers).toEqual({
-      Accept: "application/json",
-    });
   });
 
   it("sends bearer token for admin API calls", async () => {
     writeAdminAuthToken("admin-token");
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, data: {} }));
 
-    await apiClient.post("/admin/logout");
+    await apiClient.post("/admin/auth/logout");
 
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(init.credentials).toBe("same-origin");

@@ -5,7 +5,7 @@ services:
   #   image: chromedp/headless-shell:stable
   #   restart: unless-stopped
 
-  portal-api:
+  portal:
     image: ghcr.io/gosuda/portal:latest
     build:
       context: .
@@ -86,7 +86,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     depends_on:
-      - portal-api
+      - portal
     ports:
       - "${FRONTEND_PORT:-8080}:8080"
     restart: unless-stopped

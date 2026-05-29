@@ -19,8 +19,8 @@ The Go relay is API-only. This frontend is a standalone Vite app that talks to
 the relay over the JSON API and does not receive server-side injected lease
 data.
 
-- Public relay state is loaded from `/api/public/snapshot`.
-- Admin state is loaded from `/admin/snapshot`.
+- Public relay state is loaded from `/state`.
+- Admin state is loaded from `/admin/state`.
 - All JSON API responses use the `{ ok, data?, error? }` envelope parsed by `src/lib/apiClient.ts`.
 - `VITE_PORTAL_API_BASE_URL` points the frontend at a relay API origin. Admin auth uses a bearer token returned by `/admin/auth/login`.
 
@@ -44,7 +44,7 @@ frontend/
       ServerDetail.tsx
       ServerList.tsx
     types/
-      lease.ts
+      api.ts
     App.tsx
     main.tsx
     index.css
@@ -81,9 +81,11 @@ VITE_PORTAL_API_BASE_URL=https://relay.example.com npm run dev
 
 ## Docker
 
-The frontend Docker image serves the built Vite app with nginx and proxies API
-paths to `portal-api:4017` in Docker Compose. The app uses same-origin relative
-API paths, so it does not need runtime config file generation.
+The frontend Docker image serves the built Vite app with nginx over HTTP and
+proxies API paths to the HTTPS relay at `portal:4017` in Docker Compose.
+TLS for public domains should live in the outer reverse proxy. The app uses
+same-origin relative API paths, so it does not need runtime config file
+generation.
 
 ```bash
 docker compose up -d portal-frontend
@@ -105,8 +107,8 @@ docker compose up -d portal-frontend
 Relay server exposes:
 
 - `/` - relay API identity response
-- `/api/public/snapshot` - public leases and landing-page state
-- `/tunnel/status` - tunnel readiness check used by the command form
+- `/state` - public leases and landing-page state
+- `/service/status` - public hostname and service readiness check used by the command form
 - `/thumbnail/{hostname}` - cached generated screenshots
 - `/install.sh` and `/install.ps1` - CLI installers
 - `/admin/*` - admin API/control endpoints
@@ -116,5 +118,5 @@ Relay server exposes:
 ## Notes
 
 - API path constants are duplicated in Go (`types/paths.go`) and TS (`src/lib/apiPaths.ts`).
-- Lease JSON field casing is intentionally mixed to match Go's current wire output; see `src/types/lease.ts`.
+- Frontend API wire types live in `src/types/api.ts`.
 - Radix Select values cannot be empty strings. Use stable values such as `"all"` and `"default"`.

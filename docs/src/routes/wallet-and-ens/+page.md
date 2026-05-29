@@ -15,7 +15,7 @@ related, but they do not all mean "connect a browser wallet".
 | Tunnel identity | Local `identity.json` secp256k1 private key, or BIP-39 mnemonic plus derivation path | Signs SIWE lease registration challenges |
 | Relay identity | Relay `IDENTITY_PATH/identity.json` secp256k1 private key, or BIP-39 mnemonic plus derivation path | Signs relay descriptors, admin default wallet, lease access tokens, and ENS base-domain address |
 | Relay admin wallet | Browser wallet address allowlist | Signs in to `/admin` and receives an admin bearer token |
-| Agent wallet | Optional browser wallet allowlist | Reads loopback agent status through `/v1/agent/status` |
+| Agent wallet | Optional browser wallet allowlist | Reads loopback agent status through `/agent/status` |
 | ENS gasless DNS | DNSSEC plus `ENS1 ...` TXT records | Lets ENS-aware clients resolve the relay domain and lease hostnames to Portal identities |
 
 ## Tunnel SIWE Registration
@@ -93,10 +93,10 @@ Challenges expire after two minutes. Admin bearer tokens expire after 24 hours.
 The local agent also exposes SIWE wallet auth endpoints:
 
 ```text
-/v1/agent/auth/challenge
-/v1/agent/auth/login
-/v1/agent/auth/logout
-/v1/agent/auth/status
+/agent/auth/challenge
+/agent/auth/login
+/agent/auth/logout
+/agent/auth/status
 ```
 
 Agent wallet access is intentionally narrow:
@@ -104,7 +104,7 @@ Agent wallet access is intentionally narrow:
 - `agent.allowed_wallets` restricts which wallet addresses can sign in.
 - when `allowed_wallets` is empty, any wallet can sign in to the loopback auth
   endpoint.
-- wallet-authenticated requests can read `/v1/agent/status`.
+- wallet-authenticated requests can read `/agent/status`.
 - config mutation, tunnel changes, relay changes, shutdown, and multi-hop edits
   still require the bearer token in `<state_dir>/agent-endpoint.json`.
 

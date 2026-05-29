@@ -1,418 +1,156 @@
 ---
 title: SDK API
-description: Portal SDK endpoints for tunnel registration and connection.
+description: Portal SDK endpoints for relay discovery, lease lifecycle, and reverse tunnel streaming.
 ---
-
-<script>
-import Mermaid from '$lib/components/Mermaid.svelte'
-
-const registrationDiagram = `sequenceDiagram
-    participant Client as SDK Client
-    participant Relay as Portal Relay
-
-    Client->>Relay: POST /sdk/register/challenge
-    Note right of Client: Send identity + metadata
-    Relay->>Client: challenge_id + siwe_message
-
-    Client->>Client: Sign SIWE message with private key
-
-    Client->>Relay: POST /sdk/register
-    Note right of Client: challenge_id + signed message
-    Relay->>Client: access_token + lease info
-    Note left of Relay: hostname, udp_addr, tcp_addr`
-
-const reverseConnectDiagram = `sequenceDiagram
-    participant SDK as SDK Client
-    participant Relay as Portal Relay
-    participant Browser as End User
-
-    SDK->>Relay: GET /sdk/connect
-    Note right of SDK: X-Portal-Access-Token header
-    Relay->>SDK: HTTP/1.1 200 OK (hijacked)
-    Note over SDK,Relay: Connection upgraded to raw TCP
-
-    Browser->>Relay: TLS ClientHello (SNI: app.relay.example.com)
-    Relay->>Relay: Match SNI to lease
-    Relay->>SDK: 0x02 marker, then encrypted tenant bytes
-    Note over SDK: Tenant TLS terminates locally via keyless signer
-    SDK->>Relay: Response traffic
-    Relay->>Browser: Forward response
-    Note over SDK,Browser: Relay bridges ciphertext only`
-</script>
 
 # SDK API
 
-These endpoints are used by the Portal SDK to register tunnels, manage leases, and establish reverse connections to the relay server.
-
-## Registration Flow
-
-<Mermaid code={registrationDiagram} />
-
-## Reverse Connect Flow
-
-<Mermaid code={reverseConnectDiagram} />
-
----
-
-### `GET /sdk/domain`
-
-Get relay domain and protocol version information. Used by the SDK to verify relay compatibility before registration.
-
-**Auth:** None
-
-**Response fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `protocol_version` | `string` | Protocol version (must match SDK version) |
-| `release_version` | `string` | Relay software release version |
-| `ens` | `object` | ENS gasless status for this relay |
-| `x402` | `object` | Relay-local x402 facilitator status and public payment metadata |
-
-`ens` fields:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `enabled` | `bool` | ENS gasless automation is enabled for a non-local relay domain |
-| `verified` | `bool` | DNSSEC is active according to Portal and the last ENS sync succeeded |
-| `provider` | `string` | DNS provider used for automation |
-| `address` | `string` | Base-domain ENS address, usually the relay identity address |
-| `dnssec_state` | `string` | Provider DNSSEC state |
-| `ds_record` | `string` | DS record that may need registrar publication |
-| `message` | `string` | Provider-specific DNSSEC guidance |
-| `last_error` | `string` | Last ENS/DNS sync error |
-
-`x402` fields:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `enabled` | `bool` | Relay-local facilitator is exposed under `/x402` |
-| `url` | `string` | Facilitator base URL to use in tunnel x402 config |
-| `network` | `string` | CAIP-2 payment network served by the facilitator |
-| `network_name` | `string` | Human-readable network name when known |
-| `supported_url` | `string` | URL for the facilitator `/supported` endpoint |
-
-**Example:**
-
-```bash
-curl https://relay.example.com/sdk/domain
-```
-
-**Response:**
-
-```json
-{
-  "ok": true,
-  "data": {
-    "protocol_version": "5",
-    "release_version": "v2.1.5",
-    "ens": {
-      "enabled": true,
-      "verified": true,
-      "provider": "cloudflare",
-      "address": "0x1234567890abcdef1234567890abcdef12345678",
-      "dnssec_state": "active"
-    },
-    "x402": {
-      "enabled": true,
-      "url": "https://relay.example.com/x402",
-      "network": "eip155:84532",
-      "network_name": "Base Sepolia",
-      "supported_url": "https://relay.example.com/x402/supported"
-    }
-  }
-}
-```
-
----
-
-### `POST /sdk/register/challenge`
-
-Request a SIWE (Sign-In with Ethereum) challenge message for tunnel registration. This is the first step of the two-phase registration flow.
-
-**Auth:** None
-
-**Request body:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `identity` | `object` | Yes | Identity object (see below) |
-| `identity.name` | `string` | Yes | Lease name (used as subdomain) |
-| `identity.address` | `string` | Yes | Ethereum address (hex, `0x`-prefixed) |
-| `metadata` | `object` | No | Lease metadata |
-| `metadata.description` | `string` | No | Human-readable description |
-| `metadata.tags` | `string[]` | No | Tags for categorization |
-| `metadata.thumbnail` | `string` | No | Base64-encoded thumbnail image |
-| `ttl` | `int` | No | Lease TTL in seconds (default: server-configured) |
-| `udp_enabled` | `bool` | No | Request UDP (QUIC) transport |
-| `tcp_enabled` | `bool` | No | Request dedicated TCP port |
-
-**Response fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `challenge_id` | `string` | Unique challenge identifier |
-| `expires_at` | `string` | ISO 8601 challenge expiration |
-| `siwe_message` | `string` | SIWE message to sign |
-
-**Error codes:**
-
-| Code | Status | Description |
-|------|--------|-------------|
-| `ip_banned` | 403 | Source IP is banned |
-| `feature_unavailable` | 503 | UDP or TCP transport not available |
-| `udp_disabled` | 403 | UDP transport disabled by admin policy |
-| `udp_capacity_exceeded` | 503 | UDP lease capacity reached |
-| `tcp_port_disabled` | 403 | TCP port transport disabled by admin policy |
-| `tcp_port_capacity_exceeded` | 503 | TCP port lease capacity reached |
-
-**Example:**
-
-```bash
-curl -X POST https://relay.example.com/sdk/register/challenge \
-  -H "Content-Type: application/json" \
-  -d '{
-    "identity": {
-      "name": "my-app",
-      "address": "0x1234567890abcdef1234567890abcdef12345678"
-    },
-    "metadata": {
-      "description": "My web application"
-    },
-    "ttl": 60
-  }'
-```
-
-**Response:**
-
-```json
-{
-  "ok": true,
-  "data": {
-    "challenge_id": "abc123",
-    "expires_at": "2025-01-01T00:05:00Z",
-    "siwe_message": "relay.example.com wants you to sign in..."
-  }
-}
-```
-
----
-
-### `POST /sdk/register`
-
-Complete tunnel registration by submitting the signed SIWE challenge. Returns an access token and lease information including the assigned hostname.
-
-**Auth:** None (authenticated by SIWE signature)
-
-**Request body:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `challenge_id` | `string` | Yes | Challenge ID from `/sdk/register/challenge` |
-| `siwe_message` | `string` | Yes | The SIWE message that was signed |
-| `siwe_signature` | `string` | Yes | Ethereum personal sign signature (hex) |
-| `reported_ip` | `string` | No | Client-reported public IP address |
-
-**Response fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `identity` | `object` | Normalized identity (name + address) |
-| `expires_at` | `string` | ISO 8601 lease expiration |
-| `hostname` | `string` | Assigned tunnel hostname (e.g. `my-app.relay.example.com`) |
-| `access_token` | `string` | ES256K JWT access token for subsequent API calls |
-| `sni_port` | `int` | SNI port for QUIC transport (omitted if UDP not enabled) |
-| `udp_addr` | `string` | UDP address for QUIC transport (e.g. `relay.example.com:4443`) |
-| `udp_enabled` | `bool` | Whether UDP transport is active |
-| `tcp_addr` | `string` | Dedicated TCP address (e.g. `relay.example.com:10001`) |
-| `tcp_enabled` | `bool` | Whether TCP port transport is active |
-
-**Error codes:**
-
-| Code | Status | Description |
-|------|--------|-------------|
-| `unauthorized` | 403 | Invalid SIWE signature |
-| `hostname_conflict` | 409 | Hostname already registered |
-| `ip_banned` | 403 | Source IP is banned |
-| `udp_port_exhausted` | 503 | No UDP ports available |
-| `tcp_port_exhausted` | 503 | No TCP ports available |
-| `udp_disabled` | 403 | UDP transport disabled by admin policy |
-| `udp_capacity_exceeded` | 503 | UDP lease capacity reached |
-| `tcp_port_disabled` | 403 | TCP port transport disabled by admin policy |
-| `tcp_port_capacity_exceeded` | 503 | TCP port lease capacity reached |
-| `feature_unavailable` | 503 | Requested transport not available |
-
-**Example:**
-
-```bash
-curl -X POST https://relay.example.com/sdk/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "challenge_id": "abc123",
-    "siwe_message": "relay.example.com wants you to sign in...",
-    "siwe_signature": "0xdeadbeef..."
-  }'
-```
-
-**Response:**
-
-```json
-{
-  "ok": true,
-  "data": {
-    "identity": {
-      "name": "my-app",
-      "address": "0x1234567890abcdef1234567890abcdef12345678"
-    },
-    "expires_at": "2025-01-01T00:01:00Z",
-    "hostname": "my-app.relay.example.com",
-    "access_token": "eyJhbGciOiJFUzI1Nksi...",
-    "udp_enabled": false,
-    "tcp_enabled": false
-  }
-}
-```
-
----
-
-### `POST /sdk/renew`
-
-Renew an existing lease to extend its TTL. Returns a new access token that should replace the old one.
-
-**Auth:** Access token (in request body)
-
-**Request body:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `access_token` | `string` | Yes | Current JWT access token |
-| `ttl` | `int` | No | Requested TTL in seconds |
-| `reported_ip` | `string` | No | Client-reported public IP address |
-
-**Response fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `expires_at` | `string` | ISO 8601 new expiration time |
-| `access_token` | `string` | New JWT access token (replaces old one) |
-
-**Error codes:**
-
-| Code | Status | Description |
-|------|--------|-------------|
-| `unauthorized` | 403 | Invalid or expired access token |
-| `lease_not_found` | 404 | No active lease for this identity |
-| `ip_banned` | 403 | Source IP is banned |
-
-**Example:**
-
-```bash
-curl -X POST https://relay.example.com/sdk/renew \
-  -H "Content-Type: application/json" \
-  -d '{
-    "access_token": "eyJhbGciOiJFUzI1Nksi...",
-    "ttl": 60
-  }'
-```
-
-**Response:**
-
-```json
-{
-  "ok": true,
-  "data": {
-    "expires_at": "2025-01-01T00:02:00Z",
-    "access_token": "eyJhbGciOiJFUzI1Nksi...new"
-  }
-}
-```
-
----
-
-### `POST /sdk/unregister`
-
-Remove an active lease and release all associated resources (hostname, ports, connections).
-
-**Auth:** Access token (in request body)
-
-**Request body:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `access_token` | `string` | Yes | Current JWT access token |
-
-**Response fields:**
-
-Empty data object on success.
-
-**Error codes:**
-
-| Code | Status | Description |
-|------|--------|-------------|
-| `unauthorized` | 403 | Invalid or expired access token |
-| `lease_not_found` | 404 | No active lease for this identity |
-
-**Example:**
-
-```bash
-curl -X POST https://relay.example.com/sdk/unregister \
-  -H "Content-Type: application/json" \
-  -d '{
-    "access_token": "eyJhbGciOiJFUzI1Nksi..."
-  }'
-```
-
-**Response:**
-
-```json
-{
-  "ok": true,
-  "data": {}
-}
-```
-
----
-
-### `GET /sdk/connect`
-
-Establish a reverse tunnel connection using HTTP/1.1 connection hijacking. The SDK opens this connection and the relay holds it in a ready queue. When a client connects to the tunnel hostname via TLS SNI, the relay claims a ready connection and bridges traffic bidirectionally.
-
-**Auth:** `X-Portal-Access-Token` header
-
-**Requirements:**
-- Must use HTTP/1.1 (not HTTP/2)
-- Connection header must be `keep-alive`
-
-**Request headers:**
-
-| Header | Value | Description |
-|--------|-------|-------------|
-| `X-Portal-Access-Token` | `string` | JWT access token from registration |
-| `Connection` | `keep-alive` | Required for hijack |
-
-**Response:**
-
-On success, the server responds with `HTTP/1.1 200 OK` and hijacks the underlying TCP connection. No JSON body is returned — the connection is upgraded to a raw bidirectional TCP stream.
-
-**Error codes:**
-
-| Code | Status | Description |
-|------|--------|-------------|
-| `unauthorized` | 403 | Invalid or expired access token |
-| `lease_not_found` | 404 | No active lease for this identity |
-| `lease_rejected` | 403 | Lease not approved for routing |
-| `http11_only` | 505 | Must use HTTP/1.1 |
-| `hijack_unsupported` | 500 | Server does not support hijacking |
-| `hijack_failed` | 500 | Connection hijack failed |
-| `ip_banned` | 403 | Source IP is banned |
-
-**Example:**
-
-```bash
-curl -X GET https://relay.example.com/sdk/connect \
-  -H "X-Portal-Access-Token: eyJhbGciOiJFUzI1Nksi..." \
-  -H "Connection: keep-alive" \
-  --http1.1
-```
-
-> **Note:** In practice, the SDK does not use curl for this endpoint. It opens a raw TLS connection, writes the HTTP/1.1 request manually, reads the 200 response, and then uses the connection as a bidirectional TCP stream for tunneled traffic.
+SDK endpoints are the stable lease protocol between a Portal tunnel process and
+a relay. Normal JSON endpoints use the shared envelope from
+[API Reference](/api-reference). `GET /sdk/connect` is the only SDK endpoint
+that switches to a raw stream after a successful HTTP/1.1 response.
+
+## Flow
+
+1. `GET /sdk/domain` checks relay compatibility and optional ENS/x402 support.
+2. `POST /sdk/register/challenge` creates a SIWE challenge for the requested identity.
+3. The SDK signs the returned `siwe_message`.
+4. `POST /sdk/register` exchanges the signature for a lease `access_token`.
+5. The SDK keeps the lease alive with `/sdk/renew` and opens reverse streams with `/sdk/connect`.
+6. `POST /sdk/unregister` removes the lease.
+
+## Endpoints
+
+| Method | Path | Auth | Body | Data |
+|--------|------|------|------|------|
+| `GET` | `/sdk/domain` | None | none | `DomainResponse` |
+| `POST` | `/sdk/register/challenge` | None | `RegisterChallengeRequest` | `RegisterChallengeResponse` |
+| `POST` | `/sdk/register` | SIWE signature body | `RegisterRequest` | `RegisterResponse` |
+| `POST` | `/sdk/renew` | lease token body | `RenewRequest` | `RenewResponse` |
+| `POST` | `/sdk/unregister` | lease token body | `UnregisterRequest` | `{}` |
+| `GET` | `/sdk/connect` | lease token header | none | hijacked stream |
+
+## Domain
+
+`GET /sdk/domain` returns:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `protocol_version` | `string` | SDK tunnel protocol version |
+| `release_version` | `string` | relay software release |
+| `ens` | `ENSStatus` | gasless ENS status |
+| `x402` | `X402FacilitatorInfo` | relay-local payment facilitator info |
+
+`ENSStatus`:
+
+| Field | Type |
+|-------|------|
+| `enabled`, `verified` | `boolean` |
+| `provider`, `address`, `dnssec_state`, `ds_record`, `message`, `last_error` | `string` |
+
+`X402FacilitatorInfo`:
+
+| Field | Type |
+|-------|------|
+| `enabled` | `boolean` |
+| `url`, `network`, `network_name`, `supported_url` | `string` |
+
+## Register Challenge
+
+`RegisterChallengeRequest`:
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `identity` | `Identity` | yes | `name` and `address` |
+| `metadata` | `LeaseMetadata` | no | public lease metadata |
+| `ttl` | `number` | no | requested TTL in seconds |
+| `udp_enabled` | `boolean` | no | request UDP transport |
+| `tcp_enabled` | `boolean` | no | request dedicated TCP port |
+
+Overlay-only fields are also accepted by relay-to-relay clients:
+`hop_token`, `route_hostname`, `hostname_hash`, and `ech_config_list`.
+
+`RegisterChallengeResponse`:
+
+| Field | Type |
+|-------|------|
+| `challenge_id` | `string` |
+| `expires_at` | `string` |
+| `siwe_message` | `string` |
+
+## Register
+
+`RegisterRequest`:
+
+| Field | Type | Required |
+|-------|------|----------|
+| `challenge_id` | `string` | yes |
+| `siwe_message` | `string` | yes |
+| `siwe_signature` | `string` | yes |
+| `reported_ip` | `string` | no |
+
+`RegisterResponse`:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `identity` | `Identity` | normalized lease identity |
+| `expires_at` | `string` | lease expiry |
+| `access_token` | `string` | token for renew, unregister, connect, and signer access |
+| `sni_port` | `number` | omitted when not needed |
+| `udp_addr`, `tcp_addr` | `string` | omitted when transport is disabled |
+| `udp_enabled`, `tcp_enabled` | `boolean` | active transport flags |
+
+The response does not include a separate `hostname` field. The public hostname
+is derived from the registered identity and relay root domain.
+
+## Renew And Unregister
+
+`RenewRequest`:
+
+| Field | Type | Required |
+|-------|------|----------|
+| `access_token` | `string` | yes |
+| `ttl` | `number` | no |
+| `reported_ip` | `string` | no |
+| `metadata` | `LeaseMetadata` | no |
+
+`RenewResponse`:
+
+| Field | Type |
+|-------|------|
+| `expires_at` | `string` |
+| `access_token` | `string` |
+
+`UnregisterRequest`:
+
+| Field | Type | Required |
+|-------|------|----------|
+| `access_token` | `string` | yes |
+
+`/sdk/unregister` returns `{}` on success.
+
+## Reverse Connect
+
+`GET /sdk/connect` opens a reverse tunnel stream.
+
+Requirements:
+
+| Requirement | Value |
+|-------------|-------|
+| HTTP version | HTTP/1.1 |
+| Header | `X-Portal-Access-Token: <lease access_token>` |
+| Connection | keep-alive capable connection that supports hijack |
+
+On success, the relay writes `HTTP/1.1 200 OK` and hijacks the TCP connection.
+There is no JSON response body. Before the hijack, failures still use the
+standard JSON error envelope.
+
+The SDK keeps several ready reverse streams open. When an end user connects to
+the lease hostname, the relay claims one ready stream and bridges encrypted
+tenant bytes between the browser side and the SDK side.
+
+## Relay Overlay
+
+`/sdk/hop` is reserved for relay-to-relay overlay routing. It accepts
+`POST` and `DELETE` with a signed `HopRoute` body and returns `HopRouteResponse`
+or `{}`. Normal SDK clients should not call it directly.

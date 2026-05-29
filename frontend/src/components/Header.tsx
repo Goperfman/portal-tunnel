@@ -5,6 +5,7 @@ import { ThemeToggleButton } from "@/components/ThemeToggleButton";
 import { useAuth } from "@/hooks/useAuth";
 import { apiClient } from "@/lib/apiClient";
 import { API_PATHS } from "@/lib/apiPaths";
+import type { DomainResponse, X402FacilitatorInfo } from "@/types/api";
 import {
   Tooltip,
   TooltipContent,
@@ -17,22 +18,6 @@ interface HeaderProps {
   isAdmin?: boolean;
   onAuthChange?: () => void | Promise<void>;
   showQuickStartLink?: boolean;
-}
-
-interface DomainStatusResponse {
-  release_version?: string;
-  ens?: {
-    verified?: boolean;
-  };
-  x402?: X402FacilitatorInfo;
-}
-
-interface X402FacilitatorInfo {
-  enabled?: boolean;
-  url?: string;
-  network?: string;
-  network_name?: string;
-  supported_url?: string;
 }
 
 const repoURL = "https://github.com/gosuda/portal-tunnel";
@@ -64,7 +49,7 @@ export function Header({
     walletAddress,
     login,
     logout,
-  } = useAuth(isAdmin ? "admin" : "auto");
+  } = useAuth();
   const [authError, setAuthError] = useState("");
 
   const handleWalletLogin = async () => {
@@ -95,7 +80,7 @@ export function Header({
 
     void (async () => {
       try {
-        const status = await apiClient.get<DomainStatusResponse>(
+        const status = await apiClient.get<DomainResponse>(
           API_PATHS.sdk.domain
         );
         if (!cancelled) {

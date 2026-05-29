@@ -44,8 +44,8 @@ The relay admin UI uses browser wallet login:
 The relay identity address is allowed by default. Add more admin wallets with
 `ADMIN_WALLETS`.
 
-The local agent also exposes `/v1/agent/auth/*` wallet endpoints. Agent wallet
-sessions can read `/v1/agent/status`; tunnel mutations still require the local
+The local agent also exposes `/agent/auth/*` wallet endpoints. Agent wallet
+sessions can read `/agent/status`; tunnel mutations still require the local
 bearer token stored in the agent state directory.
 
 ## ENS

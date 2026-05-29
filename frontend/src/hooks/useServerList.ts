@@ -3,17 +3,17 @@ import { useList, type BaseServer } from "@/hooks/useList";
 import { apiClient } from "@/lib/apiClient";
 import { API_PATHS } from "@/lib/apiPaths";
 import { parseLeaseMetadata } from "@/lib/metadata";
-import type { PublicLeaseData, PublicSnapshotResponse } from "@/types/lease";
+import type { Lease, PublicStateResponse } from "@/types/api";
 
-type PublicSnapshot = {
-  leases: PublicLeaseData[];
+type PublicState = {
+  leases: Lease[];
   landingPageEnabled: boolean;
 };
 
-function convertPublicLeasesToServers(leases: PublicLeaseData[]): BaseServer[] {
+function convertPublicLeasesToServers(leases: Lease[]): BaseServer[] {
   return leases.map((row) => {
-    const metadata = parseLeaseMetadata(row.Metadata);
-    const hostname = row.Hostname || "";
+    const metadata = parseLeaseMetadata(row.metadata);
+    const hostname = row.hostname || "";
     const serviceName = row.name || "";
 
     return {
@@ -23,17 +23,17 @@ function convertPublicLeasesToServers(leases: PublicLeaseData[]): BaseServer[] {
       tags: metadata.tags,
       thumbnail: metadata.thumbnail || "",
       owner: metadata.owner || "",
-      online: (row.Ready || 0) > 0,
+      online: (row.ready || 0) > 0,
       dns: hostname,
       link: hostname ? `https://${hostname}/` : "",
-      lastUpdated: row.LastSeenAt || undefined,
-      firstSeen: row.FirstSeenAt || undefined,
+      lastUpdated: row.last_seen_at || undefined,
+      firstSeen: row.first_seen_at || undefined,
     };
   });
 }
 
 export function useServerList() {
-  const [snapshot, setSnapshot] = useState<PublicSnapshot>({
+  const [publicState, setPublicState] = useState<PublicState>({
     leases: [],
     landingPageEnabled: true,
   });
@@ -43,20 +43,20 @@ export function useServerList() {
 
     void (async () => {
       try {
-        const data = await apiClient.get<PublicSnapshotResponse>(
-          API_PATHS.public.snapshot
+        const data = await apiClient.get<PublicStateResponse>(
+          API_PATHS.public.state
         );
         if (cancelled) {
           return;
         }
-        setSnapshot({
+        setPublicState({
           leases: Array.isArray(data?.leases) ? data.leases : [],
           landingPageEnabled: data?.landing_page_enabled ?? true,
         });
       } catch (error) {
-        console.error("Failed to load public relay snapshot", error);
+        console.error("Failed to load public relay state", error);
         if (!cancelled) {
-          setSnapshot({ leases: [], landingPageEnabled: true });
+          setPublicState({ leases: [], landingPageEnabled: true });
         }
       }
     })();
@@ -67,8 +67,8 @@ export function useServerList() {
   }, []);
 
   const servers: BaseServer[] = useMemo(
-    () => convertPublicLeasesToServers(snapshot.leases),
-    [snapshot.leases]
+    () => convertPublicLeasesToServers(publicState.leases),
+    [publicState.leases]
   );
 
   const list = useList({
@@ -78,6 +78,6 @@ export function useServerList() {
 
   return {
     ...list,
-    landingPageEnabled: snapshot.landingPageEnabled,
+    landingPageEnabled: publicState.landingPageEnabled,
   };
 }

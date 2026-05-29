@@ -4,8 +4,8 @@ High-signal constraints for the relay-server frontend. Only items expensive to r
 
 ## Frontend-Backend Contracts
 
-1. **Public list data comes from `/api/public/snapshot`.**
-   Go shape is `types.PublicSnapshotResponse`; TS shape is `src/types/lease.ts`.
+1. **Public list data comes from `/state`.**
+   Go shape is `types.PublicStateResponse`; TS shape is `src/types/api.ts`.
    - Why: the Go relay is API-only. Do not reintroduce Go HTML data injection for public lease state.
 
 2. **API path constants require dual maintenance.**
@@ -25,21 +25,21 @@ High-signal constraints for the relay-server frontend. Only items expensive to r
    Leave it empty for same-origin development/proxying, or set it at build/dev time for a separately hosted relay API.
    - Why: runtime-generated config files couple the static frontend bundle back to deployment state.
 
-6. **Admin state reads are aggregated through `/admin/snapshot`.**
-   `src/hooks/useAdmin.ts` expects one payload carrying `leases`, settings, and `approval_mode`.
+6. **Admin state reads are aggregated through `/admin/state`.**
+   `src/hooks/useAdmin.ts` expects `{ settings, leases }`; all setting writes go through `/admin/settings` with the full settings object.
    - Why: splitting those reads across multiple endpoints reintroduces extra request coordination and drift in the admin bootstrap path.
 
-7. **Lease/AdminLease JSON casing is a mixed implicit/explicit contract.**
-   `Lease` (`../types/identity.go`): `Name` has `json:"name"`, while `FirstSeenAt`, `LastSeenAt`, `Hostname`, `Ready`, and `Metadata` use Go's default PascalCase names. `AdminLease`: `IdentityKey` and `Address` have snake_case json tags, while `BPS`, `ClientIP`, `ReportedIP`, `IsApproved`, `IsBanned`, `IsDenied`, and `IsIPBanned` use PascalCase. TS types in `src/types/lease.ts` include the fields currently rendered or used by actions.
-   - Why: adding a `json:"..."` tag to any currently untagged field silently changes the wire name and breaks the TS consumer.
+7. **Lease/AdminLease JSON casing is snake_case.**
+   Go `Lease`/`AdminLease` JSON tags live in `../types/identity.go`; TS mirrors the wire shape in `src/types/api.ts`.
+   - Why: the frontend should not depend on Go's implicit PascalCase encoder output.
 
-8. **Admin lease paths use base64-url encoding with URI-component escaping.**
-   TS `encodePathPart()` (`src/lib/apiPaths.ts`) does `btoa(value)` then replaces `+/=` with `-/_/""` before `encodeURIComponent()`. Go decodes via `utils.DecodeBase64URLString()`.
-   - Why: two-layer codec. Changing either side silently produces 400s on admin lease actions.
+8. **Admin policy writes identify targets in the JSON body.**
+   Lease policy writes use `/admin/lease-policy` with `identity_key`; IP policy writes use `/admin/ip-policy` with `ip`.
+   - Why: path encoding rules add a second contract surface and are easy to drift across Go and TS.
 
-9. **`Metadata` is typed `unknown` in TS but has a concrete Go struct.**
-   Go `LeaseMetadata` (`../types/identity.go`) has more fields than the frontend renders. TS parses only rendered fields at runtime in `src/lib/metadata.ts`.
-   - Why: adding or renaming a rendered Go metadata field silently drops data in the frontend. No compile-time contract exists.
+9. **Lease metadata has a wire type and a UI parser.**
+   Go `LeaseMetadata` (`../types/identity.go`) mirrors TS `LeaseMetadata` (`src/types/api.ts`). UI display defaults are owned by `src/lib/metadata.ts`.
+   - Why: API contract fields and UI fallback behavior should not be mixed.
 
 10. **ApprovalMode is a closed two-value enum: `"auto"` | `"manual"`.**
    TS `normalizeApprovalMode()` (`src/hooks/useAdmin.ts`) collapses any non-`"manual"` value to `"auto"`.

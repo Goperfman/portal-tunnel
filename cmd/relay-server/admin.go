@@ -84,212 +84,167 @@ func (api *RelayAPI) serveAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	runtime := api.server.PolicyRuntime()
-	methodNotAllowed := utils.MethodNotAllowedError()
 	invalidRequestBody := utils.InvalidRequestError(errors.New("invalid request body"))
 
 	switch path {
 	case "/admin/metrics":
 		promhttp.Handler().ServeHTTP(w, r)
 		return
-	case types.PathAdminSnapshot:
+	case types.PathAdminState:
 		if !utils.RequireMethod(w, r, http.MethodGet) {
 			return
 		}
 		leases := api.server.AdminLeases()
 		api.attachAutomaticAdminThumbnails(leases)
-		utils.WriteAPIData(w, http.StatusOK, types.AdminSnapshotResponse{
-			ApprovalMode:       string(runtime.Approver().Mode()),
-			LandingPageEnabled: api.landingPageEnabled.Load(),
-			Leases:             leases,
-			UDP: types.AdminUDPSettingsResponse{
-				Enabled:   runtime.IsUDPEnabled(),
-				MaxLeases: runtime.UDPMaxLeases(),
-			},
-			TCPPort: types.AdminTCPPortSettingsResponse{
-				Enabled:   runtime.IsTCPPortEnabled(),
-				MaxLeases: runtime.TCPPortMaxLeases(),
-			},
+		utils.WriteAPIData(w, http.StatusOK, types.AdminStateResponse{
+			Settings: api.adminSettings(runtime),
+			Leases:   leases,
 		})
-	case types.PathAdminLandingPage:
+	case types.PathAdminSettings:
 		if !utils.RequireMethod(w, r, http.MethodPost) {
 			return
 		}
-		req, ok := utils.DecodeJSONRequestAs[types.AdminLandingPageSettingsRequest](w, r, adminBodyLimit, invalidRequestBody)
+		req, ok := utils.DecodeJSONRequestAs[types.AdminSettings](w, r, adminBodyLimit, invalidRequestBody)
 		if !ok {
 			return
 		}
-		api.landingPageEnabled.Store(req.Enabled)
-		landingPageEnabled := api.landingPageEnabled.Load()
-		saveAdminState(api.adminSettingsPath, runtime, landingPageEnabled)
-		utils.WriteAPIData(w, http.StatusOK, types.AdminLandingPageSettingsResponse{
-			Enabled: landingPageEnabled,
-		})
-	case types.PathAdminUDP:
-		api.handlePortSettings(w, r, invalidRequestBody, runtime,
-			api.server.SetUDPPolicy,
-			func() any {
-				return types.AdminUDPSettingsResponse{Enabled: runtime.IsUDPEnabled(), MaxLeases: runtime.UDPMaxLeases()}
-			},
-		)
-	case types.PathAdminTCPPort:
-		api.handlePortSettings(w, r, invalidRequestBody, runtime,
-			api.server.SetTCPPortPolicy,
-			func() any {
-				return types.AdminTCPPortSettingsResponse{Enabled: runtime.IsTCPPortEnabled(), MaxLeases: runtime.TCPPortMaxLeases()}
-			},
-		)
-	case types.PathAdminApproval:
+		if !api.applyAdminSettings(w, runtime, req) {
+			return
+		}
+		utils.WriteAPIData(w, http.StatusOK, api.adminSettings(runtime))
+	case types.PathAdminLeasePolicy:
 		if !utils.RequireMethod(w, r, http.MethodPost) {
 			return
 		}
-		req, ok := utils.DecodeJSONRequestAs[types.AdminApprovalModeRequest](w, r, adminBodyLimit, invalidRequestBody)
+		req, ok := utils.DecodeJSONRequestAs[types.AdminLeasePolicy](w, r, adminBodyLimit, invalidRequestBody)
 		if !ok {
 			return
 		}
-		if err := runtime.Approver().SetMode(policy.Mode(strings.TrimSpace(req.Mode))); err != nil {
-			utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidMode, "invalid mode (must be 'auto' or 'manual')")
+		identityKey, ok := normalizeAdminIdentityKey(w, req.IdentityKey)
+		if !ok {
+			return
+		}
+		if !applyAdminLeasePolicy(w, runtime, identityKey, req) {
 			return
 		}
 		saveAdminState(api.adminSettingsPath, runtime, api.landingPageEnabled.Load())
-		utils.WriteAPIData(w, http.StatusOK, types.AdminApprovalModeResponse{
-			ApprovalMode: string(runtime.Approver().Mode()),
-		})
-	default:
-		switch {
-		case strings.HasPrefix(path, types.PathAdminLeasesPrefix):
-			rest := strings.TrimPrefix(path, types.PathAdminLeasesPrefix)
-			parts := strings.Split(rest, "/")
-			if len(parts) != 3 {
-				http.NotFound(w, r)
-				return
-			}
-
-			name, err := utils.DecodeBase64URLString(parts[0])
-			if err != nil {
-				utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, "invalid identity")
-				return
-			}
-			address, err := utils.DecodeBase64URLString(parts[1])
-			if err != nil {
-				utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidAddress, "invalid address")
-				return
-			}
-			normalizedIdentity, err := identity.NormalizeIdentity(types.Identity{
-				Name:    name,
-				Address: address,
-			})
-			if err != nil {
-				utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, "invalid identity")
-				return
-			}
-			identityKey := normalizedIdentity.Key()
-			approver := runtime.Approver()
-
-			type identityAction struct {
-				post   func() bool // returns true if response was already written (error path)
-				delete func()
-			}
-			actions := map[string]identityAction{
-				"ban": {
-					post:   func() bool { runtime.BanIdentity(identityKey); return false },
-					delete: func() { runtime.UnbanIdentity(identityKey) },
-				},
-				"bps": {
-					post: func() bool {
-						req, ok := utils.DecodeJSONRequestAs[types.AdminBPSRequest](w, r, adminBodyLimit, invalidRequestBody)
-						if !ok {
-							return true
-						}
-						if req.BPS <= 0 {
-							utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, "bps must be greater than zero")
-							return true
-						}
-						runtime.BPSManager().SetIdentityBPS(identityKey, req.BPS)
-						return false
-					},
-					delete: func() { runtime.BPSManager().DeleteIdentityBPS(identityKey) },
-				},
-				"approve": {
-					post:   func() bool { approver.Approve(identityKey); approver.Undeny(identityKey); return false },
-					delete: func() { approver.Revoke(identityKey) },
-				},
-				"deny": {
-					post:   func() bool { approver.Deny(identityKey); return false },
-					delete: func() { approver.Undeny(identityKey) },
-				},
-			}
-
-			action, ok := actions[parts[2]]
-			if !ok {
-				http.NotFound(w, r)
-				return
-			}
-			switch r.Method {
-			case http.MethodPost:
-				if action.post() {
-					return
-				}
-			case http.MethodDelete:
-				action.delete()
-			default:
-				methodNotAllowed.Write(w)
-				return
-			}
-			saveAdminState(api.adminSettingsPath, runtime, api.landingPageEnabled.Load())
-			utils.WriteAPIData(w, http.StatusOK, map[string]any{})
-		case strings.HasPrefix(path, types.PathAdminIPsPrefix):
-			if !strings.HasSuffix(path, "/ban") {
-				http.NotFound(w, r)
-				return
-			}
-
-			rawIP := strings.TrimSuffix(strings.TrimPrefix(path, types.PathAdminIPsPrefix), "/ban")
-			rawIP = strings.Trim(rawIP, "/")
-			if net.ParseIP(rawIP) == nil {
-				utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidIP, "invalid IP address")
-				return
-			}
-
-			filter := runtime.IPFilter()
-			switch r.Method {
-			case http.MethodPost:
-				filter.BanIP(rawIP)
-			case http.MethodDelete:
-				filter.UnbanIP(rawIP)
-			default:
-				methodNotAllowed.Write(w)
-				return
-			}
-			saveAdminState(api.adminSettingsPath, runtime, api.landingPageEnabled.Load())
-			utils.WriteAPIData(w, http.StatusOK, map[string]any{})
-		default:
-			http.NotFound(w, r)
+		utils.WriteAPIData(w, http.StatusOK, map[string]any{})
+	case types.PathAdminIPPolicy:
+		if !utils.RequireMethod(w, r, http.MethodPost) {
+			return
 		}
+		req, ok := utils.DecodeJSONRequestAs[types.AdminIPPolicy](w, r, adminBodyLimit, invalidRequestBody)
+		if !ok {
+			return
+		}
+		ip := strings.TrimSpace(req.IP)
+		if net.ParseIP(ip) == nil {
+			utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidIP, "invalid IP address")
+			return
+		}
+		if req.IsBanned {
+			runtime.IPFilter().BanIP(ip)
+		} else {
+			runtime.IPFilter().UnbanIP(ip)
+		}
+		saveAdminState(api.adminSettingsPath, runtime, api.landingPageEnabled.Load())
+		utils.WriteAPIData(w, http.StatusOK, map[string]any{})
+	default:
+		http.NotFound(w, r)
 	}
 }
 
-func (api *RelayAPI) handlePortSettings(
-	w http.ResponseWriter,
-	r *http.Request,
-	invalidBody utils.APIErrorResponse,
-	runtime *policy.Runtime,
-	setPolicy func(bool, int),
-	buildResponse func() any,
-) {
-	if !utils.RequireMethod(w, r, http.MethodPost) {
-		return
+func (api *RelayAPI) adminSettings(runtime *policy.Runtime) types.AdminSettings {
+	return types.AdminSettings{
+		ApprovalMode:       string(runtime.Approver().Mode()),
+		LandingPageEnabled: api.landingPageEnabled.Load(),
+		UDP: types.AdminPortSettings{
+			Enabled:   runtime.IsUDPEnabled(),
+			MaxLeases: runtime.UDPMaxLeases(),
+		},
+		TCPPort: types.AdminPortSettings{
+			Enabled:   runtime.IsTCPPortEnabled(),
+			MaxLeases: runtime.TCPPortMaxLeases(),
+		},
 	}
-	req, ok := utils.DecodeJSONRequestAs[types.AdminPortSettingsRequest](w, r, 1<<16, invalidBody)
-	if !ok {
-		return
-	}
-	if req.MaxLeases < 0 {
+}
+
+func (api *RelayAPI) applyAdminSettings(w http.ResponseWriter, runtime *policy.Runtime, req types.AdminSettings) bool {
+	if req.UDP.MaxLeases < 0 || req.TCPPort.MaxLeases < 0 {
 		utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, "max_leases must be non-negative")
-		return
+		return false
 	}
-	setPolicy(req.Enabled, req.MaxLeases)
+	if err := runtime.Approver().SetMode(policy.Mode(strings.TrimSpace(req.ApprovalMode))); err != nil {
+		utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidMode, "approval_mode must be 'auto' or 'manual'")
+		return false
+	}
+	api.landingPageEnabled.Store(req.LandingPageEnabled)
+	api.server.SetUDPPolicy(req.UDP.Enabled, req.UDP.MaxLeases)
+	api.server.SetTCPPortPolicy(req.TCPPort.Enabled, req.TCPPort.MaxLeases)
 	saveAdminState(api.adminSettingsPath, runtime, api.landingPageEnabled.Load())
-	utils.WriteAPIData(w, http.StatusOK, buildResponse())
+	return true
+}
+
+func normalizeAdminIdentityKey(w http.ResponseWriter, raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	name, address, ok := strings.Cut(raw, types.IdentityKeySeparator)
+	if !ok {
+		utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, "invalid identity")
+		return "", false
+	}
+	normalizedIdentity, err := identity.NormalizeIdentity(types.Identity{Name: name, Address: address})
+	if err != nil {
+		utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, "invalid identity")
+		return "", false
+	}
+	return normalizedIdentity.Key(), true
+}
+
+func applyAdminLeasePolicy(w http.ResponseWriter, runtime *policy.Runtime, identityKey string, req types.AdminLeasePolicy) bool {
+	if req.IsBanned == nil && req.IsApproved == nil && req.IsDenied == nil && req.BPS == nil {
+		utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, "lease policy update is empty")
+		return false
+	}
+	if req.IsApproved != nil && req.IsDenied != nil && *req.IsApproved && *req.IsDenied {
+		utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, "lease cannot be approved and denied")
+		return false
+	}
+	if req.BPS != nil {
+		if *req.BPS < 0 {
+			utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, "bps must be non-negative")
+			return false
+		}
+		if *req.BPS == 0 {
+			runtime.BPSManager().DeleteIdentityBPS(identityKey)
+		} else {
+			runtime.BPSManager().SetIdentityBPS(identityKey, *req.BPS)
+		}
+	}
+	if req.IsBanned != nil {
+		if *req.IsBanned {
+			runtime.BanIdentity(identityKey)
+		} else {
+			runtime.UnbanIdentity(identityKey)
+		}
+	}
+	approver := runtime.Approver()
+	if req.IsDenied != nil {
+		if *req.IsDenied {
+			approver.Deny(identityKey)
+			approver.Revoke(identityKey)
+		} else {
+			approver.Undeny(identityKey)
+		}
+	}
+	if req.IsApproved != nil {
+		if *req.IsApproved {
+			approver.Approve(identityKey)
+			approver.Undeny(identityKey)
+		} else {
+			approver.Revoke(identityKey)
+		}
+	}
+	return true
 }
 
 func (api *RelayAPI) handleWalletChallenge(w http.ResponseWriter, r *http.Request) {

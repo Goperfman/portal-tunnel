@@ -1,15 +1,6 @@
 import { readAdminAuthToken } from "@/lib/adminAuthToken";
-
-type APIErrorPayload = {
-  code?: string;
-  message?: string;
-};
-
-type APIEnvelope<T> = {
-  ok?: boolean;
-  data?: T;
-  error?: APIErrorPayload;
-};
+import { API_PATHS } from "@/lib/apiPaths";
+import type { APIEnvelope } from "@/types/api";
 
 export class APIClientError extends Error {
   readonly code: string;
@@ -48,19 +39,28 @@ function ensureJsonEnvelope<T>(raw: unknown, path: string, status: number): APIE
   if (!isRecord(raw) || typeof raw.ok !== "boolean") {
     throw new APIClientError(`Invalid API response for ${path}`, status, "invalid_envelope", raw);
   }
-  if (raw.error !== undefined && !isRecord(raw.error)) {
+  if (raw.ok) {
+    return {
+      ok: true,
+      data: (raw as { data: T }).data,
+    };
+  }
+
+  if (!isRecord(raw.error)) {
     throw new APIClientError(`Invalid error payload for ${path}`, status, "invalid_envelope", raw.error);
   }
   const errorValue = raw.error;
+  if (typeof errorValue.code !== "string" || typeof errorValue.message !== "string") {
+    throw new APIClientError(`Invalid error payload for ${path}`, status, "invalid_envelope", raw.error);
+  }
+
   return {
-    ok: raw.ok,
-    data: (raw as { data?: T }).data,
-    error: errorValue
-      ? {
-          code: typeof errorValue.code === "string" ? errorValue.code : "request_failed",
-          message: typeof errorValue.message === "string" ? errorValue.message : "Request failed",
-        }
-      : undefined,
+    ok: false,
+    data: raw.data,
+    error: {
+      code: errorValue.code,
+      message: errorValue.message,
+    },
   };
 }
 
@@ -99,8 +99,8 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
     const pathname = new URL(path, window.location.origin).pathname;
     if (
       pathname.startsWith("/admin/") &&
-      pathname !== "/admin/auth/challenge" &&
-      pathname !== "/admin/auth/login"
+      pathname !== API_PATHS.admin.authChallenge &&
+      pathname !== API_PATHS.admin.authLogin
     ) {
       const token = readAdminAuthToken();
       if (token) {
@@ -137,13 +137,13 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
   throw new APIClientError(message, response.status, code, envelope.data);
 }
 
-function jsonRequestInit(method: "POST" | "DELETE", body?: unknown): RequestInit {
+function jsonRequestInit(body?: unknown): RequestInit {
   if (body === undefined) {
-    return { method, headers: {} };
+    return { method: "POST", headers: {} };
   }
 
   return {
-    method,
+    method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   };
@@ -154,9 +154,6 @@ export const apiClient = {
     return request<T>(path, { method: "GET" });
   },
   post<T>(path: string, body?: unknown): Promise<T> {
-    return request<T>(path, jsonRequestInit("POST", body));
-  },
-  delete<T>(path: string): Promise<T> {
-    return request<T>(path, jsonRequestInit("DELETE"));
+    return request<T>(path, jsonRequestInit(body));
   },
 };

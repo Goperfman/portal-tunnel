@@ -1,7 +1,6 @@
 #!/bin/bash
 set -e
 
-docker pull ghcr.io/gosuda/portal:latest
-docker compose down portal
-docker compose up -d portal
+docker compose pull portal portal-frontend
+docker compose up -d portal portal-frontend
 bash nginx_deploy.sh

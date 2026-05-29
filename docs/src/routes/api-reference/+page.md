@@ -1,35 +1,26 @@
 ---
 title: API Reference
-description: Complete API reference for Portal relay server endpoints.
+description: Portal relay API contract, endpoint groups, auth, and shared response rules.
 ---
-
-<script>
-import Mermaid from '$lib/components/Mermaid.svelte'
-</script>
 
 # API Reference
 
-This page provides a complete reference for the Portal relay server HTTP API. Control-plane endpoints are served over the relay API HTTPS listener; tenant TLS is handled separately by the SDK using the relay's keyless signing endpoint.
+Portal relay exposes one control-plane API. Frontends, SDK clients, peer relays,
+and operators all talk to this API, but each group has a small owned surface.
+Local agent endpoints under `/agent/*` are not part of the relay API.
 
-## Response Envelope
+## JSON Envelope
 
-Every API response uses a consistent JSON envelope:
+Matched JSON control endpoints return this envelope:
 
 ```json
 {
   "ok": true,
-  "data": { ... },
-  "error": null
+  "data": {}
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `ok` | `boolean` | `true` if the request succeeded |
-| `data` | `T` | Response payload (omitted on error) |
-| `error` | `object \| null` | Error details (omitted on success) |
-
-Error responses include a structured error object:
+Error responses use the same envelope with `error` instead of `data`:
 
 ```json
 {
@@ -41,235 +32,182 @@ Error responses include a structured error object:
 }
 ```
 
-## Authentication
+`data` is omitted on error. `error` is omitted on success.
 
-Portal uses two separate authentication mechanisms depending on the caller.
+The envelope does not apply to streaming or delegated endpoints:
 
-### SDK Authentication (SIWE Challenge/Response)
+| Path | Format |
+|------|--------|
+| `/sdk/connect` | HTTP/1.1 connection hijack |
+| `/v1/sign` | keyless TLS signer protocol |
+| `/thumbnail/{hostname}` | image bytes |
+| `/install.sh`, `/install.ps1`, `/install/bin/*` | script or binary bytes |
+| `/x402/*` | x402 facilitator API |
 
-SDK clients authenticate using Sign-In with Ethereum (SIWE):
+Unknown routes may be handled by the frontend/proxy layer or return a normal
+HTTP 404 outside the envelope.
 
-1. POST a challenge request to `/sdk/register/challenge` with your identity
-2. Sign the returned SIWE message with your Ethereum private key
-3. POST the signed message to `/sdk/register` to receive a JWT access token
-4. Include the access token in subsequent requests via the `X-Portal-Access-Token` header or in the JSON request body
+## Auth Schemes
 
-### Admin Authentication (Wallet Bearer Token)
+| Name | Used by | How it is sent |
+|------|---------|----------------|
+| None | public and challenge endpoints | no credential |
+| Admin bearer | admin API | `Authorization: Bearer <access_token>` |
+| Lease token header | tunnel stream and keyless signer | `X-Portal-Access-Token: <access_token>` |
+| Lease token body | lease renew/unregister | JSON field `access_token` |
+| Signed descriptor | relay discovery announce | signed `RelayDescriptor` body |
+| Signed hop route | relay overlay route | signed `HopRoute` body |
 
-Admin clients authenticate with a wallet signature:
+Admin and SDK login both use SIWE, but they issue different tokens and are not
+interchangeable.
 
-1. POST to `/admin/auth/challenge` with `{ "address": "<wallet-address>" }`
-2. Sign the returned SIWE message with the wallet
-3. POST the signed message to `/admin/auth/login`
-4. Store the returned `access_token`
-5. Include it in subsequent admin requests as `Authorization: Bearer <access_token>`
-6. Tokens expire after 24 hours
+## Endpoint Groups
 
-The local agent has its own loopback wallet auth endpoints under
-`/v1/agent/auth/*`. Agent wallet sessions can read `/v1/agent/status`; mutating
-agent actions require the bearer token stored in the agent state directory. See
-[Portal Agent](/portal-agent) for the local control API.
+### Public
 
-## Endpoint Summary
+| Method | Path | Auth | Response |
+|--------|------|------|----------|
+| `GET` | `/` | None | service identity |
+| `GET` | `/healthz` | None | `{ "status": "ok" }` |
+| `GET` | `/state` | None | `PublicStateResponse` |
+| `GET` | `/service/status?hostname=...` | None | `ServiceStatusResponse` |
+| `GET` | `/thumbnail/{hostname}` | None | image bytes |
+| `GET`/`HEAD` | `/install.sh`, `/install.ps1` | None | install script |
+| `GET`/`HEAD` | `/install/bin/{slug}` | None | install binary or redirect |
 
-### SDK Endpoints
+### SDK
 
-| Method | Path | Description | Auth |
-|--------|------|-------------|------|
-| `GET` | [`/sdk/domain`](/api-reference/sdk#get-sdkdomain) | Get relay domain and version info | None |
-| `POST` | [`/sdk/register/challenge`](/api-reference/sdk#post-sdkregisterchallenge) | Request a SIWE challenge for registration | None |
-| `POST` | [`/sdk/register`](/api-reference/sdk#post-sdkregister) | Complete registration with signed challenge | None |
-| `POST` | [`/sdk/renew`](/api-reference/sdk#post-sdkrenew) | Renew an existing lease TTL | Access Token |
-| `POST` | [`/sdk/unregister`](/api-reference/sdk#post-sdkunregister) | Remove an active lease | Access Token |
-| `GET` | [`/sdk/connect`](/api-reference/sdk#get-sdkconnect) | Establish reverse tunnel connection | Access Token |
+| Method | Path | Auth | Body | Response |
+|--------|------|------|------|----------|
+| `GET` | `/sdk/domain` | None | none | `DomainResponse` |
+| `POST` | `/sdk/register/challenge` | None | `RegisterChallengeRequest` | `RegisterChallengeResponse` |
+| `POST` | `/sdk/register` | SIWE signature body | `RegisterRequest` | `RegisterResponse` |
+| `POST` | `/sdk/renew` | lease token body | `RenewRequest` | `RenewResponse` |
+| `POST` | `/sdk/unregister` | lease token body | `UnregisterRequest` | `{}` |
+| `GET` | `/sdk/connect` | lease token header | none | hijacked stream |
 
-### Admin Endpoints
+`/sdk/hop` is a relay-to-relay overlay route endpoint. It is not used by normal
+SDK clients.
 
-| Method | Path | Description | Auth |
-|--------|------|-------------|------|
-| `POST` | [`/admin/auth/challenge`](/api-reference/admin#post-adminauthchallenge) | Request wallet login challenge | None |
-| `POST` | [`/admin/auth/login`](/api-reference/admin#post-adminauthlogin) | Complete wallet login | None |
-| `POST` | [`/admin/logout`](/api-reference/admin#post-adminlogout) | Invalidate admin token | Bearer Token |
-| `GET` | [`/admin/auth/status`](/api-reference/admin#get-adminauthstatus) | Check authentication status | None |
-| `GET` | [`/admin/snapshot`](/api-reference/admin#get-adminsnapshot) | Get full relay state snapshot | Bearer Token |
-| `POST` | [`/admin/settings/landing-page`](/api-reference/admin#post-adminsettingslanding-page) | Toggle landing page | Bearer Token |
-| `POST` | [`/admin/settings/udp`](/api-reference/admin#post-adminsettingsudp) | Configure UDP settings | Bearer Token |
-| `POST` | [`/admin/settings/tcp-port`](/api-reference/admin#post-adminsettingstcp-port) | Configure TCP port settings | Bearer Token |
-| `POST` | [`/admin/settings/approval-mode`](/api-reference/admin#post-adminsettingsapproval-mode) | Set approval mode | Bearer Token |
-| `POST` | [`/admin/leases/{name}/{addr}/ban`](/api-reference/admin#lease-management) | Ban a lease identity | Bearer Token |
-| `DELETE` | [`/admin/leases/{name}/{addr}/ban`](/api-reference/admin#lease-management) | Unban a lease identity | Bearer Token |
-| `POST` | [`/admin/leases/{name}/{addr}/bps`](/api-reference/admin#lease-management) | Set bandwidth limit for a lease | Bearer Token |
-| `DELETE` | [`/admin/leases/{name}/{addr}/bps`](/api-reference/admin#lease-management) | Remove bandwidth limit | Bearer Token |
-| `POST` | [`/admin/leases/{name}/{addr}/approve`](/api-reference/admin#lease-management) | Approve a lease | Bearer Token |
-| `DELETE` | [`/admin/leases/{name}/{addr}/approve`](/api-reference/admin#lease-management) | Revoke lease approval | Bearer Token |
-| `POST` | [`/admin/leases/{name}/{addr}/deny`](/api-reference/admin#lease-management) | Deny a lease | Bearer Token |
-| `DELETE` | [`/admin/leases/{name}/{addr}/deny`](/api-reference/admin#lease-management) | Remove lease denial | Bearer Token |
-| `POST` | [`/admin/ips/{ip}/ban`](/api-reference/admin#ip-management) | Ban an IP address | Bearer Token |
-| `DELETE` | [`/admin/ips/{ip}/ban`](/api-reference/admin#ip-management) | Unban an IP address | Bearer Token |
+### Admin
 
-### System Endpoints
+| Method | Path | Auth | Body | Response |
+|--------|------|------|------|----------|
+| `POST` | `/admin/auth/challenge` | None | `WalletAuthChallengeRequest` | `WalletAuthChallengeResponse` |
+| `POST` | `/admin/auth/login` | SIWE signature body | `WalletAuthLoginRequest` | `WalletAuthLoginResponse` |
+| `GET` | `/admin/auth/status` | Optional admin bearer | none | `WalletAuthStatusResponse` |
+| `POST` | `/admin/auth/logout` | Admin bearer | none | `{}` |
+| `GET` | `/admin/state` | Admin bearer | none | `AdminStateResponse` |
+| `POST` | `/admin/settings` | Admin bearer | `AdminSettings` | `AdminSettings` |
+| `POST` | `/admin/lease-policy` | Admin bearer | `AdminLeasePolicy` | `{}` |
+| `POST` | `/admin/ip-policy` | Admin bearer | `AdminIPPolicy` | `{}` |
 
-| Method | Path | Description | Auth |
-|--------|------|-------------|------|
-| `GET` | `/healthz` | Health check | None |
-| `GET` | `/discovery` | Relay discovery | None |
-| `POST` | `/discovery/announce` | Relay discovery self-announce | Signed Descriptor |
-| `POST` | `/v1/sign` | Keyless TLS signing | Access Token |
-| `GET` | `/api/public/snapshot` | Public frontend snapshot | None |
-| `GET` | `/thumbnail/{hostname}` | Cached thumbnail screenshot | None |
-| `GET` | `/tunnel/status` | Tunnel connection status | None |
+`/admin` itself is a frontend route, not a relay API endpoint.
 
-## System Endpoints
+### Relay And Payment
 
-These endpoints are small enough to document inline.
+| Method | Path | Auth | Response |
+|--------|------|------|----------|
+| `GET` | `/discovery` | None | `DiscoveryResponse` |
+| `POST` | `/discovery/announce` | Signed descriptor | `DiscoveryAnnounceResponse` |
+| `POST` | `/v1/sign` | Lease token header | keyless signer response |
+| `ANY` | `/x402/*` | x402-specific | delegated facilitator response |
 
-### `GET /healthz`
+## Shared Types
 
-Returns relay health status.
+Timestamps are JSON-encoded Go `time.Time` values.
 
-**Response:**
+`Identity`:
 
-```json
-{
-  "ok": true,
-  "data": {
-    "status": "ok"
-  }
-}
-```
+| Field | Type | Notes |
+|-------|------|-------|
+| `name` | `string` | DNS label used by the lease |
+| `address` | `string` | Ethereum address |
 
-### `GET /discovery`
+`LeaseMetadata`:
 
-Returns signed relay discovery descriptors for this relay and any known peer relays. Only available when discovery is enabled in the server configuration.
+| Field | Type | Notes |
+|-------|------|-------|
+| `description` | `string` | optional |
+| `owner` | `string` | optional |
+| `thumbnail` | `string` | optional URL or data value |
+| `tags` | `string[]` | optional |
+| `hide` | `boolean` | hidden leases are omitted from the public state |
 
-**Response fields:**
+`Lease`:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `protocol_version` | `string` | Protocol version identifier |
-| `generated_at` | `string` | ISO 8601 timestamp |
-| `relays` | `RelayDescriptor[]` | Signed descriptors for this relay and known peer relays |
+| Field | Type |
+|-------|------|
+| `name` | `string` |
+| `expires_at`, `first_seen_at`, `last_seen_at` | `string` |
+| `hostname` | `string` |
+| `udp_enabled`, `tcp_enabled` | `boolean` |
+| `tcp_addr` | `string` |
+| `metadata` | `LeaseMetadata` |
+| `ready` | `number` |
 
-`RelayDescriptor` contains the signed relay contract and relay-reported telemetry:
+`AdminLease` extends `Lease` with:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `address` | `string` | Relay signing address used to verify `signature` |
-| `version` | `string` | Discovery protocol version used by this signed descriptor |
-| `issued_at` | `string` | Descriptor issue time |
-| `expires_at` | `string` | Descriptor expiry time |
-| `api_https_addr` | `string` | Public HTTPS API base URL |
-| `wireguard_public_key` | `string` | WireGuard overlay public key, present when overlay is enabled |
-| `wireguard_port` | `number` | Public WireGuard UDP port on the `api_https_addr` host, present when overlay is enabled |
-| `supports_overlay` | `boolean` | Relay can participate in WireGuard multi-hop overlay routing |
-| `supports_udp` | `boolean` | Relay can allocate public UDP leases |
-| `supports_tcp` | `boolean` | Relay can allocate raw TCP port leases |
-| `active_connections` | `number` | Current proxied connection count reported by the relay |
-| `tcp_bps` | `number` | Recent proxied TCP throughput in bytes per second |
-| `signature` | `string` | Signature over the descriptor fields above |
+| Field | Type |
+|-------|------|
+| `identity_key`, `address` | `string` |
+| `bps` | `number` |
+| `client_ip`, `reported_ip` | `string` |
+| `is_approved`, `is_banned`, `is_denied`, `is_ip_banned` | `boolean` |
 
-Relay telemetry is sampled when the descriptor is issued; use `issued_at` to judge freshness.
+`AdminPortSettings`:
 
-Overlay peer support is advertised by `supports_overlay`. When it is true, `wireguard_public_key` and `wireguard_port` are present. The WireGuard endpoint host is the `api_https_addr` host, and the overlay IPv4 is derived from the WireGuard public key. Relay-local observations such as recent overlay reachability are not part of the signed descriptor.
+| Field | Type | Notes |
+|-------|------|-------|
+| `enabled` | `boolean` | enables the transport |
+| `max_leases` | `number` | `0` means unlimited |
 
-**Example:**
+`AdminSettings`:
 
-```bash
-curl https://relay.example.com/discovery
-```
+| Field | Type |
+|-------|------|
+| `approval_mode` | `"auto"` or `"manual"` |
+| `landing_page_enabled` | `boolean` |
+| `udp` | `AdminPortSettings` |
+| `tcp_port` | `AdminPortSettings` |
 
-### `POST /discovery/announce`
+`AdminLeasePolicy`:
 
-Submits this relay's signed descriptor to a bootstrap relay so registry-external relays can enter the discovery mesh. Relays self-announce periodically when discovery is enabled.
+| Field | Type | Notes |
+|-------|------|-------|
+| `identity_key` | `string` | normalized `name:address` key |
+| `is_banned` | `boolean` | optional |
+| `is_approved` | `boolean` | optional |
+| `is_denied` | `boolean` | optional; `true` also revokes approval |
+| `bps` | `number` | optional; `0` removes the limit |
 
-**Auth:** Signed relay descriptor
+`AdminIPPolicy`:
 
-**Request fields:**
+| Field | Type |
+|-------|------|
+| `ip` | `string` |
+| `is_banned` | `boolean` |
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `protocol_version` | `string` | No | Discovery protocol version |
-| `descriptor` | `RelayDescriptor` | Yes | Signed relay descriptor |
+## Common Errors
 
-**Response fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `protocol_version` | `string` | Discovery protocol version |
-| `accepted` | `boolean` | Whether the descriptor was accepted |
-
-### `POST /v1/sign`
-
-Keyless TLS signing endpoint. Used by the SDK-side tenant TLS server during the
-default stream handshake. Requests must include a valid lease access token in
-the `X-Portal-Access-Token` header.
-
-Only available when the API server is configured with a TLS private key.
-
-Returns `404 Not Found` if signing is not configured.
-
-### `GET /api/public/snapshot`
-
-Returns the public relay dashboard snapshot used by frontends.
-
-**Response fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `leases` | `Lease[]` | Public lease rows visible on the relay index |
-| `landing_page_enabled` | `boolean` | Whether the public landing hero should be shown |
-
-**Example:**
-
-```bash
-curl https://relay.example.com/api/public/snapshot
-```
-
-### `GET /thumbnail/{hostname}`
-
-Returns a cached thumbnail screenshot for a registered tunnel hostname.
-
-**Response headers:**
-
-| Header | Value |
-|--------|-------|
-| `Content-Type` | Image content type (e.g. `image/png`) |
-| `Cache-Control` | `public, max-age=300` |
-
-Returns `404 Not Found` if the hostname is not registered or no thumbnail is available.
-
-**Example:**
-
-```bash
-curl https://relay.example.com/thumbnail/myapp.relay.example.com
-```
-
-## Error Codes
-
-All error codes that may appear in the `error.code` field:
-
-| Code | Description |
-|------|-------------|
-| `feature_unavailable` | Requested feature is not available |
-| `hijack_failed` | HTTP connection hijack failed |
-| `hijack_unsupported` | HTTP connection hijack not supported |
-| `hostname_conflict` | Hostname already in use by another lease |
-| `http11_only` | Endpoint requires HTTP/1.1 |
-| `invalid_address` | Invalid Ethereum address |
-| `invalid_ip` | Invalid IP address format |
-| `invalid_json` | Malformed JSON request body |
-| `invalid_mode` | Invalid approval mode value |
-| `invalid_request` | General request validation failure |
-| `internal` | Internal server error |
-| `ip_banned` | Source IP is banned |
-| `lease_not_found` | No lease found for the given identity |
-| `lease_rejected` | Lease is not approved for routing |
-| `method_not_allowed` | HTTP method not allowed for this endpoint |
-| `unauthorized` | Authentication required or token invalid |
-| `udp_port_exhausted` | No UDP ports available |
-| `udp_disabled` | UDP transport is disabled |
-| `udp_capacity_exceeded` | UDP lease capacity reached |
-| `tcp_port_exhausted` | No TCP ports available |
-| `tcp_port_disabled` | TCP port transport is disabled |
-| `tcp_port_capacity_exceeded` | TCP port lease capacity reached |
-| `transport_mismatch` | Transport type mismatch |
+| Code | Meaning |
+|------|---------|
+| `invalid_json` | request body is not valid JSON |
+| `invalid_request` | request shape or value is invalid |
+| `method_not_allowed` | endpoint does not accept the method |
+| `unauthorized` | credential is missing, expired, or invalid |
+| `feature_unavailable` | feature is disabled or not configured |
+| `rate_limited` | request was throttled |
+| `hostname_conflict` | lease hostname is already registered |
+| `lease_not_found` | lease token or identity has no active lease |
+| `lease_rejected` | lease is not currently allowed to route |
+| `ip_banned` | source or reported IP is banned |
+| `invalid_address` | address path or body value is invalid |
+| `invalid_ip` | IP path value is invalid |
+| `invalid_mode` | approval mode is not `auto` or `manual` |
+| `http11_only` | endpoint requires HTTP/1.1 |
+| `hijack_unsupported`, `hijack_failed` | reverse stream setup failed |
+| `udp_disabled`, `udp_capacity_exceeded`, `udp_port_exhausted` | UDP lease cannot be allocated |
+| `tcp_port_disabled`, `tcp_port_capacity_exceeded`, `tcp_port_exhausted` | TCP port lease cannot be allocated |
+| `transport_mismatch` | request does not match the active lease transport |
+| `internal` | unexpected server failure |

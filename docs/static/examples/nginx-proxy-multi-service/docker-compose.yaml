@@ -1,23 +1,23 @@
-# Portal relay + multiple services — docker compose deployment example.
+# Portal relay + multiple services - docker compose deployment example.
 #
-# This example shows how to run Portal alongside other web services
-# behind a single nginx instance on the same host.
+# This example runs Portal alongside other web services behind one nginx.
 #
 # Architecture:
 #   nginx:443 (L4 stream, ssl_preread)
-#     ├─ portal.example.com    → host.docker.internal:4017  (TLS passthrough, admin/API)
-#     ├─ *.portal.example.com  → host.docker.internal:4443  (TLS passthrough, tenant SNI)
-#     └─ everything else       → nginx:8443   (L7, TLS termination)
-#           ├─ app-a.example.com → app-a-frontend:3000 / app-a-api:8000
-#           └─ app-b.example.com → app-b-frontend:3000 / app-b-api:8001
+#     - portal.example.com    -> nginx:8443 (L7 path split)
+#         - API/control paths -> host.docker.internal:4017 (portal, HTTPS)
+#         - everything else   -> portal-frontend:8080 (HTTP)
+#     - *.portal.example.com  -> host.docker.internal:4443 (portal SNI passthrough)
+#     - everything else       -> nginx:8443 (L7 for other apps)
 #
 # Prerequisites:
 #   1. Copy .env.example to .env and set all required values.
 #   2. Place TLS certificates in ./certs/:
-#        - Portal root-domain certs: either managed by portal (set ACME_DNS_PROVIDER)
-#          or mounted manually into ./.portal-certs as fullchain.pem/privatekey.pem
-#        - Other services: app_a_fullchain.pem, app_a_privkey.pem, etc.
-#   3. Create the .portal-certs directory with correct ownership (UID 65532 = nonroot in distroless):
+#        - portal_fullchain.pem, portal_privkey.pem for portal.example.com
+#        - app_a_fullchain.pem, app_a_privkey.pem for app-a.example.com
+#        - app_b_fullchain.pem, app_b_privkey.pem for app-b.example.com
+#      Portal also needs API TLS material in ./.portal-certs unless ACME_DNS_PROVIDER is configured.
+#   3. Create the .portal-certs directory with correct ownership (UID 65532 = nonroot):
 #        mkdir -p ./.portal-certs
 #        sudo chown 65532:65532 ./.portal-certs
 #        chmod 755 ./.portal-certs
@@ -25,11 +25,6 @@
 #        docker compose up -d
 
 services:
-
-  # ─── nginx ──────────────────────────────────────────────────────────────────
-  # Single entry point for all traffic (ports 80/443).
-  # Routes portal traffic via L4 SNI passthrough.
-  # Terminates TLS and proxies for all other services via L7.
   nginx:
     image: nginx:stable-alpine
     container_name: nginx
@@ -42,6 +37,8 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./certs:/etc/certs:ro
     depends_on:
+      - portal
+      - portal-frontend
       - app-a-api
       - app-a-frontend
     restart: unless-stopped
@@ -50,19 +47,12 @@ services:
       - app-a-network
       - app-b-network
 
-  # ─── headless-shell (optional thumbnail screenshot sidecar) ─────────────────
-  # Uncomment to enable auto-generated thumbnails for tunnel apps.
+  # Optional: uncomment to enable auto-generated thumbnails for tunnel apps.
   # See docs/src/routes/deployment/+page.md for details.
   # headless-shell:
   #   image: chromedp/headless-shell:stable
   #   restart: unless-stopped
 
-  # ─── portal relay ───────────────────────────────────────────────────────────
-  # NAT-traversal relay server.
-  # TCP (4017, 4443) is reached by nginx via host.docker.internal.
-  # SNI_PORT is 4443 to avoid conflicting with nginx on 443.
-  # If you enable UDP, expose SNI_PORT/udp and MIN_PORT-MAX_PORT/udp as well.
-  # If you enable raw TCP transport, expose MIN_PORT-MAX_PORT/tcp as well.
   portal:
     image: ghcr.io/gosuda/portal:latest
     container_name: portal
@@ -72,10 +62,10 @@ services:
       - "${API_PORT:-4017}:${API_PORT:-4017}/tcp"
       - "${SNI_PORT:-4443}:${SNI_PORT:-4443}/tcp"
       - "${WIREGUARD_PORT:-51820}:${WIREGUARD_PORT:-51820}/udp"
-      # Uncomment below when enabling UDP transport (host SNI_PORT/udp is free — nginx only uses 443/tcp):
+      # Uncomment when enabling UDP transport:
       # - "${SNI_PORT:-4443}:${SNI_PORT:-4443}/udp"
       # - "${MIN_PORT:-40000}-${MAX_PORT:-40009}:${MIN_PORT:-40000}-${MAX_PORT:-40009}/udp"
-      # Uncomment below when enabling raw TCP port transport:
+      # Uncomment when enabling raw TCP port transport:
       # - "${MIN_PORT:-40000}-${MAX_PORT:-40009}:${MIN_PORT:-40000}-${MAX_PORT:-40009}"
     stop_grace_period: 30s
     environment:
@@ -116,18 +106,20 @@ services:
       # - ./gcp-dns.json:/run/secrets/gcp-dns.json:ro
     restart: unless-stopped
 
-  # ─── App A: backend ─────────────────────────────────────────────────────────
-  # Replace with your actual backend service image and config.
+  portal-frontend:
+    image: ghcr.io/gosuda/portal-frontend:latest
+    container_name: portal-frontend
+    depends_on:
+      - portal
+    restart: unless-stopped
+
   app-a-api:
     image: your-registry/app-a-api:latest
     container_name: app-a-api
-    # environment:
-    #   - DATABASE_URL=...
     restart: unless-stopped
     networks:
       - app-a-network
 
-  # ─── App A: frontend ────────────────────────────────────────────────────────
   app-a-frontend:
     image: your-registry/app-a-frontend:latest
     container_name: app-a-frontend
@@ -137,8 +129,6 @@ services:
     depends_on:
       - app-a-api
 
-  # ─── App B: backend ─────────────────────────────────────────────────────────
-  # Replace with your actual backend service image and config.
   app-b-api:
     image: your-registry/app-b-api:latest
     container_name: app-b-api
@@ -146,15 +136,12 @@ services:
     networks:
       - app-b-network
 
-  # ─── App B: frontend ────────────────────────────────────────────────────────
   app-b-frontend:
     image: your-registry/app-b-frontend:latest
     container_name: app-b-frontend
     restart: unless-stopped
     networks:
       - app-b-network
-    depends_on:
-      - app-b-api
 
 networks:
   app-a-network:

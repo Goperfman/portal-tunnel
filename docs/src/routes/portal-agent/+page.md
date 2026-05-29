@@ -212,18 +212,18 @@ Control endpoints:
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| `GET` | `/v1/agent/status` | Bearer token or wallet session | Read agent and tunnel status |
-| `POST` | `/v1/agent/shutdown` | Bearer token | Ask the agent to stop |
-| `POST` | `/v1/agent/tunnels` | Bearer token | Add a simple target tunnel |
-| `PATCH` | `/v1/agent/tunnels/{id}` | Bearer token | Update metadata, max active relays, or x402 facilitator URL |
-| `DELETE` | `/v1/agent/tunnels/{id}` | Bearer token | Delete a tunnel |
-| `POST` | `/v1/agent/tunnels/{id}/relays` | Bearer token | Connect a relay |
-| `DELETE` | `/v1/agent/tunnels/{id}/relays` | Bearer token | Disconnect a relay |
-| `POST` | `/v1/agent/tunnels/{id}/multi-hop` | Bearer token | Apply a multi-hop route |
-| `DELETE` | `/v1/agent/tunnels/{id}/multi-hop` | Bearer token | Clear multi-hop routing |
+| `GET` | `/agent/status` | Bearer token or wallet session | Read agent and tunnel status |
+| `POST` | `/agent/shutdown` | Bearer token | Ask the agent to stop |
+| `POST` | `/agent/tunnels` | Bearer token | Add a simple target tunnel |
+| `PATCH` | `/agent/tunnels/{id}` | Bearer token | Update metadata, max active relays, or x402 facilitator URL |
+| `DELETE` | `/agent/tunnels/{id}` | Bearer token | Delete a tunnel |
+| `POST` | `/agent/tunnels/{id}/relays` | Bearer token | Connect a relay |
+| `DELETE` | `/agent/tunnels/{id}/relays` | Bearer token | Disconnect a relay |
+| `POST` | `/agent/tunnels/{id}/multi-hop` | Bearer token | Apply a multi-hop route |
+| `DELETE` | `/agent/tunnels/{id}/multi-hop` | Bearer token | Clear multi-hop routing |
 
-Wallet auth endpoints also exist under `/v1/agent/auth/*`. Wallet-authenticated
-requests are read-only and can only call `/v1/agent/status`; mutating operations
+Wallet auth endpoints also exist under `/agent/auth/*`. Wallet-authenticated
+requests are read-only and can only call `/agent/status`; mutating operations
 use the local bearer token from the state directory.
 
 ## Agent Wallet Access

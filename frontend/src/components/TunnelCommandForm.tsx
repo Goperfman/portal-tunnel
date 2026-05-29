@@ -9,10 +9,11 @@ import { Check, Copy, RefreshCw, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/apiClient";
 import { API_PATHS } from "@/lib/apiPaths";
+import type { ServiceStatusResponse } from "@/types/api";
 import { cn } from "@/lib/utils";
 import {
   buildTunnelPreviewURL,
-  buildTunnelStatusHostname,
+  buildServiceStatusHostname,
   normalizeAbsoluteHTTPURL,
 } from "@/lib/tunnelCommand";
 import {
@@ -27,13 +28,7 @@ interface TunnelCommandFormProps {
   mode?: "full" | "hero";
 }
 
-type TunnelStatus = "waiting" | "registered" | "alive";
-
-interface TunnelStatusResponse {
-  hostname: string;
-  registered: boolean;
-  service_alive: boolean;
-}
+type ServiceStatus = "waiting" | "registered" | "alive";
 
 export function TunnelCommandForm({
   className,
@@ -70,7 +65,7 @@ function HeroTunnelCommandForm({
     handleShuffleName,
   } = useTunnelCommand();
 
-  const [tunnelStatus, setTunnelStatus] = useState<TunnelStatus>("waiting");
+  const [serviceStatus, setServiceStatus] = useState<ServiceStatus>("waiting");
 
   const previewURL = useMemo(
     () => buildTunnelPreviewURL(currentOrigin, effectiveName, target, nameSeed),
@@ -78,7 +73,7 @@ function HeroTunnelCommandForm({
   );
   const statusHostname = useMemo(
     () =>
-      buildTunnelStatusHostname(currentOrigin, effectiveName, target, nameSeed),
+      buildServiceStatusHostname(currentOrigin, effectiveName, target, nameSeed),
     [currentOrigin, effectiveName, nameSeed, target]
   );
 
@@ -92,27 +87,27 @@ function HeroTunnelCommandForm({
     const poll = async () => {
       try {
         const params = new URLSearchParams({ hostname: statusHostname });
-        const statusResponse = await apiClient.get<TunnelStatusResponse>(
-          `${API_PATHS.tunnel.status}?${params.toString()}`
+        const statusResponse = await apiClient.get<ServiceStatusResponse>(
+          `${API_PATHS.service.status}?${params.toString()}`
         );
         if (cancelled) {
           return;
         }
 
         if (!statusResponse.registered) {
-          setTunnelStatus("waiting");
+          setServiceStatus("waiting");
           return;
         }
 
-        setTunnelStatus(statusResponse.service_alive ? "alive" : "registered");
+        setServiceStatus(statusResponse.service_alive ? "alive" : "registered");
       } catch {
         if (!cancelled) {
-          setTunnelStatus("waiting");
+          setServiceStatus("waiting");
         }
       }
     };
 
-    setTunnelStatus("waiting");
+    setServiceStatus("waiting");
     void poll();
     const interval = window.setInterval(() => {
       void poll();
@@ -124,17 +119,17 @@ function HeroTunnelCommandForm({
     };
   }, [statusHostname]);
 
-  const tunnelStatusTone = {
+  const serviceStatusTone = {
     alive: isTerminal ? "bg-green-400" : "bg-green-600",
     registered: isTerminal ? "bg-sky-400" : "bg-sky-600",
     waiting: isTerminal ? "bg-slate-500" : "bg-slate-400",
-  }[tunnelStatus];
-  const tunnelStatusHeadline = {
+  }[serviceStatus];
+  const serviceStatusHeadline = {
     alive: "This URL is live now",
     registered: "URL reserved",
     waiting: "Waiting for Connection",
-  }[tunnelStatus];
-  const isPreviewURLDisabled = tunnelStatus === "waiting";
+  }[serviceStatus];
+  const isPreviewURLDisabled = serviceStatus === "waiting";
   const heroSectionLabelClass = cn(
     "text-[13px] font-semibold tracking-[0.04em] sm:text-sm",
     isTerminal ? "text-slate-100" : "text-foreground/85"
@@ -305,10 +300,10 @@ function HeroTunnelCommandForm({
             )}
           >
             <span
-              className={cn("h-2 w-2 rounded-full", tunnelStatusTone)}
+              className={cn("h-2 w-2 rounded-full", serviceStatusTone)}
               aria-hidden="true"
             />
-            <span>{tunnelStatusHeadline}</span>
+            <span>{serviceStatusHeadline}</span>
           </div>
           {isPreviewURLDisabled ? (
             <span
