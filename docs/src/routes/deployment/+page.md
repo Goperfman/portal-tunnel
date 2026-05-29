@@ -178,7 +178,7 @@ Leave `TRUSTED_PROXY_CIDRS` empty for the default private and loopback proxy ran
 Create the state directories:
 
 ```bash
-mkdir -p ./.portal-certs ./.portal-frontend-state ./certs
+mkdir -p ./.portal-certs/frontend-state ./certs
 sudo chown 65532:65532 ./.portal-certs
 chmod 755 ./.portal-certs
 ```
@@ -350,7 +350,7 @@ It owns:
 - `/policy/*` composition, while relay-enforced policy changes are still forwarded to `portal`.
 - `/service/status`, derived from relay state for quick-start UI checks.
 - `/thumbnail/<hostname>`, when optional screenshot generation is enabled.
-- The landing-page flag persisted at `PORTAL_FRONTEND_STATE_PATH`.
+- The landing-page flag persisted at `PORTAL_FRONTEND_STATE_PATH`; the bundled Compose files store it under `./.portal-certs/frontend-state/state.json`.
 
 The Go relay remains the owner of authentication, policy enforcement, lease state, tunnel ingress, install scripts, discovery, and x402 facilitator paths.
 

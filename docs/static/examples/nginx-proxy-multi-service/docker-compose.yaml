@@ -17,8 +17,9 @@
 #        - app_a_fullchain.pem, app_a_privkey.pem for app-a.example.com
 #        - app_b_fullchain.pem, app_b_privkey.pem for app-b.example.com
 #      Portal also needs API TLS material in ./.portal-certs unless ACME_DNS_PROVIDER is configured.
-#   3. Create the .portal-certs directory with correct ownership (UID 65532 = nonroot):
-#        mkdir -p ./.portal-certs
+#   3. Create the .portal-certs directory with correct ownership (UID 65532 = nonroot).
+#      Frontend presentation state is stored under ./.portal-certs/frontend-state:
+#        mkdir -p ./.portal-certs/frontend-state
 #        sudo chown 65532:65532 ./.portal-certs
 #        chmod 755 ./.portal-certs
 #   4. Start all services:
@@ -119,11 +120,11 @@ services:
       PORT: 8081
       PORTAL_API_BASE_URL: "https://portal:${API_PORT:-4017}"
       LANDING_PAGE_ENABLED: ${LANDING_PAGE_ENABLED:-false}
-      PORTAL_FRONTEND_STATE_PATH: /portal-frontend-state/state.json
+      PORTAL_FRONTEND_STATE_PATH: /frontend-state/state.json
       HEADLESS_SHELL_URL: ${HEADLESS_SHELL_URL:-}
       # HEADLESS_SHELL_URL: ${HEADLESS_SHELL_URL:-ws://headless-shell:9222}
     volumes:
-      - ./.portal-frontend-state:/portal-frontend-state
+      - ./.portal-certs/frontend-state:/frontend-state
     restart: unless-stopped
 
   app-a-api:

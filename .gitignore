@@ -147,5 +147,4 @@ keyless_tls/
 
 # Local relay/tunnel state
 .portal-certs/
-.portal-frontend-state/
 *identity.json

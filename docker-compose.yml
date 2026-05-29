@@ -19,12 +19,12 @@ services:
       PORT: 8081
       PORTAL_API_BASE_URL: https://portal:4017
       LANDING_PAGE_ENABLED: ${LANDING_PAGE_ENABLED:-false}
-      PORTAL_FRONTEND_STATE_PATH: /portal-frontend-state/state.json
+      PORTAL_FRONTEND_STATE_PATH: /frontend-state/state.json
       # Leave empty to disable generated screenshots without removing the service.
       HEADLESS_SHELL_URL: ${HEADLESS_SHELL_URL:-}
       # HEADLESS_SHELL_URL: ${HEADLESS_SHELL_URL:-ws://headless-shell:9222}
     volumes:
-      - ./.portal-frontend-state:/portal-frontend-state
+      - ./.portal-certs/frontend-state:/frontend-state
     restart: unless-stopped
 
   portal-frontend:

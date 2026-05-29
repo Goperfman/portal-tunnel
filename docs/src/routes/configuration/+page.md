@@ -80,7 +80,7 @@ variables:
 | `PORT` | `8081` | int | Frontend API HTTP listen port |
 | `PORTAL_API_BASE_URL` | `https://portal:4017` | string | Relay API base URL used to compose frontend-owned state |
 | `LANDING_PAGE_ENABLED` | `false` | bool | Default landing page flag when no frontend state has been saved yet |
-| `PORTAL_FRONTEND_STATE_PATH` | `""` | string | Optional JSON file path for persisted frontend-owned state |
+| `PORTAL_FRONTEND_STATE_PATH` | `""` | string | Optional JSON file path for persisted frontend-owned state; bundled Compose stores this under `./.portal-certs/frontend-state/state.json` |
 | `HEADLESS_SHELL_URL` | `""` | string | Headless Chrome CDP WebSocket URL; leave empty to disable generated thumbnails |
 
 ### Cloudflare
