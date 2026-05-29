@@ -344,9 +344,9 @@ Notes:
 - The exact root host is never served by the wildcard route.
 - For non-apex `PORTAL_URL` values such as `https://portal.example.com:8443/admin`, a lease named `demo` is published at `demo.portal.example.com`.
 
-## Admin and Frontend Surface
+## Admin API Surface
 
-The admin surface is intentionally small: an HTML index, one JSON snapshot endpoint, and a small set of admin action/auth routes. Route paths are enumerated in `types/paths.go` and `cmd/relay-server`.
+The relay server is intentionally API-only: one JSON snapshot endpoint, public snapshot/status endpoints, installer endpoints, and a small set of admin action/auth routes. Route paths are enumerated in `types/paths.go` and `cmd/relay-server`.
 
 ## Keyless TLS Trust Model
 

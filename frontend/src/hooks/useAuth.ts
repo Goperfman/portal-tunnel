@@ -8,6 +8,7 @@ import {
 } from "wagmi";
 import { API_PATHS } from "@/lib/apiPaths";
 import { APIClientError, apiClient } from "@/lib/apiClient";
+import { writeAdminAuthToken } from "@/lib/adminAuthToken";
 
 interface AuthState {
   isAuthenticated: boolean;
@@ -32,6 +33,7 @@ interface WalletAuthChallengePayload {
 }
 
 interface WalletAuthLoginPayload {
+  access_token?: string;
   wallet_address?: string;
 }
 
@@ -155,6 +157,14 @@ export function useAuth(target: AuthTarget = "admin") {
           siwe_signature: signature,
         }
       );
+      if (authTarget === "admin") {
+        const accessToken = data.access_token?.trim() || "";
+        if (!accessToken) {
+          writeAdminAuthToken("");
+          return { success: false, error: "Admin login did not return an access token." };
+        }
+        writeAdminAuthToken(accessToken);
+      }
       setAuthState((prev) => ({
         ...prev,
         isAuthenticated: true,
@@ -182,8 +192,14 @@ export function useAuth(target: AuthTarget = "admin") {
     for (const candidate of candidates) {
       try {
         await apiClient.post<unknown>(authPaths[candidate].logout);
+        if (candidate === "admin") {
+          writeAdminAuthToken("");
+        }
         break;
       } catch {
+        if (candidate === "admin") {
+          writeAdminAuthToken("");
+        }
         continue;
       }
     }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { AdminLeaseData } from "@/hooks/useSSRData";
+import type { AdminLeaseData } from "@/types/lease";
 import { useList, type BaseServer } from "@/hooks/useList";
 import type { BanFilter } from "@/types/filters";
 import {

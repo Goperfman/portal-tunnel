@@ -393,7 +393,7 @@ WIREGUARD_PORT=51820
 
 - Open `WIREGUARD_PORT/udp` on the host or VM when discovery is enabled.
 - The relay always advertises the `PORTAL_URL` host for WireGuard discovery.
-- The relay identity address can sign in to the admin UI by default; use `ADMIN_WALLETS` to allow additional admin wallets.
+- The relay identity address can sign in through the admin API by default; use `ADMIN_WALLETS` to allow additional admin wallets.
 - The relay stores its WireGuard keypair in `IDENTITY_PATH/identity.json`. If that file has no WireGuard key yet, Portal generates one on first discovery startup and saves it back to that file.
 - `BOOTSTRAPS` should point at at least one existing relay when you want discovery to join a multi-relay mesh.
 
@@ -600,7 +600,7 @@ Remove or comment out `HEADLESS_SHELL_URL` from `.env` or the docker-compose env
 
 ## 7. Auto-Update
 
-Automatically redeploy when a new `ghcr.io/gosuda/portal:latest` image is pushed.
+Automatically redeploy when new `ghcr.io/gosuda/portal:latest` or `ghcr.io/gosuda/portal-frontend:latest` images are pushed.
 
 ### 7.1 Deploy script
 

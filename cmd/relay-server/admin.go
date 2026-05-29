@@ -18,7 +18,6 @@ import (
 )
 
 const (
-	cookieName     = "portal_admin"
 	adminBodyLimit = 1 << 16
 )
 
@@ -38,7 +37,7 @@ func loadAdminState(path string, server *portal.Server) (persistedAdminState, er
 	return payload, nil
 }
 
-func (f *Frontend) serveAdmin(w http.ResponseWriter, r *http.Request) {
+func (api *RelayAPI) serveAdmin(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimSuffix(strings.TrimSpace(r.URL.Path), "/")
 	if path == "" {
 		path = types.PathRoot
@@ -46,47 +45,32 @@ func (f *Frontend) serveAdmin(w http.ResponseWriter, r *http.Request) {
 
 	switch path {
 	case types.PathAdmin:
-		if r.Method == http.MethodGet {
-			f.ServeAppStatic(w, r, "")
-			return
-		}
 		http.NotFound(w, r)
 		return
 	case types.PathAdminAuthChallenge:
 		if !utils.RequireMethod(w, r, http.MethodPost) {
 			return
 		}
-		f.handleWalletChallenge(w, r)
+		api.handleWalletChallenge(w, r)
 		return
 	case types.PathAdminAuthLogin:
 		if !utils.RequireMethod(w, r, http.MethodPost) {
 			return
 		}
-		f.handleWalletLogin(w, r)
+		api.handleWalletLogin(w, r)
 		return
 	case types.PathAdminLogout:
 		if !utils.RequireMethod(w, r, http.MethodPost) {
 			return
 		}
-		if cookie, err := r.Cookie(cookieName); err == nil && cookie.Value != "" {
-			f.auth.DeleteSession(cookie.Value)
-		}
-		http.SetCookie(w, &http.Cookie{
-			Name:     cookieName,
-			Value:    "",
-			Path:     types.PathAdmin,
-			HttpOnly: true,
-			Secure:   true,
-			SameSite: http.SameSiteStrictMode,
-			MaxAge:   -1,
-		})
+		api.auth.DeleteSession(adminAccessToken(r))
 		utils.WriteAPIData(w, http.StatusOK, map[string]any{})
 		return
 	case types.PathAdminAuthStatus:
 		if !utils.RequireMethod(w, r, http.MethodGet) {
 			return
 		}
-		walletAddress, authenticated := f.authenticatedWallet(r)
+		walletAddress, authenticated := api.authenticatedWallet(r)
 		utils.WriteAPIData(w, http.StatusOK, types.WalletAuthStatusResponse{
 			Authenticated: authenticated,
 			WalletAddress: walletAddress,
@@ -94,12 +78,12 @@ func (f *Frontend) serveAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !f.isAuthenticated(r) {
+	if _, ok := api.authenticatedWallet(r); !ok {
 		utils.WriteAPIError(w, http.StatusUnauthorized, types.APIErrorCodeUnauthorized, "unauthorized")
 		return
 	}
 
-	runtime := f.server.PolicyRuntime()
+	runtime := api.server.PolicyRuntime()
 	methodNotAllowed := utils.MethodNotAllowedError()
 	invalidRequestBody := utils.InvalidRequestError(errors.New("invalid request body"))
 
@@ -111,11 +95,11 @@ func (f *Frontend) serveAdmin(w http.ResponseWriter, r *http.Request) {
 		if !utils.RequireMethod(w, r, http.MethodGet) {
 			return
 		}
-		leases := f.server.AdminLeases()
-		f.attachAutomaticAdminThumbnails(leases)
+		leases := api.server.AdminLeases()
+		api.attachAutomaticAdminThumbnails(leases)
 		utils.WriteAPIData(w, http.StatusOK, types.AdminSnapshotResponse{
 			ApprovalMode:       string(runtime.Approver().Mode()),
-			LandingPageEnabled: f.isLandingPageEnabled(),
+			LandingPageEnabled: api.landingPageEnabled.Load(),
 			Leases:             leases,
 			UDP: types.AdminUDPSettingsResponse{
 				Enabled:   runtime.IsUDPEnabled(),
@@ -134,21 +118,22 @@ func (f *Frontend) serveAdmin(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		f.setLandingPageEnabled(req.Enabled)
-		saveAdminState(f.adminSettingsPath, runtime, f.isLandingPageEnabled())
+		api.landingPageEnabled.Store(req.Enabled)
+		landingPageEnabled := api.landingPageEnabled.Load()
+		saveAdminState(api.adminSettingsPath, runtime, landingPageEnabled)
 		utils.WriteAPIData(w, http.StatusOK, types.AdminLandingPageSettingsResponse{
-			Enabled: f.isLandingPageEnabled(),
+			Enabled: landingPageEnabled,
 		})
 	case types.PathAdminUDP:
-		f.handlePortSettings(w, r, invalidRequestBody, runtime,
-			f.server.SetUDPPolicy,
+		api.handlePortSettings(w, r, invalidRequestBody, runtime,
+			api.server.SetUDPPolicy,
 			func() any {
 				return types.AdminUDPSettingsResponse{Enabled: runtime.IsUDPEnabled(), MaxLeases: runtime.UDPMaxLeases()}
 			},
 		)
 	case types.PathAdminTCPPort:
-		f.handlePortSettings(w, r, invalidRequestBody, runtime,
-			f.server.SetTCPPortPolicy,
+		api.handlePortSettings(w, r, invalidRequestBody, runtime,
+			api.server.SetTCPPortPolicy,
 			func() any {
 				return types.AdminTCPPortSettingsResponse{Enabled: runtime.IsTCPPortEnabled(), MaxLeases: runtime.TCPPortMaxLeases()}
 			},
@@ -165,7 +150,7 @@ func (f *Frontend) serveAdmin(w http.ResponseWriter, r *http.Request) {
 			utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidMode, "invalid mode (must be 'auto' or 'manual')")
 			return
 		}
-		saveAdminState(f.adminSettingsPath, runtime, f.isLandingPageEnabled())
+		saveAdminState(api.adminSettingsPath, runtime, api.landingPageEnabled.Load())
 		utils.WriteAPIData(w, http.StatusOK, types.AdminApprovalModeResponse{
 			ApprovalMode: string(runtime.Approver().Mode()),
 		})
@@ -250,7 +235,7 @@ func (f *Frontend) serveAdmin(w http.ResponseWriter, r *http.Request) {
 				methodNotAllowed.Write(w)
 				return
 			}
-			saveAdminState(f.adminSettingsPath, runtime, f.isLandingPageEnabled())
+			saveAdminState(api.adminSettingsPath, runtime, api.landingPageEnabled.Load())
 			utils.WriteAPIData(w, http.StatusOK, map[string]any{})
 		case strings.HasPrefix(path, types.PathAdminIPsPrefix):
 			if !strings.HasSuffix(path, "/ban") {
@@ -275,7 +260,7 @@ func (f *Frontend) serveAdmin(w http.ResponseWriter, r *http.Request) {
 				methodNotAllowed.Write(w)
 				return
 			}
-			saveAdminState(f.adminSettingsPath, runtime, f.isLandingPageEnabled())
+			saveAdminState(api.adminSettingsPath, runtime, api.landingPageEnabled.Load())
 			utils.WriteAPIData(w, http.StatusOK, map[string]any{})
 		default:
 			http.NotFound(w, r)
@@ -283,12 +268,7 @@ func (f *Frontend) serveAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-type portSettingsRequest struct {
-	Enabled   bool `json:"enabled"`
-	MaxLeases int  `json:"max_leases"`
-}
-
-func (f *Frontend) handlePortSettings(
+func (api *RelayAPI) handlePortSettings(
 	w http.ResponseWriter,
 	r *http.Request,
 	invalidBody utils.APIErrorResponse,
@@ -299,7 +279,7 @@ func (f *Frontend) handlePortSettings(
 	if !utils.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
-	req, ok := utils.DecodeJSONRequestAs[portSettingsRequest](w, r, 1<<16, invalidBody)
+	req, ok := utils.DecodeJSONRequestAs[types.AdminPortSettingsRequest](w, r, 1<<16, invalidBody)
 	if !ok {
 		return
 	}
@@ -308,16 +288,16 @@ func (f *Frontend) handlePortSettings(
 		return
 	}
 	setPolicy(req.Enabled, req.MaxLeases)
-	saveAdminState(f.adminSettingsPath, runtime, f.isLandingPageEnabled())
+	saveAdminState(api.adminSettingsPath, runtime, api.landingPageEnabled.Load())
 	utils.WriteAPIData(w, http.StatusOK, buildResponse())
 }
 
-func (f *Frontend) handleWalletChallenge(w http.ResponseWriter, r *http.Request) {
+func (api *RelayAPI) handleWalletChallenge(w http.ResponseWriter, r *http.Request) {
 	req, ok := utils.DecodeJSONRequestAs[types.WalletAuthChallengeRequest](w, r, adminBodyLimit, utils.InvalidRequestError(errors.New("invalid request body")))
 	if !ok {
 		return
 	}
-	resp, err := f.auth.IssueChallenge(req, adminAuthDomain(r, f.server.RelayIdentity().Name), adminAuthURI(r, types.PathAdminAuthLogin), time.Now().UTC())
+	resp, err := api.auth.IssueChallenge(req, adminAuthDomain(r, api.server.RelayIdentity().Name), adminAuthURI(r, types.PathAdminAuthLogin), time.Now().UTC())
 	if err != nil {
 		writeWalletAuthError(w, err)
 		return
@@ -325,43 +305,25 @@ func (f *Frontend) handleWalletChallenge(w http.ResponseWriter, r *http.Request)
 	utils.WriteAPIData(w, http.StatusCreated, resp)
 }
 
-func (f *Frontend) handleWalletLogin(w http.ResponseWriter, r *http.Request) {
+func (api *RelayAPI) handleWalletLogin(w http.ResponseWriter, r *http.Request) {
 	req, ok := utils.DecodeJSONRequestAs[types.WalletAuthLoginRequest](w, r, adminBodyLimit, utils.InvalidRequestError(errors.New("invalid request body")))
 	if !ok {
 		return
 	}
-	token, walletAddress, err := f.auth.Login(req, time.Now().UTC())
+	token, walletAddress, err := api.auth.Login(req, time.Now().UTC())
 	if err != nil {
 		writeWalletAuthError(w, err)
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     cookieName,
-		Value:    token,
-		Path:     types.PathAdmin,
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   86400,
+	utils.WriteAPIData(w, http.StatusOK, types.WalletAuthLoginResponse{
+		AccessToken:   token,
+		WalletAddress: walletAddress,
 	})
-	utils.WriteAPIData(w, http.StatusOK, types.WalletAuthLoginResponse{WalletAddress: walletAddress})
 }
 
-func (f *Frontend) isAuthenticated(r *http.Request) bool {
-	_, ok := f.authenticatedWallet(r)
-	return ok
-}
-
-func (f *Frontend) authenticatedWallet(r *http.Request) (string, bool) {
-	if f.auth == nil {
-		return "", false
-	}
-	cookie, err := r.Cookie(cookieName)
-	if err != nil {
-		return "", false
-	}
-	return f.auth.ValidateSession(cookie.Value)
+func (api *RelayAPI) authenticatedWallet(r *http.Request) (string, bool) {
+	return api.auth.ValidateSession(adminAccessToken(r))
 }
 
 func adminAuthDomain(r *http.Request, fallback string) string {
@@ -382,6 +344,14 @@ func adminAuthURI(r *http.Request, endpointPath string) string {
 		Host:   adminAuthDomain(r, "localhost"),
 		Path:   endpointPath,
 	}).String()
+}
+
+func adminAccessToken(r *http.Request) string {
+	parts := strings.Fields(r.Header.Get("Authorization"))
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(parts[1])
 }
 
 func writeWalletAuthError(w http.ResponseWriter, err error) {

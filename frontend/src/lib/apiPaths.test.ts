@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { API_PATHS, adminLeasePath, encodePathPart } from "@/lib/apiPaths";
+import { adminLeasePath } from "@/lib/apiPaths";
 
 describe("API_PATHS contract alignment", () => {
   it("encodes lease identities as base64url path segments", () => {
@@ -16,14 +16,9 @@ describe("API_PATHS contract alignment", () => {
       .replace(/\+/g, "-")
       .replace(/\//g, "_")
       .replace(/=+$/, "");
-    const encodedName = encodePathPart(name);
-    const encodedAddress = encodePathPart(address);
-
-    expect(encodedName).toBe(expectedName);
-    expect(encodedAddress).toBe(expectedAddress);
-    expect(encodedAddress).not.toContain("=");
+    expect(expectedAddress).not.toContain("=");
     expect(adminLeasePath(name, address, "approve")).toBe(
-      `${API_PATHS.admin.leases}/${encodeURIComponent(encodedName)}/${encodeURIComponent(encodedAddress)}/approve`
+      `/admin/leases/${encodeURIComponent(expectedName)}/${encodeURIComponent(expectedAddress)}/approve`
     );
   });
 });

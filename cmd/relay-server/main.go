@@ -201,13 +201,13 @@ func runServer(ctx context.Context, cfg relayServerConfig) error {
 		return fmt.Errorf("create relay server: %w", err)
 	}
 
-	frontend, err := NewFrontend(server, cfg.IdentityPath, cfg.LandingPageEnabled, cfg.HeadlessShellURL, utils.SplitCSV(cfg.AdminWallets))
+	relayAPI, err := NewRelayAPI(server, cfg.IdentityPath, cfg.LandingPageEnabled, cfg.HeadlessShellURL, utils.SplitCSV(cfg.AdminWallets))
 	if err != nil {
-		return fmt.Errorf("create frontend: %w", err)
+		return fmt.Errorf("create relay api: %w", err)
 	}
-	defer frontend.Close()
+	defer relayAPI.Close()
 
-	apiMux := frontend.Handler()
+	apiMux := relayAPI.Handler()
 	if cfg.X402Enabled {
 		relayIdentity := server.RelayIdentity()
 		if err := portalx402.MountFacilitator(apiMux, portalx402.FacilitatorConfig{

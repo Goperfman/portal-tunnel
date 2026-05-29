@@ -1,4 +1,5 @@
 import { APIClientError, apiClient } from "@/lib/apiClient";
+import { writeAdminAuthToken } from "@/lib/adminAuthToken";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 function jsonResponse(payload: unknown, init?: ResponseInit): Response {
@@ -15,6 +16,7 @@ describe("apiClient", () => {
   beforeEach(() => {
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    localStorage.clear();
   });
 
   it("returns data when API envelope is ok", async () => {
@@ -150,6 +152,20 @@ describe("apiClient", () => {
     expect(deleteInit.method).toBe("DELETE");
     expect(deleteInit.headers).toEqual({
       Accept: "application/json",
+    });
+  });
+
+  it("sends bearer token for admin API calls", async () => {
+    writeAdminAuthToken("admin-token");
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, data: {} }));
+
+    await apiClient.post("/admin/logout");
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.credentials).toBe("same-origin");
+    expect(init.headers).toEqual({
+      Accept: "application/json",
+      Authorization: "Bearer admin-token",
     });
   });
 });

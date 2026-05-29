@@ -1,12 +1,13 @@
 export const API_PATHS = {
+  public: {
+    snapshot: "/api/public/snapshot",
+  },
   admin: {
-    prefix: "/admin",
     snapshot: "/admin/snapshot",
     authChallenge: "/admin/auth/challenge",
     authLogin: "/admin/auth/login",
     logout: "/admin/logout",
     authStatus: "/admin/auth/status",
-    leases: "/admin/leases",
 
     approvalMode: "/admin/settings/approval-mode",
     landingPage: "/admin/settings/landing-page",
@@ -14,12 +15,7 @@ export const API_PATHS = {
     tcpPortSettings: "/admin/settings/tcp-port",
   },
   sdk: {
-    prefix: "/sdk",
-    register: "/sdk/register",
-    unregister: "/sdk/unregister",
-    renew: "/sdk/renew",
     domain: "/sdk/domain",
-    connect: "/sdk/connect",
   },
   tunnel: {
     status: "/tunnel/status",
@@ -31,12 +27,10 @@ export const API_PATHS = {
     authStatus: "/v1/agent/auth/status",
   },
   discovery: "/discovery",
-  healthz: "/healthz",
   install: {
     shell: "/install.sh",
     powershell: "/install.ps1",
   },
-  appPrefix: "/app/",
 } as const;
 
 export const ROUTE_PATHS = {
@@ -45,7 +39,10 @@ export const ROUTE_PATHS = {
   admin: "/admin",
 } as const;
 
-export function encodePathPart(value: string): string {
+const ADMIN_LEASES_PATH = "/admin/leases";
+const ADMIN_IPS_PATH = "/admin/ips";
+
+function encodePathPart(value: string): string {
   return btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
@@ -56,9 +53,9 @@ export function adminLeasePath(
 ): string {
   const encodedName = encodePathPart(name);
   const encodedAddress = encodePathPart(address);
-  return `${API_PATHS.admin.leases}/${encodeURIComponent(encodedName)}/${encodeURIComponent(encodedAddress)}/${action}`;
+  return `${ADMIN_LEASES_PATH}/${encodeURIComponent(encodedName)}/${encodeURIComponent(encodedAddress)}/${action}`;
 }
 
 export function adminIPBanPath(ip: string): string {
-  return `${API_PATHS.admin.prefix}/ips/${encodeURIComponent(ip.trim())}/ban`;
+  return `${ADMIN_IPS_PATH}/${encodeURIComponent(ip.trim())}/ban`;
 }

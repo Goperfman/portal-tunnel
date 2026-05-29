@@ -54,16 +54,16 @@ SDK clients authenticate using Sign-In with Ethereum (SIWE):
 3. POST the signed message to `/sdk/register` to receive a JWT access token
 4. Include the access token in subsequent requests via the `X-Portal-Access-Token` header or in the JSON request body
 
-### Admin Authentication (Wallet Session)
+### Admin Authentication (Wallet Bearer Token)
 
 Admin clients authenticate with a wallet signature:
 
 1. POST to `/admin/auth/challenge` with `{ "address": "<wallet-address>" }`
 2. Sign the returned SIWE message with the wallet
 3. POST the signed message to `/admin/auth/login`
-4. The server sets a `portal_admin` session cookie (HttpOnly, Secure, SameSite=Strict)
-5. Include the cookie in subsequent admin requests
-6. Sessions expire after 24 hours
+4. Store the returned `access_token`
+5. Include it in subsequent admin requests as `Authorization: Bearer <access_token>`
+6. Tokens expire after 24 hours
 
 The local agent has its own loopback wallet auth endpoints under
 `/v1/agent/auth/*`. Agent wallet sessions can read `/v1/agent/status`; mutating
@@ -89,23 +89,23 @@ agent actions require the bearer token stored in the agent state directory. See
 |--------|------|-------------|------|
 | `POST` | [`/admin/auth/challenge`](/api-reference/admin#post-adminauthchallenge) | Request wallet login challenge | None |
 | `POST` | [`/admin/auth/login`](/api-reference/admin#post-adminauthlogin) | Complete wallet login | None |
-| `POST` | [`/admin/logout`](/api-reference/admin#post-adminlogout) | End admin session | Session Cookie |
+| `POST` | [`/admin/logout`](/api-reference/admin#post-adminlogout) | Invalidate admin token | Bearer Token |
 | `GET` | [`/admin/auth/status`](/api-reference/admin#get-adminauthstatus) | Check authentication status | None |
-| `GET` | [`/admin/snapshot`](/api-reference/admin#get-adminsnapshot) | Get full relay state snapshot | Session Cookie |
-| `POST` | [`/admin/settings/landing-page`](/api-reference/admin#post-adminsettingslanding-page) | Toggle landing page | Session Cookie |
-| `POST` | [`/admin/settings/udp`](/api-reference/admin#post-adminsettingsudp) | Configure UDP settings | Session Cookie |
-| `POST` | [`/admin/settings/tcp-port`](/api-reference/admin#post-adminsettingstcp-port) | Configure TCP port settings | Session Cookie |
-| `POST` | [`/admin/settings/approval-mode`](/api-reference/admin#post-adminsettingsapproval-mode) | Set approval mode | Session Cookie |
-| `POST` | [`/admin/leases/{name}/{addr}/ban`](/api-reference/admin#lease-management) | Ban a lease identity | Session Cookie |
-| `DELETE` | [`/admin/leases/{name}/{addr}/ban`](/api-reference/admin#lease-management) | Unban a lease identity | Session Cookie |
-| `POST` | [`/admin/leases/{name}/{addr}/bps`](/api-reference/admin#lease-management) | Set bandwidth limit for a lease | Session Cookie |
-| `DELETE` | [`/admin/leases/{name}/{addr}/bps`](/api-reference/admin#lease-management) | Remove bandwidth limit | Session Cookie |
-| `POST` | [`/admin/leases/{name}/{addr}/approve`](/api-reference/admin#lease-management) | Approve a lease | Session Cookie |
-| `DELETE` | [`/admin/leases/{name}/{addr}/approve`](/api-reference/admin#lease-management) | Revoke lease approval | Session Cookie |
-| `POST` | [`/admin/leases/{name}/{addr}/deny`](/api-reference/admin#lease-management) | Deny a lease | Session Cookie |
-| `DELETE` | [`/admin/leases/{name}/{addr}/deny`](/api-reference/admin#lease-management) | Remove lease denial | Session Cookie |
-| `POST` | [`/admin/ips/{ip}/ban`](/api-reference/admin#ip-management) | Ban an IP address | Session Cookie |
-| `DELETE` | [`/admin/ips/{ip}/ban`](/api-reference/admin#ip-management) | Unban an IP address | Session Cookie |
+| `GET` | [`/admin/snapshot`](/api-reference/admin#get-adminsnapshot) | Get full relay state snapshot | Bearer Token |
+| `POST` | [`/admin/settings/landing-page`](/api-reference/admin#post-adminsettingslanding-page) | Toggle landing page | Bearer Token |
+| `POST` | [`/admin/settings/udp`](/api-reference/admin#post-adminsettingsudp) | Configure UDP settings | Bearer Token |
+| `POST` | [`/admin/settings/tcp-port`](/api-reference/admin#post-adminsettingstcp-port) | Configure TCP port settings | Bearer Token |
+| `POST` | [`/admin/settings/approval-mode`](/api-reference/admin#post-adminsettingsapproval-mode) | Set approval mode | Bearer Token |
+| `POST` | [`/admin/leases/{name}/{addr}/ban`](/api-reference/admin#lease-management) | Ban a lease identity | Bearer Token |
+| `DELETE` | [`/admin/leases/{name}/{addr}/ban`](/api-reference/admin#lease-management) | Unban a lease identity | Bearer Token |
+| `POST` | [`/admin/leases/{name}/{addr}/bps`](/api-reference/admin#lease-management) | Set bandwidth limit for a lease | Bearer Token |
+| `DELETE` | [`/admin/leases/{name}/{addr}/bps`](/api-reference/admin#lease-management) | Remove bandwidth limit | Bearer Token |
+| `POST` | [`/admin/leases/{name}/{addr}/approve`](/api-reference/admin#lease-management) | Approve a lease | Bearer Token |
+| `DELETE` | [`/admin/leases/{name}/{addr}/approve`](/api-reference/admin#lease-management) | Revoke lease approval | Bearer Token |
+| `POST` | [`/admin/leases/{name}/{addr}/deny`](/api-reference/admin#lease-management) | Deny a lease | Bearer Token |
+| `DELETE` | [`/admin/leases/{name}/{addr}/deny`](/api-reference/admin#lease-management) | Remove lease denial | Bearer Token |
+| `POST` | [`/admin/ips/{ip}/ban`](/api-reference/admin#ip-management) | Ban an IP address | Bearer Token |
+| `DELETE` | [`/admin/ips/{ip}/ban`](/api-reference/admin#ip-management) | Unban an IP address | Bearer Token |
 
 ### System Endpoints
 
@@ -115,8 +115,9 @@ agent actions require the bearer token stored in the agent state directory. See
 | `GET` | `/discovery` | Relay discovery | None |
 | `POST` | `/discovery/announce` | Relay discovery self-announce | Signed Descriptor |
 | `POST` | `/v1/sign` | Keyless TLS signing | Access Token |
+| `GET` | `/api/public/snapshot` | Public frontend snapshot | None |
 | `GET` | `/thumbnail/{hostname}` | Cached thumbnail screenshot | None |
-| `GET` | `/tunnel/status` | Tunnel connection status | Access Token |
+| `GET` | `/tunnel/status` | Tunnel connection status | None |
 
 ## System Endpoints
 
@@ -206,6 +207,23 @@ the `X-Portal-Access-Token` header.
 Only available when the API server is configured with a TLS private key.
 
 Returns `404 Not Found` if signing is not configured.
+
+### `GET /api/public/snapshot`
+
+Returns the public relay dashboard snapshot used by frontends.
+
+**Response fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `leases` | `Lease[]` | Public lease rows visible on the relay index |
+| `landing_page_enabled` | `boolean` | Whether the public landing hero should be shown |
+
+**Example:**
+
+```bash
+curl https://relay.example.com/api/public/snapshot
+```
 
 ### `GET /thumbnail/{hostname}`
 

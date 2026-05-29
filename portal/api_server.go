@@ -87,6 +87,9 @@ func (s *Server) apiHandler(base *http.ServeMux, keylessSignerHandler http.Handl
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if utils.HandleAPICORS(w, r) {
+			return
+		}
 		switch strings.TrimSpace(r.URL.Path) {
 		case types.PathHealthz:
 			s.handleHealthz(w, r)
@@ -243,8 +246,6 @@ func (s *Server) handleRelayDiscoveryAnnounce(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleDomain(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
 	if !utils.RequireMethod(w, r, http.MethodGet) {
 		return
 	}

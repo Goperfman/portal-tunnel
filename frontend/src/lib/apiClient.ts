@@ -1,3 +1,5 @@
+import { readAdminAuthToken } from "@/lib/adminAuthToken";
+
 type APIErrorPayload = {
   code?: string;
   message?: string;
@@ -27,17 +29,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function headersToObject(headers?: HeadersInit): Record<string, string> {
-  if (!headers) {
-    return {};
+function resolveAPIURL(path: string): string {
+  if (/^[a-z][a-z\d+\-.]*:/i.test(path)) {
+    return path;
   }
-  if (headers instanceof Headers) {
-    return Object.fromEntries(headers.entries());
+
+  const baseURL = import.meta.env.VITE_PORTAL_API_BASE_URL?.trim();
+  if (!baseURL) {
+    return path;
   }
-  if (Array.isArray(headers)) {
-    return Object.fromEntries(headers);
-  }
-  return { ...headers };
+  return new URL(
+    path,
+    baseURL.endsWith("/") ? baseURL : `${baseURL}/`
+  ).toString();
 }
 
 function ensureJsonEnvelope<T>(raw: unknown, path: string, status: number): APIEnvelope<T> {
@@ -89,8 +93,21 @@ async function decodeEnvelope<T>(path: string, response: Response): Promise<APIE
 async function request<T>(path: string, init: RequestInit): Promise<T> {
   let response: Response;
   try {
-    const requestHeaders = headersToObject(init.headers);
-    response = await fetch(path, {
+    const requestHeaders = {
+      ...((init.headers as Record<string, string> | undefined) ?? {}),
+    };
+    const pathname = new URL(path, window.location.origin).pathname;
+    if (
+      pathname.startsWith("/admin/") &&
+      pathname !== "/admin/auth/challenge" &&
+      pathname !== "/admin/auth/login"
+    ) {
+      const token = readAdminAuthToken();
+      if (token) {
+        requestHeaders.Authorization = `Bearer ${token}`;
+      }
+    }
+    response = await fetch(resolveAPIURL(path), {
       credentials: "same-origin",
       ...init,
       headers: {

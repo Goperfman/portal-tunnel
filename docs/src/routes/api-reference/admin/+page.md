@@ -13,8 +13,9 @@ const adminWorkflowDiagram = `sequenceDiagram
     Relay->>Admin: SIWE message
     Admin->>Relay: POST /admin/auth/login
     Note right of Admin: wallet signature in body
-    Relay->>Admin: Set-Cookie session token
+    Relay->>Admin: access_token
     Admin->>Relay: GET /admin/snapshot
+    Note right of Admin: Authorization: Bearer ...
     Relay->>Admin: Full relay state
     Note left of Relay: leases, settings, bans
     alt Manage Leases
@@ -26,12 +27,12 @@ const adminWorkflowDiagram = `sequenceDiagram
         Relay->>Admin: Updated settings
     end
     Admin->>Relay: POST /admin/logout
-    Relay->>Admin: Session cleared`
+    Relay->>Admin: Token invalidated`
 </script>
 
 # Admin API
 
-These endpoints allow relay operators to manage leases, configure settings, and control access. All endpoints (except authentication) require a valid admin session cookie.
+These endpoints allow relay operators to manage leases, configure settings, and control access. All endpoints (except authentication) require a valid admin bearer token.
 
 ## Admin Workflow
 
@@ -73,7 +74,7 @@ curl -X POST https://relay.example.com/admin/auth/challenge \
 
 ### `POST /admin/auth/login`
 
-Complete wallet login with the signed SIWE message. On success, sets a session cookie used for subsequent admin requests.
+Complete wallet login with the signed SIWE message. On success, returns an access token used for subsequent admin requests.
 
 **Auth:** None
 
@@ -89,13 +90,8 @@ Complete wallet login with the signed SIWE message. On success, sets a session c
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `access_token` | `string` | Bearer token for admin API requests |
 | `wallet_address` | `string` | Authenticated wallet address |
-
-**Response cookies:**
-
-| Cookie | Value | Attributes |
-|--------|-------|------------|
-| `portal_admin` | Session token | `Path=/admin; HttpOnly; Secure; SameSite=Strict; MaxAge=86400` |
 
 **Error codes:**
 
@@ -108,7 +104,6 @@ Complete wallet login with the signed SIWE message. On success, sets a session c
 ```bash
 curl -X POST https://relay.example.com/admin/auth/login \
   -H "Content-Type: application/json" \
-  -c cookies.txt \
   -d '{ "challenge_id": "...", "siwe_message": "...", "siwe_signature": "0x..." }'
 ```
 
@@ -118,6 +113,7 @@ curl -X POST https://relay.example.com/admin/auth/login \
 {
   "ok": true,
   "data": {
+    "access_token": "...",
     "wallet_address": "0x1234567890abcdef1234567890abcdef12345678"
   }
 }
@@ -127,9 +123,9 @@ curl -X POST https://relay.example.com/admin/auth/login \
 
 ### `POST /admin/logout`
 
-End the current admin session and clear the session cookie.
+Invalidate the current admin bearer token.
 
-**Auth:** Session Cookie
+**Auth:** Bearer Token
 
 **Request body:** None
 
@@ -139,14 +135,14 @@ End the current admin session and clear the session cookie.
 
 ```bash
 curl -X POST https://relay.example.com/admin/logout \
-  -b cookies.txt
+  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN"
 ```
 
 ---
 
 ### `GET /admin/auth/status`
 
-Check the current wallet session. Can be called without a session.
+Check the current wallet login state. Can be called without a token.
 
 **Auth:** None (returns status regardless)
 
@@ -154,14 +150,14 @@ Check the current wallet session. Can be called without a session.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `authenticated` | `bool` | `true` if the request has a valid session |
+| `authenticated` | `bool` | `true` if the request has a valid bearer token |
 | `wallet_address` | `string` | Authenticated wallet address, when logged in |
 
 **Example:**
 
 ```bash
 curl https://relay.example.com/admin/auth/status \
-  -b cookies.txt
+  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN"
 ```
 
 **Response:**
@@ -184,7 +180,7 @@ curl https://relay.example.com/admin/auth/status \
 
 Get a full snapshot of the relay's current state including all active leases, approval mode, and transport settings.
 
-**Auth:** Session Cookie
+**Auth:** Bearer Token
 
 **Response fields:**
 
@@ -223,7 +219,7 @@ Get a full snapshot of the relay's current state including all active leases, ap
 
 ```bash
 curl https://relay.example.com/admin/snapshot \
-  -b cookies.txt
+  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN"
 ```
 
 **Response:**
@@ -268,7 +264,7 @@ curl https://relay.example.com/admin/snapshot \
 
 Enable or disable the relay landing page.
 
-**Auth:** Session Cookie
+**Auth:** Bearer Token
 
 **Request body:**
 
@@ -287,7 +283,7 @@ Enable or disable the relay landing page.
 ```bash
 curl -X POST https://relay.example.com/admin/settings/landing-page \
   -H "Content-Type: application/json" \
-  -b cookies.txt \
+  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN" \
   -d '{ "enabled": true }'
 ```
 
@@ -297,7 +293,7 @@ curl -X POST https://relay.example.com/admin/settings/landing-page \
 
 Configure UDP (QUIC) transport settings.
 
-**Auth:** Session Cookie
+**Auth:** Bearer Token
 
 **Request body:**
 
@@ -324,7 +320,7 @@ Configure UDP (QUIC) transport settings.
 ```bash
 curl -X POST https://relay.example.com/admin/settings/udp \
   -H "Content-Type: application/json" \
-  -b cookies.txt \
+  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN" \
   -d '{ "enabled": true, "max_leases": 10 }'
 ```
 
@@ -334,7 +330,7 @@ curl -X POST https://relay.example.com/admin/settings/udp \
 
 Configure dedicated TCP port transport settings.
 
-**Auth:** Session Cookie
+**Auth:** Bearer Token
 
 **Request body:**
 
@@ -361,7 +357,7 @@ Configure dedicated TCP port transport settings.
 ```bash
 curl -X POST https://relay.example.com/admin/settings/tcp-port \
   -H "Content-Type: application/json" \
-  -b cookies.txt \
+  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN" \
   -d '{ "enabled": true, "max_leases": 5 }'
 ```
 
@@ -371,7 +367,7 @@ curl -X POST https://relay.example.com/admin/settings/tcp-port \
 
 Set the lease approval mode. In `auto` mode, all leases are automatically approved. In `manual` mode, leases must be explicitly approved before they can route traffic.
 
-**Auth:** Session Cookie
+**Auth:** Bearer Token
 
 **Request body:**
 
@@ -396,7 +392,7 @@ Set the lease approval mode. In `auto` mode, all leases are automatically approv
 ```bash
 curl -X POST https://relay.example.com/admin/settings/approval-mode \
   -H "Content-Type: application/json" \
-  -b cookies.txt \
+  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN" \
   -d '{ "mode": "manual" }'
 ```
 
@@ -429,7 +425,7 @@ All lease management endpoints return an empty data object on success. All chang
 
 Ban or unban a lease identity. Banned identities cannot register new leases or renew existing ones.
 
-**Auth:** Session Cookie
+**Auth:** Bearer Token
 
 | Method | Description |
 |--------|-------------|
@@ -441,11 +437,11 @@ Ban or unban a lease identity. Banned identities cannot register new leases or r
 ```bash
 # Ban an identity
 curl -X POST https://relay.example.com/admin/leases/bXktYXBw/MHgxMjM0/ban \
-  -b cookies.txt
+  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN"
 
 # Unban an identity
 curl -X DELETE https://relay.example.com/admin/leases/bXktYXBw/MHgxMjM0/ban \
-  -b cookies.txt
+  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN"
 ```
 
 ---
@@ -454,7 +450,7 @@ curl -X DELETE https://relay.example.com/admin/leases/bXktYXBw/MHgxMjM0/ban \
 
 Set or remove a bandwidth limit (bytes per second) for a specific lease identity.
 
-**Auth:** Session Cookie
+**Auth:** Bearer Token
 
 | Method | Description |
 |--------|-------------|
@@ -479,12 +475,12 @@ Set or remove a bandwidth limit (bytes per second) for a specific lease identity
 # Set 1 MB/s bandwidth limit
 curl -X POST https://relay.example.com/admin/leases/bXktYXBw/MHgxMjM0/bps \
   -H "Content-Type: application/json" \
-  -b cookies.txt \
+  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN" \
   -d '{ "bps": 1048576 }'
 
 # Remove bandwidth limit
 curl -X DELETE https://relay.example.com/admin/leases/bXktYXBw/MHgxMjM0/bps \
-  -b cookies.txt
+  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN"
 ```
 
 ---
@@ -493,7 +489,7 @@ curl -X DELETE https://relay.example.com/admin/leases/bXktYXBw/MHgxMjM0/bps \
 
 Approve or revoke approval for a lease identity. Only relevant when approval mode is `manual`.
 
-**Auth:** Session Cookie
+**Auth:** Bearer Token
 
 | Method | Description |
 |--------|-------------|
@@ -505,11 +501,11 @@ Approve or revoke approval for a lease identity. Only relevant when approval mod
 ```bash
 # Approve an identity
 curl -X POST https://relay.example.com/admin/leases/bXktYXBw/MHgxMjM0/approve \
-  -b cookies.txt
+  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN"
 
 # Revoke approval
 curl -X DELETE https://relay.example.com/admin/leases/bXktYXBw/MHgxMjM0/approve \
-  -b cookies.txt
+  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN"
 ```
 
 ---
@@ -518,7 +514,7 @@ curl -X DELETE https://relay.example.com/admin/leases/bXktYXBw/MHgxMjM0/approve 
 
 Deny or remove denial for a lease identity. Denied identities are blocked from routing even in `auto` mode.
 
-**Auth:** Session Cookie
+**Auth:** Bearer Token
 
 | Method | Description |
 |--------|-------------|
@@ -530,11 +526,11 @@ Deny or remove denial for a lease identity. Denied identities are blocked from r
 ```bash
 # Deny an identity
 curl -X POST https://relay.example.com/admin/leases/bXktYXBw/MHgxMjM0/deny \
-  -b cookies.txt
+  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN"
 
 # Remove denial
 curl -X DELETE https://relay.example.com/admin/leases/bXktYXBw/MHgxMjM0/deny \
-  -b cookies.txt
+  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN"
 ```
 
 ---
@@ -545,7 +541,7 @@ curl -X DELETE https://relay.example.com/admin/leases/bXktYXBw/MHgxMjM0/deny \
 
 Ban or unban an IP address. Banned IPs are rejected at the SDK registration and renewal endpoints.
 
-**Auth:** Session Cookie
+**Auth:** Bearer Token
 
 | Method | Description |
 |--------|-------------|
@@ -563,11 +559,11 @@ Ban or unban an IP address. Banned IPs are rejected at the SDK registration and 
 ```bash
 # Ban an IP
 curl -X POST https://relay.example.com/admin/ips/203.0.113.50/ban \
-  -b cookies.txt
+  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN"
 
 # Unban an IP
 curl -X DELETE https://relay.example.com/admin/ips/203.0.113.50/ban \
-  -b cookies.txt
+  -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN"
 ```
 
 **Response:**

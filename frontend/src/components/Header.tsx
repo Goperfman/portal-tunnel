@@ -11,7 +11,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { getReleaseVersion } from "@/lib/releaseVersion";
 
 interface HeaderProps {
   title?: string;
@@ -21,6 +20,7 @@ interface HeaderProps {
 }
 
 interface DomainStatusResponse {
+  release_version?: string;
   ens?: {
     verified?: boolean;
   };
@@ -55,7 +55,7 @@ export function Header({
   onAuthChange,
   showQuickStartLink = true,
 }: HeaderProps) {
-  const releaseVersion = getReleaseVersion();
+  const [releaseVersion, setReleaseVersion] = useState("");
   const [ensVerified, setENSVerified] = useState(false);
   const [x402, setX402] = useState<X402FacilitatorInfo | null>(null);
   const {
@@ -99,11 +99,17 @@ export function Header({
           API_PATHS.sdk.domain
         );
         if (!cancelled) {
+          setReleaseVersion(
+            typeof status?.release_version === "string"
+              ? status.release_version.trim()
+              : ""
+          );
           setENSVerified(status?.ens?.verified === true);
           setX402(status?.x402?.enabled === true ? status.x402 : null);
         }
       } catch {
         if (!cancelled) {
+          setReleaseVersion("");
           setENSVerified(false);
           setX402(null);
         }

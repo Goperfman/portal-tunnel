@@ -1,11 +1,17 @@
-import { useMemo } from "react";
-import { useSSRData } from "@/hooks/useSSRData";
-import type { PublicLeaseData } from "@/hooks/useSSRData";
+import { useEffect, useMemo, useState } from "react";
 import { useList, type BaseServer } from "@/hooks/useList";
+import { apiClient } from "@/lib/apiClient";
+import { API_PATHS } from "@/lib/apiPaths";
 import { parseLeaseMetadata } from "@/lib/metadata";
+import type { PublicLeaseData, PublicSnapshotResponse } from "@/types/lease";
 
-function convertSSRDataToServers(ssrData: PublicLeaseData[]): BaseServer[] {
-  return ssrData.map((row) => {
+type PublicSnapshot = {
+  leases: PublicLeaseData[];
+  landingPageEnabled: boolean;
+};
+
+function convertPublicLeasesToServers(leases: PublicLeaseData[]): BaseServer[] {
+  return leases.map((row) => {
     const metadata = parseLeaseMetadata(row.Metadata);
     const hostname = row.Hostname || "";
     const serviceName = row.name || "";
@@ -27,15 +33,51 @@ function convertSSRDataToServers(ssrData: PublicLeaseData[]): BaseServer[] {
 }
 
 export function useServerList() {
-  const ssrData = useSSRData();
+  const [snapshot, setSnapshot] = useState<PublicSnapshot>({
+    leases: [],
+    landingPageEnabled: true,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const data = await apiClient.get<PublicSnapshotResponse>(
+          API_PATHS.public.snapshot
+        );
+        if (cancelled) {
+          return;
+        }
+        setSnapshot({
+          leases: Array.isArray(data?.leases) ? data.leases : [],
+          landingPageEnabled: data?.landing_page_enabled ?? true,
+        });
+      } catch (error) {
+        console.error("Failed to load public relay snapshot", error);
+        if (!cancelled) {
+          setSnapshot({ leases: [], landingPageEnabled: true });
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const servers: BaseServer[] = useMemo(
-    () => convertSSRDataToServers(ssrData),
-    [ssrData]
+    () => convertPublicLeasesToServers(snapshot.leases),
+    [snapshot.leases]
   );
 
-  return useList({
+  const list = useList({
     servers,
     storageKey: "serverFavorites",
   });
+
+  return {
+    ...list,
+    landingPageEnabled: snapshot.landingPageEnabled,
+  };
 }

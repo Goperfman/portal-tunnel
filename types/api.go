@@ -207,6 +207,11 @@ type TunnelStatusResponse struct {
 	ServiceAlive bool   `json:"service_alive"`
 }
 
+type PublicSnapshotResponse struct {
+	Leases             []Lease `json:"leases,omitempty"`
+	LandingPageEnabled bool    `json:"landing_page_enabled"`
+}
+
 type WalletAuthChallengeRequest struct {
 	Address string `json:"address"`
 }
@@ -224,6 +229,7 @@ type WalletAuthLoginRequest struct {
 }
 
 type WalletAuthLoginResponse struct {
+	AccessToken   string `json:"access_token,omitempty"`
 	WalletAddress string `json:"wallet_address,omitempty"`
 }
 
@@ -260,17 +266,12 @@ type AdminBPSRequest struct {
 	BPS int64 `json:"bps"`
 }
 
-type AdminUDPSettingsRequest struct {
+type AdminPortSettingsRequest struct {
 	Enabled   bool `json:"enabled"`
 	MaxLeases int  `json:"max_leases"`
 }
 
 type AdminUDPSettingsResponse struct {
-	Enabled   bool `json:"enabled"`
-	MaxLeases int  `json:"max_leases"`
-}
-
-type AdminTCPPortSettingsRequest struct {
 	Enabled   bool `json:"enabled"`
 	MaxLeases int  `json:"max_leases"`
 }

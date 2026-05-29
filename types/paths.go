@@ -4,13 +4,9 @@ const (
 	PathV1Sign             = "/v1/sign"
 	PathHealthz            = "/healthz"
 	PathRoot               = "/"
-	PathAssetsPrefix       = "/assets/"
-	PathApp                = "/app"
-	PathAppPrefix          = "/app/"
 	PathAdmin              = "/admin"
 	PathAdminPrefix        = "/admin/"
 	PathAdminSnapshot      = "/admin/snapshot"
-	PathAdminLeases        = "/admin/leases"
 	PathAdminLeasesPrefix  = "/admin/leases/"
 	PathAdminAuthChallenge = "/admin/auth/challenge"
 	PathAdminAuthLogin     = "/admin/auth/login"
@@ -25,6 +21,8 @@ const (
 	PathInstallPowerShell  = "/install.ps1"
 	PathInstallBinPrefix   = "/install/bin/"
 
+	PathPublicSnapshot = "/api/public/snapshot"
+
 	PathAgentPrefix        = "/v1/agent"
 	PathAgentStatus        = PathAgentPrefix + "/status"
 	PathAgentShutdown      = PathAgentPrefix + "/shutdown"
@@ -38,7 +36,6 @@ const (
 	PathTunnelStatus    = "/tunnel/status"
 	PathThumbnailPrefix = "/thumbnail/"
 
-	PathSDKPrefix            = "/sdk/"
 	PathSDKDomain            = "/sdk/domain"
 	PathSDKRegisterChallenge = "/sdk/register/challenge"
 	PathSDKRegister          = "/sdk/register"
