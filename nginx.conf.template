@@ -10,8 +10,6 @@
 # The browser-facing certificate is read from ./.portal-certs by docker-compose.
 # That is the same default directory used by the relay certificate.
 
-include /usr/share/nginx/modules/*.conf;
-
 events {
     worker_connections 4096;
 }

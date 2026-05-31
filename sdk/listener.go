@@ -592,7 +592,8 @@ func (l *listener) openReverseSession(ctx context.Context) (net.Conn, error) {
 		Header: make(http.Header),
 	}
 	req.Header.Set(types.HeaderAccessToken, lease.accessToken)
-	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "raw")
 
 	if writeErr := req.Write(conn); writeErr != nil {
 		_ = conn.Close()
@@ -607,7 +608,7 @@ func (l *listener) openReverseSession(ctx context.Context) (net.Conn, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusSwitchingProtocols {
 		apiErr := utils.DecodeAPIRequestError(resp)
 		_ = conn.Close()
 		return nil, apiErr
