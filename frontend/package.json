@@ -6,15 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:api": "tsc -p tsconfig.api.json",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "preview": "vite preview",
-    "build:go": "cd .. && CGO_ENABLED=0 go build -o bin/relay-server ./cmd/relay-server/*.go",
-    "serve": "npm run build && npm run build:go && STATIC_DIR=./cmd/relay-server/dist ../bin/relay-server"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",

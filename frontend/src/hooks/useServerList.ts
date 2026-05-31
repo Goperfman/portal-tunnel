@@ -1,13 +1,19 @@
-import { useMemo } from "react";
-import { useSSRData } from "@/hooks/useSSRData";
-import type { PublicLeaseData } from "@/hooks/useSSRData";
+import { useEffect, useMemo, useState } from "react";
 import { useList, type BaseServer } from "@/hooks/useList";
-import { parseLeaseMetadata } from "@/lib/metadata";
+import { apiClient } from "@/lib/apiClient";
+import { API_PATHS } from "@/lib/apiPaths";
+import { parseLeaseMetadata, resolveLeaseThumbnail } from "@/lib/metadata";
+import type { Lease, PublicStateResponse } from "@/types/api";
 
-function convertSSRDataToServers(ssrData: PublicLeaseData[]): BaseServer[] {
-  return ssrData.map((row) => {
-    const metadata = parseLeaseMetadata(row.Metadata);
-    const hostname = row.Hostname || "";
+type PublicState = {
+  leases: Lease[];
+  landingPageEnabled: boolean;
+};
+
+function convertPublicLeasesToServers(leases: Lease[]): BaseServer[] {
+  return leases.map((row) => {
+    const metadata = parseLeaseMetadata(row.metadata);
+    const hostname = row.hostname || "";
     const serviceName = row.name || "";
 
     return {
@@ -15,27 +21,63 @@ function convertSSRDataToServers(ssrData: PublicLeaseData[]): BaseServer[] {
       name: serviceName || hostname || "(unnamed)",
       description: metadata.description || "",
       tags: metadata.tags,
-      thumbnail: metadata.thumbnail || "",
+      thumbnail: resolveLeaseThumbnail(metadata, hostname),
       owner: metadata.owner || "",
-      online: (row.Ready || 0) > 0,
+      online: (row.ready || 0) > 0,
       dns: hostname,
       link: hostname ? `https://${hostname}/` : "",
-      lastUpdated: row.LastSeenAt || undefined,
-      firstSeen: row.FirstSeenAt || undefined,
+      lastUpdated: row.last_seen_at || undefined,
+      firstSeen: row.first_seen_at || undefined,
     };
   });
 }
 
 export function useServerList() {
-  const ssrData = useSSRData();
+  const [publicState, setPublicState] = useState<PublicState>({
+    leases: [],
+    landingPageEnabled: false,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const data = await apiClient.get<PublicStateResponse>(
+          API_PATHS.public.state
+        );
+        if (cancelled) {
+          return;
+        }
+        setPublicState({
+          leases: Array.isArray(data?.leases) ? data.leases : [],
+          landingPageEnabled: data?.landing_page_enabled ?? false,
+        });
+      } catch (error) {
+        console.error("Failed to load public relay state", error);
+        if (!cancelled) {
+          setPublicState({ leases: [], landingPageEnabled: false });
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const servers: BaseServer[] = useMemo(
-    () => convertSSRDataToServers(ssrData),
-    [ssrData]
+    () => convertPublicLeasesToServers(publicState.leases),
+    [publicState.leases]
   );
 
-  return useList({
+  const list = useList({
     servers,
     storageKey: "serverFavorites",
   });
+
+  return {
+    ...list,
+    landingPageEnabled: publicState.landingPageEnabled,
+  };
 }

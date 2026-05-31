@@ -1,47 +1,45 @@
-# Portal relay + multiple services — docker compose deployment example.
+# Portal relay + multiple services - docker compose deployment example.
 #
-# This example shows how to run Portal alongside other web services
-# behind a single nginx instance on the same host.
+# This example runs Portal alongside other web services behind one nginx.
 #
 # Architecture:
 #   nginx:443 (L4 stream, ssl_preread)
-#     ├─ portal.example.com    → host.docker.internal:4017  (TLS passthrough, admin/API)
-#     ├─ *.portal.example.com  → host.docker.internal:4443  (TLS passthrough, tenant SNI)
-#     └─ everything else       → nginx:8443   (L7, TLS termination)
-#           ├─ app-a.example.com → app-a-frontend:3000 / app-a-api:8000
-#           └─ app-b.example.com → app-b-frontend:3000 / app-b-api:8001
+#     - portal.example.com    -> nginx:8443 (L7 path split)
+#         - relay-owned API paths -> portal:${API_PORT:-4017} (portal, HTTPS, Docker network only)
+#         - presentation API paths -> portal-api:8081 (HTTP)
+#         - frontend/UI paths     -> portal-frontend:8080 (HTTP)
+#     - *.portal.example.com  -> portal:443 (portal SNI passthrough, Docker network only)
+#     - everything else       -> nginx:8443 (L7 for other apps)
 #
 # Prerequisites:
 #   1. Copy .env.example to .env and set all required values.
 #   2. Place TLS certificates in ./certs/:
-#        - Portal root-domain certs: either managed by portal (set ACME_DNS_PROVIDER)
-#          or mounted manually into ./.portal-certs as fullchain.pem/privatekey.pem
-#        - Other services: app_a_fullchain.pem, app_a_privkey.pem, etc.
-#   3. Create the .portal-certs directory with correct ownership (UID 65532 = nonroot in distroless):
-#        mkdir -p ./.portal-certs
+#        - portal_fullchain.pem, portal_privkey.pem for portal.example.com
+#        - app_a_fullchain.pem, app_a_privkey.pem for app-a.example.com
+#        - app_b_fullchain.pem, app_b_privkey.pem for app-b.example.com
+#      Portal also needs API TLS material in ./.portal-certs unless ACME_DNS_PROVIDER is configured.
+#   3. Create the .portal-certs directory with correct ownership (UID 65532 = nonroot).
+#      Frontend presentation state is stored under ./.portal-certs/frontend-state:
+#        mkdir -p ./.portal-certs/frontend-state
 #        sudo chown 65532:65532 ./.portal-certs
 #        chmod 755 ./.portal-certs
 #   4. Start all services:
 #        docker compose up -d
 
 services:
-
-  # ─── nginx ──────────────────────────────────────────────────────────────────
-  # Single entry point for all traffic (ports 80/443).
-  # Routes portal traffic via L4 SNI passthrough.
-  # Terminates TLS and proxies for all other services via L7.
   nginx:
     image: nginx:stable-alpine
     container_name: nginx
     ports:
       - "80:80"
       - "443:443"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./certs:/etc/certs:ro
     depends_on:
+      - portal
+      - portal-frontend
+      - portal-api
       - app-a-api
       - app-a-frontend
     restart: unless-stopped
@@ -50,32 +48,21 @@ services:
       - app-a-network
       - app-b-network
 
-  # ─── headless-shell (optional thumbnail screenshot sidecar) ─────────────────
-  # Uncomment to enable auto-generated thumbnails for tunnel apps.
+  # Optional: uncomment to enable auto-generated thumbnails for tunnel apps.
   # See docs/src/routes/deployment/+page.md for details.
   # headless-shell:
   #   image: chromedp/headless-shell:stable
   #   restart: unless-stopped
 
-  # ─── portal relay ───────────────────────────────────────────────────────────
-  # NAT-traversal relay server.
-  # TCP (4017, 4443) is reached by nginx via host.docker.internal.
-  # SNI_PORT is 4443 to avoid conflicting with nginx on 443.
-  # If you enable UDP, expose SNI_PORT/udp and MIN_PORT-MAX_PORT/udp as well.
-  # If you enable raw TCP transport, expose MIN_PORT-MAX_PORT/tcp as well.
   portal:
     image: ghcr.io/gosuda/portal:latest
     container_name: portal
-    # depends_on:
-    #   - headless-shell
     ports:
-      - "${API_PORT:-4017}:${API_PORT:-4017}/tcp"
-      - "${SNI_PORT:-4443}:${SNI_PORT:-4443}/tcp"
       - "${WIREGUARD_PORT:-51820}:${WIREGUARD_PORT:-51820}/udp"
-      # Uncomment below when enabling UDP transport (host SNI_PORT/udp is free — nginx only uses 443/tcp):
-      # - "${SNI_PORT:-4443}:${SNI_PORT:-4443}/udp"
+      # Uncomment when enabling UDP transport:
+      # - "${SNI_PORT:-443}:${SNI_PORT:-443}/udp"
       # - "${MIN_PORT:-40000}-${MAX_PORT:-40009}:${MIN_PORT:-40000}-${MAX_PORT:-40009}/udp"
-      # Uncomment below when enabling raw TCP port transport:
+      # Uncomment when enabling raw TCP port transport:
       # - "${MIN_PORT:-40000}-${MAX_PORT:-40009}:${MIN_PORT:-40000}-${MAX_PORT:-40009}"
     stop_grace_period: 30s
     environment:
@@ -84,16 +71,15 @@ services:
       DISCOVERY: ${DISCOVERY:-true}
       WIREGUARD_PORT: ${WIREGUARD_PORT:-51820}
       API_PORT: ${API_PORT:-4017}
-      SNI_PORT: ${SNI_PORT:-4443}
+      SNI_PORT: ${SNI_PORT:-443}
       IDENTITY_PATH: ${IDENTITY_PATH:-/portal-certs}
       MIN_PORT: ${MIN_PORT:-0}
       MAX_PORT: ${MAX_PORT:-0}
       UDP_ENABLED: ${UDP_ENABLED:-false}
       TCP_ENABLED: ${TCP_ENABLED:-false}
-      LANDING_PAGE_ENABLED: ${LANDING_PAGE_ENABLED:-false}
-      # HEADLESS_SHELL_URL: ${HEADLESS_SHELL_URL:-ws://headless-shell:9222}
+      ADMIN_WALLETS: ${ADMIN_WALLETS:-}
       TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
-      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-127.0.0.0/8}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
       ACME_DNS_PROVIDER: ${ACME_DNS_PROVIDER:-}
       ENS_GASLESS_ENABLED: ${ENS_GASLESS_ENABLED:-false}
       CLOUDFLARE_TOKEN: ${CLOUDFLARE_TOKEN:-}
@@ -116,18 +102,39 @@ services:
       # - ./gcp-dns.json:/run/secrets/gcp-dns.json:ro
     restart: unless-stopped
 
-  # ─── App A: backend ─────────────────────────────────────────────────────────
-  # Replace with your actual backend service image and config.
+  portal-frontend:
+    image: ghcr.io/gosuda/portal-frontend:latest
+    container_name: portal-frontend
+    depends_on:
+      - portal
+      - portal-api
+    restart: unless-stopped
+
+  portal-api:
+    image: ghcr.io/gosuda/portal-api:latest
+    container_name: portal-api
+    depends_on:
+      - portal
+      # Uncomment with the headless-shell service above to enable generated screenshots.
+      # - headless-shell
+    environment:
+      PORT: 8081
+      PORTAL_API_BASE_URL: "https://portal:${API_PORT:-4017}"
+      LANDING_PAGE_ENABLED: ${LANDING_PAGE_ENABLED:-false}
+      PORTAL_FRONTEND_STATE_PATH: /frontend-state/state.json
+      HEADLESS_SHELL_URL: ${HEADLESS_SHELL_URL:-}
+      # HEADLESS_SHELL_URL: ${HEADLESS_SHELL_URL:-ws://headless-shell:9222}
+    volumes:
+      - ./.portal-certs/frontend-state:/frontend-state
+    restart: unless-stopped
+
   app-a-api:
     image: your-registry/app-a-api:latest
     container_name: app-a-api
-    # environment:
-    #   - DATABASE_URL=...
     restart: unless-stopped
     networks:
       - app-a-network
 
-  # ─── App A: frontend ────────────────────────────────────────────────────────
   app-a-frontend:
     image: your-registry/app-a-frontend:latest
     container_name: app-a-frontend
@@ -137,8 +144,6 @@ services:
     depends_on:
       - app-a-api
 
-  # ─── App B: backend ─────────────────────────────────────────────────────────
-  # Replace with your actual backend service image and config.
   app-b-api:
     image: your-registry/app-b-api:latest
     container_name: app-b-api
@@ -146,15 +151,12 @@ services:
     networks:
       - app-b-network
 
-  # ─── App B: frontend ────────────────────────────────────────────────────────
   app-b-frontend:
     image: your-registry/app-b-frontend:latest
     container_name: app-b-frontend
     restart: unless-stopped
     networks:
       - app-b-network
-    depends_on:
-      - app-b-api
 
 networks:
   app-a-network:

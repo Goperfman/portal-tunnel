@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 interface ServerDetailState {
-  id: number;
+  id: string;
   name: string;
   description: string;
   tags: string[];

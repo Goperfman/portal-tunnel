@@ -73,7 +73,7 @@ docker compose up -d
 | `PORTAL_URL` | `https://localhost:4017` | Public base URL of your relay. Tunnels use this to register. |
 | `API_PORT` | `4017` | Admin/API server port. |
 | `SNI_PORT` | `443` | TCP SNI router port for tunnel traffic. |
-| `IDENTITY_PATH` | `./.portal-certs` | Relay state directory containing `identity.json`, `admin_settings.json`, and TLS materials. |
+| `IDENTITY_PATH` | `./.portal-certs` | Relay state directory containing `identity.json`, `policy.json`, and TLS materials. |
 
 ## Connecting Your Tunnel
 

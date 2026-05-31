@@ -9,7 +9,7 @@ export function Admin() {
     isAuthenticated,
     isLoading: authLoading,
     checkAuth,
-  } = useAuth("admin");
+  } = useAuth();
 
   const {
     servers,

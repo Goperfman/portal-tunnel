@@ -7,9 +7,9 @@ import (
 )
 
 const (
-	IdentityKeySeparator       = ":"
-	RelayIdentityFilename      = "identity.json"
-	RelayAdminSettingsFilename = "admin_settings.json"
+	IdentityKeySeparator  = ":"
+	RelayIdentityFilename = "identity.json"
+	RelayPolicyFilename   = "policy.json"
 )
 
 type Identity struct {
@@ -78,29 +78,29 @@ func (m LeaseMetadata) Copy() LeaseMetadata {
 }
 
 type Lease struct {
-	Name        string `json:"name,omitempty"`
-	ExpiresAt   time.Time
-	FirstSeenAt time.Time
-	LastSeenAt  time.Time
-	Hostname    string
-	UDPEnabled  bool
-	TCPEnabled  bool
-	TCPAddr     string
-	Metadata    LeaseMetadata
-	Ready       int
+	Name        string        `json:"name,omitempty"`
+	ExpiresAt   time.Time     `json:"expires_at"`
+	FirstSeenAt time.Time     `json:"first_seen_at"`
+	LastSeenAt  time.Time     `json:"last_seen_at"`
+	Hostname    string        `json:"hostname"`
+	UDPEnabled  bool          `json:"udp_enabled,omitempty"`
+	TCPEnabled  bool          `json:"tcp_enabled,omitempty"`
+	TCPAddr     string        `json:"tcp_addr,omitempty"`
+	Metadata    LeaseMetadata `json:"metadata"`
+	Ready       int           `json:"ready"`
 }
 
-type AdminLease struct {
+type PolicyLease struct {
 	Lease
 	IdentityKey string `json:"identity_key,omitempty"`
 	Address     string `json:"address,omitempty"`
-	BPS         int64
-	ClientIP    string
-	ReportedIP  string
-	IsApproved  bool
-	IsBanned    bool
-	IsDenied    bool
-	IsIPBanned  bool
+	BPS         int64  `json:"bps"`
+	ClientIP    string `json:"client_ip"`
+	ReportedIP  string `json:"reported_ip,omitempty"`
+	IsApproved  bool   `json:"is_approved"`
+	IsBanned    bool   `json:"is_banned"`
+	IsDenied    bool   `json:"is_denied"`
+	IsIPBanned  bool   `json:"is_ip_banned"`
 }
 
 type RelayDescriptor struct {

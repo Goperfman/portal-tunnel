@@ -1,4 +1,5 @@
 import { APIClientError, apiClient } from "@/lib/apiClient";
+import { writeAdminAuthToken } from "@/lib/adminAuthToken";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 function jsonResponse(payload: unknown, init?: ResponseInit): Response {
@@ -13,8 +14,10 @@ describe("apiClient", () => {
   const fetchMock = vi.fn();
 
   beforeEach(() => {
+    vi.unstubAllEnvs();
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    localStorage.clear();
   });
 
   it("returns data when API envelope is ok", async () => {
@@ -29,6 +32,17 @@ describe("apiClient", () => {
     expect(init.method).toBe("GET");
     expect(init.credentials).toBe("same-origin");
     expect(init.headers).toEqual({ Accept: "application/json" });
+  });
+
+  it("preserves API base URL subpaths", async () => {
+    vi.stubEnv("VITE_PORTAL_API_BASE_URL", "https://portal.example.com/api");
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ ok: true, data: { status: "ok" } }),
+    );
+
+    await apiClient.get("/state");
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://portal.example.com/api/state");
   });
 
   it("rejects successful non-envelope JSON payloads", async () => {
@@ -131,7 +145,7 @@ describe("apiClient", () => {
     } satisfies Partial<APIClientError>);
   });
 
-  it("sends JSON bodies for post and omits content-type for delete without body", async () => {
+  it("sends JSON bodies for post", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, data: {} }));
     await apiClient.post("/api/post", { id: 1 });
 
@@ -142,14 +156,36 @@ describe("apiClient", () => {
       Accept: "application/json",
       "Content-Type": "application/json",
     });
+  });
 
+  it("sends bearer token for admin API calls", async () => {
+    writeAdminAuthToken("admin-token");
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, data: {} }));
-    await apiClient.delete("/api/post");
 
-    const deleteInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
-    expect(deleteInit.method).toBe("DELETE");
-    expect(deleteInit.headers).toEqual({
+    await apiClient.post("/admin/auth/logout");
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.credentials).toBe("same-origin");
+    expect(init.headers).toEqual({
       Accept: "application/json",
+      Authorization: "Bearer admin-token",
+    });
+  });
+
+  it("sends bearer token for policy API calls", async () => {
+    writeAdminAuthToken("admin-token");
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, data: {} }));
+
+    await apiClient.post("/policy/leases", {
+      identity_key: "relay:0x1",
+      is_approved: true,
+    });
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.headers).toEqual({
+      Accept: "application/json",
+      Authorization: "Bearer admin-token",
+      "Content-Type": "application/json",
     });
   });
 });

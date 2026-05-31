@@ -1,37 +1,32 @@
-# Portal relay — nginx reverse proxy deployment example.
+# Portal relay + frontend - nginx reverse proxy deployment example.
 # Replace "portal.example.com" with your actual domain throughout.
 #
 # Architecture:
 #   nginx:443/tcp  (L4 stream, ssl_preread)
-#     ├─ portal.example.com    → 127.0.0.1:8443 (nginx L7, TLS termination) → 127.0.0.1:4017
-#     └─ *.portal.example.com  → 127.0.0.1:4443 (portal SNI, raw TCP passthrough)
-#   portal:4443/udp  (QUIC tunnel listener — shares SNI_PORT, only if UDP_ENABLED=true and a valid MIN_PORT/MAX_PORT range is configured)
-#   portal:MIN_PORT-MAX_PORT/udp  (per-lease UDP relay ports — only if UDP_ENABLED=true)
-#   portal:MIN_PORT-MAX_PORT/tcp  (per-lease raw TCP ports — only if TCP_ENABLED=true)
-#
-# If you enable UDP transport, expose SNI_PORT/udp and the shared lease
-# range as MIN_PORT-MAX_PORT/udp. If you enable raw TCP transport, expose the same
-# MIN_PORT-MAX_PORT range again over TCP.
+#     - portal.example.com    -> 127.0.0.1:8443 (nginx L7, TLS termination)
+#         - relay-owned API paths -> 127.0.0.1:${API_PORT:-4017} (portal, HTTPS, loopback only)
+#         - presentation API paths -> 127.0.0.1:8081 (portal-api, HTTP, loopback only)
+#         - frontend/UI paths     -> 127.0.0.1:8080 (portal-frontend, HTTP, loopback only)
+#     - *.portal.example.com  -> 127.0.0.1:4443 (portal SNI, raw TCP passthrough)
+#   portal:443/udp        (QUIC tunnel listener, only if UDP_ENABLED=true)
+#   portal:MIN-MAX/udp    (per-lease UDP relay ports, only if UDP_ENABLED=true)
+#   portal:MIN-MAX/tcp    (per-lease raw TCP ports, only if TCP_ENABLED=true)
 #
 # Prerequisites:
 #   1. Copy .env.example to .env and set all required values.
-#   2. Place your root-domain TLS certificate files in ./certs/:
+#   2. Place the root-domain TLS certificate files for nginx in ./certs/:
 #        ./certs/fullchain.pem
 #        ./certs/privkey.pem
-#      Portal can instead use ACME or manual fullchain.pem/privatekey.pem in ./.portal-certs.
-#   3. Create the .portal-certs directory with correct ownership (UID 65532 = nonroot in distroless):
-#        mkdir -p ./.portal-certs
+#   3. Create the .portal-certs directory with correct ownership (UID 65532 = nonroot).
+#      Frontend presentation state is stored under ./.portal-certs/frontend-state:
+#        mkdir -p ./.portal-certs/frontend-state
 #        sudo chown 65532:65532 ./.portal-certs
 #        chmod 755 ./.portal-certs
+#      Portal also needs API TLS material in ./.portal-certs unless ACME_DNS_PROVIDER is configured.
 #   4. Start all services:
 #        docker compose up -d
 
 services:
-
-  # ─── nginx ──────────────────────────────────────────────────────────────────
-  # Handles all inbound traffic on ports 80 and 443.
-  # L4 stream block routes by SNI; L7 http block terminates TLS for root domain.
-  # Host networking so 127.0.0.1 reaches portal (also on host network).
   nginx:
     image: nginx:stable-alpine
     container_name: nginx
@@ -41,34 +36,27 @@ services:
       - ./certs:/etc/nginx/certs:ro
     depends_on:
       - portal
+      - portal-frontend
+      - portal-api
     restart: unless-stopped
 
-  # ─── headless-shell (optional thumbnail screenshot sidecar) ─────────────────
-  # Uncomment to enable auto-generated thumbnails for tunnel apps.
+  # Optional: uncomment to enable auto-generated thumbnails for tunnel apps.
   # See docs/src/routes/deployment/+page.md for details.
   # headless-shell:
   #   image: chromedp/headless-shell:stable
   #   restart: unless-stopped
 
-  # ─── portal relay ───────────────────────────────────────────────────────────
-  # NAT-traversal relay server.
-  # TCP (4017, 4443) is reached by nginx via 127.0.0.1.
-  # SNI_PORT is set to 4443 to avoid conflicting with nginx on port 443.
-  # If you enable UDP, expose SNI_PORT/udp and MIN_PORT-MAX_PORT/udp as well.
-  # If you enable raw TCP transport, expose MIN_PORT-MAX_PORT/tcp as well.
   portal:
     image: ghcr.io/gosuda/portal:latest
     container_name: portal
-    # depends_on:
-    #   - headless-shell
     ports:
-      - "${API_PORT:-4017}:${API_PORT:-4017}/tcp"
-      - "${SNI_PORT:-4443}:${SNI_PORT:-4443}/tcp"
+      - "127.0.0.1:${API_PORT:-4017}:${API_PORT:-4017}/tcp"
+      - "127.0.0.1:4443:${SNI_PORT:-443}/tcp"
       - "${WIREGUARD_PORT:-51820}:${WIREGUARD_PORT:-51820}/udp"
-      # Uncomment below when enabling UDP transport (host SNI_PORT/udp is free — nginx only uses 443/tcp):
-      # - "${SNI_PORT:-4443}:${SNI_PORT:-4443}/udp"
+      # Uncomment when enabling UDP transport:
+      # - "${SNI_PORT:-443}:${SNI_PORT:-443}/udp"
       # - "${MIN_PORT:-40000}-${MAX_PORT:-40009}:${MIN_PORT:-40000}-${MAX_PORT:-40009}/udp"
-      # Uncomment below when enabling raw TCP port transport:
+      # Uncomment when enabling raw TCP port transport:
       # - "${MIN_PORT:-40000}-${MAX_PORT:-40009}:${MIN_PORT:-40000}-${MAX_PORT:-40009}"
     stop_grace_period: 30s
     environment:
@@ -76,23 +64,16 @@ services:
       BOOTSTRAPS: ${BOOTSTRAPS:-}
       DISCOVERY: ${DISCOVERY:-true}
       WIREGUARD_PORT: ${WIREGUARD_PORT:-51820}
-
-      # Listener ports (bound directly on host via host networking).
       API_PORT: ${API_PORT:-4017}
-      # Use a non-443 port to avoid conflict with nginx on the host.
-      SNI_PORT: ${SNI_PORT:-4443}
+      SNI_PORT: ${SNI_PORT:-443}
       IDENTITY_PATH: ${IDENTITY_PATH:-/portal-certs}
-
       MIN_PORT: ${MIN_PORT:-0}
       MAX_PORT: ${MAX_PORT:-0}
       UDP_ENABLED: ${UDP_ENABLED:-false}
       TCP_ENABLED: ${TCP_ENABLED:-false}
-
-      LANDING_PAGE_ENABLED: ${LANDING_PAGE_ENABLED:-false}
-      # HEADLESS_SHELL_URL: ${HEADLESS_SHELL_URL:-ws://headless-shell:9222}
+      ADMIN_WALLETS: ${ADMIN_WALLETS:-}
       TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
-      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-127.0.0.0/8}
-
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
       ACME_DNS_PROVIDER: ${ACME_DNS_PROVIDER:-}
       ENS_GASLESS_ENABLED: ${ENS_GASLESS_ENABLED:-false}
       CLOUDFLARE_TOKEN: ${CLOUDFLARE_TOKEN:-}
@@ -113,4 +94,34 @@ services:
       - ./.portal-certs:${IDENTITY_PATH:-/portal-certs}
       # Uncomment when using a Google Cloud service account file for gcloud automation.
       # - ./gcp-dns.json:/run/secrets/gcp-dns.json:ro
+    restart: unless-stopped
+
+  portal-frontend:
+    image: ghcr.io/gosuda/portal-frontend:latest
+    container_name: portal-frontend
+    depends_on:
+      - portal
+      - portal-api
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-8080}:8080"
+    restart: unless-stopped
+
+  portal-api:
+    image: ghcr.io/gosuda/portal-api:latest
+    container_name: portal-api
+    depends_on:
+      - portal
+      # Uncomment with the headless-shell service above to enable generated screenshots.
+      # - headless-shell
+    ports:
+      - "127.0.0.1:8081:8081"
+    environment:
+      PORT: 8081
+      PORTAL_API_BASE_URL: "https://portal:${API_PORT:-4017}"
+      LANDING_PAGE_ENABLED: ${LANDING_PAGE_ENABLED:-false}
+      PORTAL_FRONTEND_STATE_PATH: /frontend-state/state.json
+      HEADLESS_SHELL_URL: ${HEADLESS_SHELL_URL:-}
+      # HEADLESS_SHELL_URL: ${HEADLESS_SHELL_URL:-ws://headless-shell:9222}
+    volumes:
+      - ./.portal-certs/frontend-state:/frontend-state
     restart: unless-stopped

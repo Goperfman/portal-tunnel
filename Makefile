@@ -16,11 +16,11 @@ help:
 	@echo "  make fmt               - Apply gofmt/goimports"
 	@echo "  make lint-auto         - Run autofix lint/format pipeline"
 	@echo "  make test              - Run Go tests"
-	@echo "  make build             - Build everything (frontend, tunnel, server)"
+	@echo "  make build             - Build Go tunnel and relay server artifacts"
 	@echo "  make build-frontend    - Build React frontend (Tailwind CSS 4)"
 	@echo "  make build-docs        - Build documentation site (SvelteKit)"
 	@echo "  make build-tunnel      - Build portal-tunnel binaries"
-	@echo "  make build-server      - Build Go relay server (frontend built separately)"
+	@echo "  make build-server      - Build Go relay server"
 	@echo "  make run               - Run relay server"
 	@echo "  make clean             - Remove build artifacts"
 
@@ -61,12 +61,11 @@ run:
 	./bin/relay-server
 
 # Convenience target
-build: build-frontend build-tunnel build-server
+build: build-tunnel build-server
 
 # Build React frontend with Tailwind CSS 4
 build-frontend:
 	@echo "[frontend] building React frontend..."
-	@mkdir -p cmd/relay-server/dist/app
 	@cd frontend && npm i && npm run build
 	@echo "[frontend] build complete"
 
@@ -97,8 +96,8 @@ build-server:
 
 clean:
 	rm -rf bin
-	rm -rf cmd/relay-server/dist/app
 	rm -rf cmd/relay-server/dist/tunnel
+	rm -rf frontend/dist
 
 # Run the uniformity probe. Extra flags are passed through after the target name:
 #   make load-test -- -clients 1000 -relays 5

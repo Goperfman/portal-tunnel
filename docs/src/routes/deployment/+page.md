@@ -5,419 +5,248 @@ priority: P1
 ---
 
 <div class="not-prose mb-8 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300">
-  <strong>Advanced Documentation</strong> — This page covers production relay deployment for operators.
+  <strong>Advanced Documentation</strong> - This page covers production relay deployment for operators.
 </div>
 
 # Portal Relay Deployment Guide
 
-This guide covers the production steps for running Portal Relay on a public domain.
+This guide starts from the production topology. Read this as the source of truth for how the split relay, frontend, and presentation API are expected to be deployed.
 
-## 1. Prerequisites
+## 1. Production Topology
+
+The production deployment has four roles:
+
+| Role | Service or image | Publicly exposed | Owns |
+|---|---|---|---|
+| Public edge | `nginx` | yes, `443/tcp` | Public TLS termination, path routing, wildcard SNI passthrough |
+| Relay | `portal`, `ghcr.io/gosuda/portal` | no direct public API port | Relay API, wallet auth, policy enforcement, tunnel ingress |
+| Static frontend | `portal-frontend`, `ghcr.io/gosuda/portal-frontend` | no direct public port | SPA assets |
+| Presentation API | `portal-api`, `ghcr.io/gosuda/portal-api` | no direct public port | Frontend-owned state, policy composition, service status, thumbnails |
+
+Traffic should flow through one public HTTPS origin:
+
+```text
+Browser
+  -> https://portal.example.com
+  -> nginx public TLS edge
+      -> portal-frontend for SPA routes and assets
+      -> portal for relay-owned API paths
+      -> portal-api for presentation-owned API paths
+
+Tunnel clients and public app visitors
+  -> https://*.portal.example.com
+  -> nginx TCP passthrough
+  -> portal SNI listener
+```
+
+### Public Routing
+
+| Public request | nginx behavior | Upstream |
+|---|---|---|
+| `portal.example.com/`, `/admin`, SPA assets | Terminate TLS, HTTP proxy | `portal-frontend:8080` |
+| `/admin/auth/*`, `/sdk/*`, `/install.*`, `/discovery`, `/discovery/*`, `/healthz`, `/v1/sign`, `/x402/*` | Terminate TLS, HTTP proxy | `portal:4017` over HTTPS |
+| `/state`, `/policy/*`, `/service/status`, `/thumbnail/*` | Terminate TLS, HTTP proxy | `portal-api:8081` |
+| `*.portal.example.com` | Raw TCP passthrough with `ssl_preread` | `portal` SNI listener |
+
+The root relay host needs HTTP path routing, so it is not TCP-passthrough. Wildcard app hosts need TCP passthrough, so nginx must not terminate TLS for them.
+
+### Migration From Embedded Frontend
+
+Older deployments could run only `ghcr.io/gosuda/portal` because the relay served frontend assets. Current production deployment separates that into:
+
+- `portal` for relay API and tunnel ingress
+- `portal-frontend` for static SPA assets
+- `portal-api` for frontend-owned dynamic behavior
+- `nginx` as the public TLS edge
+
+Operators upgrading from the embedded frontend must deploy all three Portal images and route them through nginx. `PORTAL_URL` remains the browser-facing HTTPS origin, for example `https://portal.example.com`; do not set it to `localhost` or an internal Docker hostname for a public relay.
+
+### Security Boundary
+
+To keep the same practical security level as the embedded frontend deployment:
+
+- Public users reach the dashboard only through `https://portal.example.com`.
+- `portal:4017`, `portal-frontend:8080`, and `portal-api:8081` are not exposed directly to the internet.
+- Root-host API paths are HTTP reverse-proxied by nginx to either the relay API upstream or presentation API upstream.
+- Wildcard app hosts are TCP-passthrough to the relay SNI listener.
+- The nginx browser certificate and the relay API certificate are separate operational concerns unless you intentionally share the same certificate files.
+
+It is fine for nginx to terminate public TLS and then proxy to the relay API over HTTPS internally. That is two TLS legs. TCP passthrough is only for wildcard tunnel app hosts.
+
+## 2. Prerequisites
 
 You need:
 
-- A public domain, for example `example.com`
-- A public Linux server with a static public IPv4
-- Docker and Docker Compose
-- Optional for managed ACME DNS-01 automation and Portal-managed ECH HTTPS records: a supported DNS provider account for `cloudflare`, `gcloud`, `hetzner`, `njalla`, `route53`, or `vultr`
-- Open inbound ports:
-  - `443/tcp`
-  - `4017/tcp`
-  - optional for UDP transport:
-    - `SNI_PORT/udp`
-    - `MIN_PORT-MAX_PORT/udp` (see section 5)
-  - optional for raw TCP port transport:
-    - `MIN_PORT-MAX_PORT/tcp` (see section 5)
-
-## 2. Certificate and DNS Mode
-
-Choose one of these modes:
-
-- Manual certificate mode
-  - Leave `ACME_DNS_PROVIDER` empty.
-  - Place `fullchain.pem` and `privatekey.pem` in `IDENTITY_PATH`.
-  - Portal uses the files as-is and does not modify DNS or renew the certificate.
-- Manual certificate + gasless mode
-  - Place `fullchain.pem` and `privatekey.pem` in `IDENTITY_PATH`.
-  - Set `ACME_DNS_PROVIDER` to a DNSSEC-capable provider.
-  - Portal keeps the manual certificate files, skips ACME certificate issuance, and still uses the provider for ECH HTTPS records and DNSSEC + ENS TXT automation.
-- Managed ACME mode
-  - Set `ACME_DNS_PROVIDER` to `cloudflare`, `gcloud`, `hetzner`, `njalla`, `route53`, or `vultr`.
-  - Portal manages root/wildcard A records, ECH HTTPS records, and certificate renewal.
-  - ENS gasless additionally requires a DNSSEC-capable provider.
-
-If you only need a relay and do not need Portal-managed DNS or automatic renewal, manual certificate mode is the simplest option.
-
-## 3. Managed ACME Provider Setup
-
-### 3.1 Choose ACME DNS provider
-
-Set `ACME_DNS_PROVIDER` to one of:
-
-- `cloudflare`
-- `gcloud`
-- `hetzner`
-- `njalla`
-- `route53`
-- `vultr`
-
-For a focused explanation of wallet auth and ENS gasless DNS behavior, see
-[Wallet and ENS](/wallet-and-ens).
-
-### 3.2 Cloudflare setup
-
-#### Add domain to Cloudflare
-
-1. Cloudflare Dashboard -> `Websites` -> `Add a Site`
-2. Enter your domain, for example `example.com`
-3. Complete onboarding and apply Cloudflare nameservers at your registrar
-4. Wait until zone status is `Active`
-
-#### Create DNS records
-
-If `PORTAL_URL=https://example.com`, create:
-
-- `example.com -> <server-ip>`
-- `*.example.com -> <server-ip>`
-
-If you deploy on a non-apex host such as `PORTAL_URL=https://portal.example.com:8443`, create:
-
-- `portal.example.com -> <server-ip>`
-- `*.portal.example.com -> <server-ip>`
-
-Set both records as:
-
-- Type: `A`
-- Proxy status: `DNS only`
-
-#### Create Cloudflare API token
-
-Cloudflare Dashboard -> `My Profile` -> `API Tokens` -> `Create Token`
-
-Required permissions:
-
-- `Zone:Read`
-- `DNS:Edit`
-- optional when `ENS_GASLESS_ENABLED=true` and `ACME_DNS_PROVIDER=cloudflare`:
-  - `Zone Settings:Edit`
-
-Scope:
-
-- Limit the token to the target zone
-
-Save the token for `CLOUDFLARE_TOKEN`.
-
-### 3.3 Route53 setup
-
-Create or select a public hosted zone that covers your relay host.
-
-Provide Route53 write access through either:
-
-- static AWS credentials, or
-- ambient AWS credentials such as an instance role
-
-Static credential environment variables:
-
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
-- optional `AWS_SESSION_TOKEN`
-- `AWS_REGION`, for example `us-east-1`
-
-Optional:
-
-- `AWS_HOSTED_ZONE_ID`
-
-Equivalent relay flags:
-
-- `--aws-access-key-id`
-- `--aws-secret-access-key`
-- `--aws-session-token`
-- `--aws-region`
-- `--aws-hosted-zone-id`
-
-When `ENS_GASLESS_ENABLED=true` and `ACME_DNS_PROVIDER=route53` and the hosted zone does not already have an active Route53 key-signing key (KSK), also provide:
-
-- `AWS_DNSSEC_KMS_KEY_ARN`
-
-### 3.4 Google Cloud DNS setup
-
-Create or select a public Cloud DNS managed zone that covers your relay host.
-
-Portal uses standard Google Application Default Credentials (ADC) for both Cloud DNS API access and lego DNS-01. Examples:
-
-- `GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp-dns.json` with a mounted service account JSON file
-- an attached service account or workload identity on GCE, GKE, or Cloud Run
-
-Optional environment variables:
-
-- `GCP_PROJECT_ID`
-- `GCP_MANAGED_ZONE`
-- `GOOGLE_APPLICATION_CREDENTIALS`
-
-Equivalent relay flags:
-
-- `--gcp-project-id`
-- `--gcp-managed-zone`
-
-Notes:
-
-- `GCP_PROJECT_ID` is optional when ADC or GCE metadata already exposes the project id.
-- `GCP_MANAGED_ZONE` is optional, but useful when the credentials can edit a specific managed zone without permission to list all zones.
-- `GOOGLE_APPLICATION_CREDENTIALS` should point to the in-container path when you run Portal in Docker with a mounted service account JSON file.
-- Portal only targets public Cloud DNS managed zones.
-
-### 3.5 Hetzner DNS setup
-
-Create or select a Hetzner DNS zone that covers your relay host in Hetzner Console.
-
-Required environment variable:
-
-- `HETZNER_API_TOKEN`
-
-Equivalent relay flag:
-
-- `--hetzner-api-token`
-
-Notes:
-
-- The token needs permission to list DNS zones and edit RRSets for the target zone.
-- Hetzner uses `@` for apex records and relative names such as `www` or `*` for subdomains.
-- Hetzner DNS does not support provider-side DNSSEC signing, so ENS gasless automation is not supported with `ACME_DNS_PROVIDER=hetzner`.
-
-### 3.6 Vultr DNS setup
-
-Create or select a Vultr DNS domain that covers your relay host.
-
-Required environment variable:
-
-- `VULTR_API_KEY`
-
-Equivalent relay flag:
-
-- `--vultr-api-key`
-
-Notes:
-
-- The API key needs permission to list DNS domains, edit DNS records, and update DNSSEC for the target domain.
-- Vultr uses `@` for apex records and relative names such as `www` or `*` for subdomains.
-
-### 3.7 Njalla DNS setup
-
-Create or select a Njalla DNS domain that covers your relay host.
-
-Required environment variable:
-
-- `NJALLA_TOKEN`
-
-Equivalent relay flag:
-
-- `--njalla-token`
-
-Notes:
-
-- The token needs permission to list and edit DNS records for the target domain.
-- Njalla uses `@` for apex records and relative names such as `www` or `*` for subdomains.
-- Portal does not automate Njalla DNSSEC signing, so ENS gasless automation is not supported with `ACME_DNS_PROVIDER=njalla`.
-
-### 3.8 Optional ENS Gasless Automation
-
-Portal can optionally enable ENS gasless DNS import for the base domain and lease hostnames.
-
-- This is not required for normal Portal deployment.
-- Enable it only when you specifically need ENS gasless DNS import.
-- ENS gasless automation requires `ACME_DNS_PROVIDER`.
-- Portal uses that provider for both DNSSEC automation and ENS TXT create/delete.
-- If valid manual certificate files already exist in `IDENTITY_PATH`, Portal keeps using them and does not force ACME certificate issuance just because `ACME_DNS_PROVIDER` is set.
-- Cloudflare can enable zone signing directly, but some registrars still require publishing the returned DS record.
-- Google Cloud DNS can enable zone signing directly, but the registrar may still require publishing the returned DS record.
-- Route53 requires a compatible KMS key ARN when no active KSK already exists, and the registrar may still require the DS record.
-- Vultr can enable zone signing directly, but the registrar may still require publishing the returned DS record.
-- Hetzner and Njalla are supported for managed ACME DNS automation, but not for ENS gasless automation.
-- New lease hostnames such as `app.portal.example.com` are published automatically when they register and are cleaned up on unregister or expiry.
-- ENS gasless import still depends on DNSSEC being valid for the domain.
-- By default Portal writes `ENS1 0x238A8F792dFA6033814B18618aD4100654aeef01 <address>`.
-- The address is derived automatically from the relay identity for the base domain and from each lease identity for lease hostnames.
-- This enables offchain gasless DNSSEC usage in ENS-aware clients. It does not perform an onchain ENS claim transaction.
-- Portal can automate provider-side DNS changes, but registrar-side DS publication is not always automatable. Expect a manual registrar step unless your registrar publishes DS records automatically.
-- Keep `ENS_GASLESS_ENABLED=false` unless you intend to use ENS gasless DNS import.
-
-Typical rollout:
-
-1. Set `ACME_DNS_PROVIDER` and the provider credentials.
-2. Set `ENS_GASLESS_ENABLED=true`.
-3. Start Portal and confirm the log contains both `dnssec configured` and `ens gasless dns import configured`.
-4. If the DNSSEC state is `pending` or the provider returns a `DS` record, publish the returned `DS` record at your registrar and wait for propagation.
-5. Re-check until the provider DNSSEC state becomes `active` or `enabled`.
-6. Verify external resolution with an ENS-aware client after DNSSEC is active.
-
-Registrar DS publication:
-
-- Cloudflare, Google Cloud DNS, Route53, and Vultr can sign the zone and return the DS record, but they do not control your registrar unless the domain is registered with the same provider.
-- If your registrar is separate, you must copy the DS values from the provider into the registrar's DNSSEC or DS configuration screen.
-- Example: if the domain is registered at Namecheap and delegated to Cloudflare nameservers, enable DNSSEC in Cloudflare first, then add the Cloudflare DS record in Namecheap under the domain's `Advanced DNS` DNSSEC section.
-- Until the registrar publishes the DS record at the parent zone, provider status typically stays `pending` and ENS gasless resolution may fail even though Portal already wrote the `ENS1 ...` TXT record.
-
-Verification checklist:
-
-- Provider DNSSEC status is `active` or `enabled`.
-- `dig +short DS example.com` returns the DS record from the parent zone.
-- `dig +short TXT example.com` returns the `ENS1 ...` TXT record.
-- ENS-aware resolution returns the expected address for the base domain and each lease hostname.
-
-## 4. Run Relay Server
-
-### 4.1 Create `.env` at repository root
-
-Manual certificate example:
-
-```bash
-PORTAL_URL=https://example.com
-BOOTSTRAPS=https://bootstrap.example.com
-DISCOVERY=true
-WIREGUARD_PORT=51820
-IDENTITY_PATH=/portal-certs
-SNI_PORT=443
-ACME_DNS_PROVIDER=
-ENS_GASLESS_ENABLED=false
-```
-
-Place these files in `IDENTITY_PATH` before startup:
+- A public domain, for example `portal.example.com`.
+- A public Linux server with a static public IPv4.
+- Docker and Docker Compose.
+- DNS `A` records for the relay host and wildcard host:
 
 ```text
-/portal-certs/fullchain.pem
-/portal-certs/privatekey.pem
+portal.example.com   -> <server-ip>
+*.portal.example.com -> <server-ip>
 ```
 
-Manual certificate + gasless example:
+If you use Cloudflare, keep these records `DNS only`. Proxied records break the raw wildcard TCP passthrough path.
+
+Open only the public ports that match the topology:
+
+| Port | Required | Purpose |
+|---|---|---|
+| `80/tcp` | optional | HTTP to HTTPS redirect in the bundled nginx example |
+| `443/tcp` | yes | Public nginx edge for dashboard, relay API path routing, and wildcard TCP passthrough |
+| `WIREGUARD_PORT/udp` | when `DISCOVERY=true` | Relay discovery WireGuard transport |
+| `SNI_PORT/udp` | when UDP transport is enabled | QUIC tunnel ingress |
+| `MIN_PORT-MAX_PORT/udp` | when UDP lease transport is enabled | Public UDP lease ports |
+| `MIN_PORT-MAX_PORT/tcp` | when raw TCP lease transport is enabled | Public raw TCP lease ports |
+
+Keep these ports private or loopback-only in the recommended topology:
+
+| Port | Owner |
+|---|---|
+| `4017/tcp` | `portal` relay API |
+| `8080/tcp` | `portal-frontend` static server |
+| `8081/tcp` | `portal-api` presentation API |
+
+Certificate files are also split by owner:
+
+| Certificate | Default path in the example | Used by |
+|---|---|---|
+| Browser-facing HTTPS certificate | `./certs/fullchain.pem`, `./certs/privkey.pem` | nginx public edge |
+| Relay API and SNI certificate | `./.portal-certs/fullchain.pem`, `./.portal-certs/privatekey.pem` | `portal` unless managed ACME is configured |
+
+Portal-managed ACME can manage the relay certificate and relay DNS records. The bundled nginx example still expects a browser-facing certificate in `./certs`; manage that with your normal edge certificate process.
+
+## 3. Deploy the Recommended Stack
+
+Start from the single-domain nginx example:
 
 ```bash
-PORTAL_URL=https://example.com
-BOOTSTRAPS=https://bootstrap.example.com
+mkdir -p portal-deploy
+cd portal-deploy
+
+cp <repo>/docs/static/examples/nginx-proxy/docker-compose.yaml ./docker-compose.yaml
+cp <repo>/docs/static/examples/nginx-proxy/nginx.conf ./nginx.conf
+cp <repo>/docs/static/examples/nginx-proxy/.env.example ./.env
+cp <repo>/docs/static/examples/nginx-proxy/deploy_portal.sh ./deploy_portal.sh
+cp <repo>/docs/static/examples/nginx-proxy/watch_and_deploy.sh ./watch_and_deploy.sh
+cp <repo>/docs/static/examples/nginx-proxy/nginx_deploy.sh ./nginx_deploy.sh
+chmod +x deploy_portal.sh watch_and_deploy.sh nginx_deploy.sh
+```
+
+Replace every `portal.example.com` in `nginx.conf` and `.env`.
+
+For deployments with multiple additional services behind the same edge nginx, use `docs/static/examples/nginx-proxy-multi-service` instead. The same Portal routing rules apply.
+
+### Configure `.env`
+
+Minimal production baseline:
+
+```bash
+PORTAL_URL=https://portal.example.com
+BOOTSTRAPS=
 DISCOVERY=true
-WIREGUARD_PORT=51820
 IDENTITY_PATH=/portal-certs
+
+API_PORT=4017
 SNI_PORT=443
-ACME_DNS_PROVIDER=cloudflare
-CLOUDFLARE_TOKEN=cf_xxxxxxxxxxxxxxxxx
-ENS_GASLESS_ENABLED=true
-```
-
-In this mode, Portal keeps the manual certificate files but still manages DNSSEC and `ENS1 ...` TXT records through Cloudflare.
-
-Managed Cloudflare example:
-
-```bash
-PORTAL_URL=https://example.com
-BOOTSTRAPS=https://bootstrap.example.com
-DISCOVERY=true
 WIREGUARD_PORT=51820
-IDENTITY_PATH=/portal-certs
-SNI_PORT=443
-ACME_DNS_PROVIDER=cloudflare
-CLOUDFLARE_TOKEN=cf_xxxxxxxxxxxxxxxxx
+MIN_PORT=0
+MAX_PORT=0
+UDP_ENABLED=false
+TCP_ENABLED=false
+
+ACME_DNS_PROVIDER=
 ENS_GASLESS_ENABLED=false
-```
 
-Route53 example:
-
-```bash
-IDENTITY_PATH=/portal-certs
-ACME_DNS_PROVIDER=route53
-AWS_ACCESS_KEY_ID=AKIA...
-AWS_SECRET_ACCESS_KEY=...
-AWS_SESSION_TOKEN=...
-AWS_REGION=us-east-1
-# Optional override
-AWS_HOSTED_ZONE_ID=Z1234567890ABC
-# Required only for ENS gasless automation when no ACTIVE KSK already exists.
-AWS_DNSSEC_KMS_KEY_ARN=arn:aws:kms:...
-ENS_GASLESS_ENABLED=false
-```
-
-Google Cloud DNS example:
-
-```bash
-IDENTITY_PATH=/portal-certs
-ACME_DNS_PROVIDER=gcloud
-# Optional when ADC does not expose the project id directly.
-GCP_PROJECT_ID=my-gcp-project
-# Optional override when the credentials cannot list managed zones.
-GCP_MANAGED_ZONE=portal-example-com
-# Standard ADC when using a mounted service account file.
-GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp-dns.json
-ENS_GASLESS_ENABLED=false
-```
-
-Vultr example:
-
-```bash
-IDENTITY_PATH=/portal-certs
-ACME_DNS_PROVIDER=vultr
-VULTR_API_KEY=...
-ENS_GASLESS_ENABLED=false
-```
-
-Njalla example:
-
-```bash
-IDENTITY_PATH=/portal-certs
-ACME_DNS_PROVIDER=njalla
-NJALLA_TOKEN=...
-ENS_GASLESS_ENABLED=false
-```
-
-Hetzner example:
-
-```bash
-IDENTITY_PATH=/portal-certs
-ACME_DNS_PROVIDER=hetzner
-HETZNER_API_TOKEN=...
-ENS_GASLESS_ENABLED=false
-```
-
-Notes:
-
-- For non-apex deployments, set `PORTAL_URL` to the non-apex host value, for example `https://portal.example.com:8443`
-- Portal uses the `PORTAL_URL` host for public lease hostnames
-- `IDENTITY_PATH` stores the relay state directory inside the container
-- Portal stores `identity.json`, `admin_settings.json`, `fullchain.pem`, and `privatekey.pem` under `IDENTITY_PATH`
-- The Docker Compose stack stores relay state under `./.portal-certs` on the host
-
-Discovery settings:
-
-```bash
-DISCOVERY=true
-BOOTSTRAPS=https://bootstrap.example.com
-WIREGUARD_PORT=51820
-```
-
-- Open `WIREGUARD_PORT/udp` on the host or VM when discovery is enabled.
-- The relay always advertises the `PORTAL_URL` host for WireGuard discovery.
-- The relay identity address can sign in to the admin UI by default; use `ADMIN_WALLETS` to allow additional admin wallets.
-- The relay stores its WireGuard keypair in `IDENTITY_PATH/identity.json`. If that file has no WireGuard key yet, Portal generates one on first discovery startup and saves it back to that file.
-- `BOOTSTRAPS` should point at at least one existing relay when you want discovery to join a multi-relay mesh.
-
-If the relay sits behind a reverse proxy or ingress and you want admin/auth and lease IP tracking to use the original client IP, set:
-
-```bash
 TRUST_PROXY_HEADERS=true
+TRUSTED_PROXY_CIDRS=
+
+LANDING_PAGE_ENABLED=false
 ```
 
-If your proxy source addresses are public or you want a stricter allowlist, also set `TRUSTED_PROXY_CIDRS`.
+`API_PORT` defaults to `4017`. If you change it, update the `portal_api` upstream in the bundled `nginx.conf` to the same port. Keep `SNI_PORT=443` because this is the public SNI port advertised to tunnel clients. The single-domain Compose example maps the relay container's SNI listener to `127.0.0.1:4443` on the host so nginx can own public `443/tcp` and still pass wildcard TCP traffic to the relay. Do not open `4443/tcp` publicly; it is only a host-local upstream in that example.
 
-### 4.2 Start Relay
+If the relay joins public discovery, set `BOOTSTRAPS` to at least one reachable relay URL and keep `WIREGUARD_PORT/udp` open.
 
-When using the published Docker image, create the bind-mount directory first and make it writable by UID `65532` (`nonroot` in the distroless image):
+The relay identity wallet can always sign in through admin auth. Set `ADMIN_WALLETS` only when you need additional admin wallets.
+
+Leave `TRUSTED_PROXY_CIDRS` empty for the default private and loopback proxy ranges. Set it only when you need a stricter proxy source allowlist.
+
+### Prepare Certificates and State
+
+Create the state directories:
 
 ```bash
-mkdir -p ./.portal-certs
+mkdir -p ./.portal-certs/frontend-state ./certs
 sudo chown 65532:65532 ./.portal-certs
 chmod 755 ./.portal-certs
 ```
 
-If you use manual certificate mode, make sure `fullchain.pem` and `privatekey.pem` already exist in `./.portal-certs` before startup.
+Place the nginx browser certificate here:
 
-If you use `ACME_DNS_PROVIDER=gcloud` with a service account JSON file under Docker Compose, mount the file into the container and set `GOOGLE_APPLICATION_CREDENTIALS` to the in-container path. Example:
+```text
+./certs/fullchain.pem
+./certs/privkey.pem
+```
+
+In manual relay certificate mode, also place the relay certificate here before startup:
+
+```text
+./.portal-certs/fullchain.pem
+./.portal-certs/privatekey.pem
+```
+
+You may use the same certificate material for nginx and the relay when it covers both `portal.example.com` and `*.portal.example.com`; keep the filenames expected by each service.
+
+When `ACME_DNS_PROVIDER` is configured, Portal can create and renew the relay certificate under `IDENTITY_PATH`. That does not remove nginx's need for its own browser-facing certificate under `./certs`.
+
+### Start and Verify
+
+Start the stack:
+
+```bash
+docker compose up -d
+```
+
+Verify the public edge:
+
+```bash
+curl -I https://portal.example.com
+docker compose ps
+```
+
+Expected service names in the recommended stack:
+
+- `nginx`
+- `portal`
+- `portal-frontend`
+- `portal-api`
+
+If `https://portal.example.com` loads the dashboard and tunnel app hosts under `*.portal.example.com` reach the relay, the topology is correct.
+
+## 4. Certificate and DNS Automation
+
+Choose one certificate and DNS mode for the relay.
+
+| Mode | `ACME_DNS_PROVIDER` | Relay cert source | DNS automation |
+|---|---|---|---|
+| Manual certificate | empty | `IDENTITY_PATH/fullchain.pem` and `IDENTITY_PATH/privatekey.pem` | none |
+| Manual certificate plus gasless DNS | DNSSEC-capable provider | manual files | ENS TXT and DNSSEC automation |
+| Managed ACME | supported provider | Portal-managed ACME DNS-01 | root/wildcard A records, ECH HTTPS records, relay cert renewal |
+
+Supported provider values:
+
+| Provider | Required environment | ENS gasless support |
+|---|---|---|
+| `cloudflare` | `CLOUDFLARE_TOKEN` | yes |
+| `gcloud` | Google ADC, optionally `GCP_PROJECT_ID`, `GCP_MANAGED_ZONE`, `GOOGLE_APPLICATION_CREDENTIALS` | yes |
+| `route53` | AWS credentials or instance role, optionally `AWS_HOSTED_ZONE_ID` | yes, needs an active KSK or `AWS_DNSSEC_KMS_KEY_ARN` |
+| `vultr` | `VULTR_API_KEY` | yes |
+| `hetzner` | `HETZNER_API_TOKEN` | no |
+| `njalla` | `NJALLA_TOKEN` | no |
+
+For `gcloud` with a service account file under Docker Compose, mount the file and point `GOOGLE_APPLICATION_CREDENTIALS` at the in-container path:
 
 ```yaml
 services:
@@ -429,54 +258,57 @@ services:
       - ./gcp-dns.json:/run/secrets/gcp-dns.json:ro
 ```
 
-Then start the stack:
+### ENS Gasless Automation
+
+ENS gasless DNS import is optional and not required for normal relay operation.
+
+Enable it only when you need ENS-aware clients to resolve Portal domains through gasless DNSSEC import:
 
 ```bash
-docker compose up -d
+ACME_DNS_PROVIDER=cloudflare
+CLOUDFLARE_TOKEN=cf_xxxxxxxxxxxxxxxxx
+ENS_GASLESS_ENABLED=true
 ```
 
-## 5. Optional UDP and Raw TCP Port Setup
+Operational notes:
 
-UDP transport and raw TCP port transport are disabled by default.
+- ENS gasless requires `ACME_DNS_PROVIDER`.
+- Portal writes `ENS1 0x238A8F792dFA6033814B18618aD4100654aeef01 <address>` TXT records.
+- The base domain uses the relay identity address; lease hostnames use each lease identity address.
+- Provider-side DNSSEC automation is not the same as registrar-side DS publication.
+- If the provider returns a `DS` record or reports DNSSEC as pending, publish the DS record at your registrar and wait for parent-zone propagation.
+- Keep `ENS_GASLESS_ENABLED=false` unless you intentionally use this feature.
 
-### 5.1 Open transport ports on your VM or host
-
-Open these ports in your cloud security group or firewall:
-
-- `WIREGUARD_PORT/udp` when discovery is enabled
-- `SNI_PORT/udp`
-- `MIN_PORT-MAX_PORT/udp` when UDP transport is enabled
-- `MIN_PORT-MAX_PORT/tcp` when raw TCP port transport is enabled
-
-Example with `MIN_PORT=40000` and `MAX_PORT=40009`:
+Verification checklist:
 
 ```bash
+dig +short DS portal.example.com
+dig +short TXT portal.example.com
+```
+
+Provider DNSSEC should be active, and the TXT response should include the `ENS1 ...` value.
+
+## 5. Optional UDP and Raw TCP Transport
+
+UDP transport and raw TCP lease transport are disabled by default.
+
+Open these ports in your cloud security group or host firewall only when the matching feature is enabled:
+
+- `WIREGUARD_PORT/udp` when discovery is enabled.
+- `SNI_PORT/udp` when UDP tunnel ingress is enabled.
+- `MIN_PORT-MAX_PORT/udp` when UDP lease transport is enabled.
+- `MIN_PORT-MAX_PORT/tcp` when raw TCP lease transport is enabled.
+
+Example with `MIN_PORT=40000`, `MAX_PORT=40009`, and `SNI_PORT=443`:
+
+```bash
+sudo ufw allow 51820/udp
 sudo ufw allow 443/udp
 sudo ufw allow 40000:40009/udp
 sudo ufw allow 40000:40009/tcp
 ```
 
-### 5.2 Expose transport ports in Docker
-
-If you use `network_mode: host`, the container uses host transport ports directly.
-
-If you use bridge networking, map the ports explicitly in `docker-compose.yaml`:
-
-```yaml
-ports:
-  - "443:443/udp"
-  - "40000-40009:40000-40009/udp"
-  - "40000-40009:40000-40009"
-```
-
-Map `SNI_PORT/udp` on the host to the relay's UDP QUIC listener port in the container.
-UDP and raw TCP use the same numeric lease range independently, so when both transports are enabled you publish the same `MIN_PORT-MAX_PORT` range once for UDP and once for TCP.
-
-### 5.3 Configure Relay Transport Ports
-
-Set the shared lease range in `.env`, then enable the transports you want.
-
-Example:
+Configure the shared lease range in `.env`:
 
 ```bash
 MIN_PORT=40000
@@ -485,22 +317,19 @@ UDP_ENABLED=true
 TCP_ENABLED=true
 ```
 
-That allocates lease ports `40000-40009` for both UDP and raw TCP. The protocols are independent, so the same numeric port may be used on both transports at the same time.
-The SDK datagram backhaul always uses the relay `SNI_PORT`, even if `PORTAL_URL` uses `:4017` for the API.
+When using bridge networking, publish the same range in `docker-compose.yaml`:
 
-| Variable | Default | Description |
-|---|---|---|
-| `MIN_PORT` | `0` | Inclusive minimum lease port shared by UDP and raw TCP (`0` disables the range) |
-| `MAX_PORT` | `0` | Inclusive maximum lease port shared by UDP and raw TCP (`0` disables the range) |
-| `UDP_ENABLED` | `false` | Enable UDP relay transport |
-| `TCP_ENABLED` | `false` | Enable raw TCP port transport |
-| `SNI_PORT` | `443` | Public TCP SNI port and QUIC UDP port for relay ingress |
+```yaml
+ports:
+  - "${WIREGUARD_PORT:-51820}:${WIREGUARD_PORT:-51820}/udp"
+  - "${SNI_PORT:-443}:${SNI_PORT:-443}/udp"
+  - "${MIN_PORT:-40000}-${MAX_PORT:-40009}:${MIN_PORT:-40000}-${MAX_PORT:-40009}/udp"
+  - "${MIN_PORT:-40000}-${MAX_PORT:-40009}:${MIN_PORT:-40000}-${MAX_PORT:-40009}"
+```
 
-### 5.4 Enable transports in the admin panel
+UDP and raw TCP use the same numeric range independently, so the same number can be allocated once for UDP and once for TCP.
 
-After the relay starts, open `/admin`, enable UDP transport and/or TCP port transport, and set any lease limits you want to enforce.
-
-### 5.5 Optional Linux UDP buffer tuning
+After startup, enable UDP or raw TCP policy in the admin UI and set any lease limits you want to enforce.
 
 For better QUIC performance on Linux:
 
@@ -509,128 +338,63 @@ sudo sysctl -w net.core.rmem_max=7500000
 sudo sysctl -w net.core.wmem_max=7500000
 ```
 
-To persist this across reboots, add the values to `/etc/sysctl.conf` or a file in `/etc/sysctl.d/`.
+Persist those values in `/etc/sysctl.conf` or a file under `/etc/sysctl.d/` if needed.
 
-## 6. Optional Thumbnail Screenshots
+## 6. Frontend Presentation API
 
-Portal can automatically generate thumbnail screenshots for tunnel apps that don't provide their own. When a tunnel app registers without a `thumbnail` in its metadata, the relay captures a screenshot of the app's public page and serves it as a card background on the dashboard.
+`portal-api` is a small TypeScript service owned by the frontend deployment. It keeps frontend-specific behavior out of the Go relay.
 
-This feature is **disabled by default** and entirely optional. Without it, apps without a thumbnail simply show a gradient background.
+It owns:
 
-### 6.1 When to enable
+- `/state` composition with frontend-owned fields.
+- `/policy/*` composition, while relay-enforced policy changes are still forwarded to `portal`.
+- `/service/status`, derived from relay state for quick-start UI checks.
+- `/thumbnail/<hostname>`, when optional screenshot generation is enabled.
+- The landing-page flag persisted at `PORTAL_FRONTEND_STATE_PATH`; the bundled Compose files store it under `./.portal-certs/frontend-state/state.json`.
 
-Enable this feature when:
+The Go relay remains the owner of authentication, policy enforcement, lease state, tunnel ingress, install scripts, discovery, and x402 facilitator paths.
 
-- You want richer visual previews on the relay dashboard
-- Most of your tunnel apps don't set a custom thumbnail in their metadata
+### Thumbnail Screenshots
 
-Skip this feature when:
+Generated thumbnails are optional and disabled by default. Without this feature, apps without a custom thumbnail simply use the default card background.
 
-- You want the smallest possible deployment footprint
-- Tunnel apps already provide their own thumbnails
-- You're running on resource-constrained servers
+To enable generated thumbnails:
 
-### 6.2 How it works
+1. Uncomment the `headless-shell` service in `docker-compose.yaml`.
+2. Add `headless-shell` to `portal-api.depends_on`.
+3. Set `HEADLESS_SHELL_URL=ws://headless-shell:9222`.
+4. Restart with `docker compose up -d`.
 
-The relay uses a headless Chromium sidecar (`chromedp/headless-shell`, ~200 MB) to render tunnel app pages and capture screenshots. When a tunnel app registers:
+Expected log when a thumbnail is captured:
 
-1. If the app has no thumbnail and `HEADLESS_SHELL_URL` is configured, the relay queues a screenshot job.
-2. A single background worker connects to the headless Chromium via Chrome DevTools Protocol (CDP).
-3. The worker navigates to the app's public HTTPS URL, waits for the page to load, and captures a 1280×720 screenshot.
-4. The screenshot is JPEG-encoded and cached in memory (max 256 KB per image).
-5. On the next dashboard page load, the cached thumbnail is injected into the app's card.
-
-Screenshots are evicted when the lease expires or the app disconnects.
-
-### 6.3 Enable thumbnail screenshots
-
-**Step 1**: Uncomment the headless-shell service in `docker-compose.yml`:
-
-```yaml
-services:
-  headless-shell:
-    image: chromedp/headless-shell:stable
-    restart: unless-stopped
+```text
+thumbnail captured hostname=myapp.portal.example.com size=36209
 ```
 
-**Step 2**: Uncomment the `depends_on` in the portal service:
-
-```yaml
-  portal:
-    depends_on:
-      - headless-shell
-```
-
-**Step 3**: Uncomment and set `HEADLESS_SHELL_URL` in the portal environment:
-
-```yaml
-    environment:
-      HEADLESS_SHELL_URL: ${HEADLESS_SHELL_URL:-ws://headless-shell:9222}
-```
-
-Or set it in `.env`:
-
-```bash
-HEADLESS_SHELL_URL=ws://headless-shell:9222
-```
-
-**Step 4**: Restart the stack:
-
-```bash
-docker compose up -d
-```
-
-### 6.4 Verify
-
-After a tunnel app connects, check the relay logs for:
-
-```
-INF thumbnail captured hostname=myapp.portal.example.com size=36209
-```
-
-The thumbnail is then served at `/thumbnail/<hostname>` and displayed on the dashboard card.
-
-### 6.5 Disable
-
-Remove or comment out `HEADLESS_SHELL_URL` from `.env` or the docker-compose environment. The headless-shell container can also be removed. Without this variable, the feature is completely inactive with zero overhead.
-
-| Variable | Default | Description |
-|---|---|---|
-| `HEADLESS_SHELL_URL` | _(empty, disabled)_ | CDP WebSocket URL for headless Chromium sidecar (e.g. `ws://headless-shell:9222`) |
+Disable the feature by removing `HEADLESS_SHELL_URL` and stopping the `headless-shell` container.
 
 ## 7. Auto-Update
 
-Automatically redeploy when a new `ghcr.io/gosuda/portal:latest` image is pushed.
+Auto-update must pull all production images together:
 
-### 7.1 Deploy script
+- `ghcr.io/gosuda/portal:latest`
+- `ghcr.io/gosuda/portal-frontend:latest`
+- `ghcr.io/gosuda/portal-api:latest`
 
-Create `deploy_portal.sh` in your project directory:
+The bundled `deploy_portal.sh` pulls all Portal images together and reloads nginx after the services are updated:
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash
+set -e
 
-cd "$(dirname "$0")"
-
-docker compose pull
-docker compose up -d
+docker compose pull portal portal-frontend portal-api
+docker compose up -d portal portal-frontend portal-api
+bash nginx_deploy.sh
 ```
 
-### 7.2 Watcher script
+The bundled `watch_and_deploy.sh` polls remote image digests and runs the deploy script when any watched image changes.
 
-The repository includes `watch_and_deploy.sh`, which polls the remote image digest and runs the deploy script on change.
-
-Environment variables:
-
-| Variable | Default | Description |
-|---|---|---|
-| `INTERVAL` | `60` | Poll interval in seconds |
-| `DEPLOY_SCRIPT` | `deploy_portal.sh` | Path to deploy script |
-| `DIGEST_FILE` | `.portal_image_digest` | File storing the last known digest |
-
-### 7.3 Register as systemd service
-
-Set `WorkingDirectory` and `ExecStart` to the directory where `watch_and_deploy.sh` and `deploy_portal.sh` are located:
+Systemd example:
 
 ```bash
 sudo tee /etc/systemd/system/portal-watcher.service << 'EOF'
@@ -658,50 +422,38 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now portal-watcher
 ```
 
-Adjust `User` to match your environment. Ensure the user belongs to the `docker` group:
+Adjust `User` and paths to match your server. The service user must be able to run Docker.
 
-```bash
-sudo usermod -aG docker opc
-```
-
-### 7.4 Verify and monitor
+Monitor it with:
 
 ```bash
 sudo systemctl status portal-watcher
 sudo journalctl -u portal-watcher -f
-sudo journalctl -u portal-watcher --since today
 ```
 
 ## 8. Troubleshooting
 
-### 8.1 Ports blocked
+### `4017` Shows Only API
 
-Required inbound ports:
+That is expected. `4017/tcp` is the relay API, not the dashboard. Use `https://portal.example.com` through nginx for the production UI.
 
-- `443/tcp`
-- `4017/tcp`
-- optional for UDP:
-  - `SNI_PORT/udp`
-  - `MIN_PORT-MAX_PORT/udp`
-- optional for raw TCP:
-  - `MIN_PORT-MAX_PORT/tcp`
+### Frontend Logs Show Binary TLS Bytes and `400`
 
-UFW example with `MIN_PORT=40000` and `MAX_PORT=40009`:
+Logs like `"\x16\x03\x01..." 400` mean a client sent HTTPS to the plain HTTP `portal-frontend:8080` listener. Do not expose `8080` publicly. Put nginx with TLS in front of it.
 
-```bash
-sudo ufw allow 443/tcp
-sudo ufw allow 4017/tcp
-sudo ufw allow 443/udp
-sudo ufw allow 40000:40009/udp
-sudo ufw allow 40000:40009/tcp
-sudo ufw status
-```
+### Relay Logs Show `tls: unknown certificate`
 
-### 8.2 QUIC UDP buffer warnings
+This usually means a browser or proxy hit the relay API certificate directly instead of the public nginx certificate, or an upstream proxy tried to verify the relay's internal certificate. In the bundled nginx example, public browsers verify nginx's certificate, while nginx proxies to the relay API over internal HTTPS.
 
-If relay logs show `failed to sufficiently increase receive buffer size`, apply the sysctl settings from section 5.5.
+### Root Host Works but Wildcard Apps Fail
 
-### 8.3 Docker DNS resolution fails
+Check that `portal.example.com` is HTTP-proxied after TLS termination and that `*.portal.example.com` is TCP-passthrough to the relay SNI listener. Do not terminate TLS for wildcard app hosts in nginx.
+
+### Discovery Announce Is Rejected as Local-Only
+
+Public discovery rejects `PORTAL_URL` hosts such as `localhost`, `127.0.0.1`, `::1`, or other local-only names. Set `PORTAL_URL` to a publicly reachable HTTPS hostname.
+
+### Docker DNS Resolution Fails
 
 If logs show `discover bootstraps failed`, `sync dns records`, or `lookup <host> on 127.0.0.11:53: write: operation not permitted`, Docker is usually using the wrong host resolver config.
 
@@ -716,11 +468,17 @@ docker compose up -d
 Verify from the container:
 
 ```bash
-docker exec -it portal-1 nslookup api4.ipify.org
+docker run --rm --network container:portal busybox nslookup api4.ipify.org
 ```
 
-### 8.4 Discovery announce warnings
+### Ports Are Blocked
 
-If logs show `relay discovery announce failed` with `404 page not found`, the target bootstrap relay is running an older release or does not serve `/discovery/announce`. This is warning-only: direct `/discovery` polling and explicit relay URLs can still work. The warnings stop once bootstrap relays are upgraded or removed from `BOOTSTRAPS`.
+Confirm the required public ports are open:
 
-Discovery announce is relay-to-relay only. A relay whose `PORTAL_URL` host is `localhost`, `127.0.0.1`, `::1`, or another loopback/local host is rejected by `/discovery/announce` because other relays and users cannot route to it. To join public discovery, set `PORTAL_URL` to a publicly reachable HTTPS hostname and expose the required TCP/UDP ports.
+```bash
+sudo ufw allow 443/tcp
+sudo ufw allow 51820/udp
+sudo ufw status
+```
+
+Only add UDP and raw TCP lease ranges when those transports are enabled.

@@ -1,6 +1,6 @@
 ---
 title: SIWE Authentication
-description: How Portal uses SIWE for tunnel registration and wallet sessions.
+description: How Portal uses SIWE for tunnel registration and wallet login.
 ---
 
 # SIWE Authentication
@@ -8,7 +8,7 @@ description: How Portal uses SIWE for tunnel registration and wallet sessions.
 Portal uses Sign-In with Ethereum (SIWE) in two places:
 
 - tunnel registration, signed automatically by the local tunnel identity
-- browser wallet sessions for relay admin and optional local agent status access
+- browser wallet login for relay admin and optional local agent status access
 
 For the full operational guide, see [Wallet and ENS](/wallet-and-ens).
 
@@ -32,20 +32,20 @@ portal expose 3000 --name myapp
 There is no `--auth siwe` flag. SIWE is part of the normal registration
 protocol.
 
-## Wallet Sessions
+## Wallet Login
 
 The relay admin UI uses browser wallet login:
 
 1. request `/admin/auth/challenge`
 2. sign the returned SIWE message with the connected wallet
 3. submit `/admin/auth/login`
-4. use the resulting `portal_admin` session cookie
+4. use the returned `access_token` as `Authorization: Bearer <access_token>`
 
 The relay identity address is allowed by default. Add more admin wallets with
 `ADMIN_WALLETS`.
 
-The local agent also exposes `/v1/agent/auth/*` wallet endpoints. Agent wallet
-sessions can read `/v1/agent/status`; tunnel mutations still require the local
+The local agent also exposes `/agent/auth/*` wallet endpoints. Agent wallet
+sessions can read `/agent/status`; tunnel mutations still require the local
 bearer token stored in the agent state directory.
 
 ## ENS

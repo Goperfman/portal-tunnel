@@ -14,8 +14,8 @@ related, but they do not all mean "connect a browser wallet".
 |---------|--------------|---------|
 | Tunnel identity | Local `identity.json` secp256k1 private key, or BIP-39 mnemonic plus derivation path | Signs SIWE lease registration challenges |
 | Relay identity | Relay `IDENTITY_PATH/identity.json` secp256k1 private key, or BIP-39 mnemonic plus derivation path | Signs relay descriptors, admin default wallet, lease access tokens, and ENS base-domain address |
-| Relay admin wallet | Browser wallet address allowlist | Signs in to `/admin` with a SIWE wallet session |
-| Agent wallet | Optional browser wallet allowlist | Reads loopback agent status through `/v1/agent/status` |
+| Relay admin wallet | Browser wallet address allowlist | Signs in to `/admin` and receives an admin bearer token |
+| Agent wallet | Optional browser wallet allowlist | Reads loopback agent status through `/agent/status` |
 | ENS gasless DNS | DNSSEC plus `ENS1 ...` TXT records | Lets ENS-aware clients resolve the relay domain and lease hostnames to Portal identities |
 
 ## Tunnel SIWE Registration
@@ -56,8 +56,8 @@ name such as `alice.eth`.
 
 ## Relay Admin Wallet Login
 
-The relay admin UI uses browser wallet login. The relay creates a SIWE challenge
-for the connected wallet and sets a `portal_admin` session cookie after the
+The relay admin API uses browser wallet login. The relay creates a SIWE
+challenge for the connected wallet and returns an admin bearer token after the
 signature verifies.
 
 Allowed admin wallets:
@@ -83,20 +83,20 @@ Admin wallet flow:
 2. Sign the returned `siwe_message` in the browser wallet.
 3. `POST /admin/auth/login` with the challenge id, exact SIWE message, and
    signature.
-4. The relay sets an HttpOnly, Secure, SameSite=Strict session cookie.
-5. Admin endpoints require that session cookie.
+4. The relay returns an `access_token`.
+5. Admin endpoints require `Authorization: Bearer <access_token>`.
 
-Challenges expire after two minutes. Sessions expire after 24 hours.
+Challenges expire after two minutes. Admin bearer tokens expire after 24 hours.
 
 ## Agent Wallet Login
 
 The local agent also exposes SIWE wallet auth endpoints:
 
 ```text
-/v1/agent/auth/challenge
-/v1/agent/auth/login
-/v1/agent/auth/logout
-/v1/agent/auth/status
+/agent/auth/challenge
+/agent/auth/login
+/agent/auth/logout
+/agent/auth/status
 ```
 
 Agent wallet access is intentionally narrow:
@@ -104,7 +104,7 @@ Agent wallet access is intentionally narrow:
 - `agent.allowed_wallets` restricts which wallet addresses can sign in.
 - when `allowed_wallets` is empty, any wallet can sign in to the loopback auth
   endpoint.
-- wallet-authenticated requests can read `/v1/agent/status`.
+- wallet-authenticated requests can read `/agent/status`.
 - config mutation, tunnel changes, relay changes, shutdown, and multi-hop edits
   still require the bearer token in `<state_dir>/agent-endpoint.json`.
 
@@ -237,6 +237,6 @@ A lease hostname has no ENS TXT record:
 
 ## Next Steps
 
-- [Deployment](/deployment#38-optional-ens-gasless-automation): production setup
+- [Deployment](/deployment#ens-gasless-automation): production setup
 - [Security Model](/security-model): identity and TLS trust boundaries
 - [Portal Agent](/portal-agent): local durable tunnel management

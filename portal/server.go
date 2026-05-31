@@ -414,11 +414,11 @@ func (s *Server) PublicLeases() []types.Lease {
 	return s.registry.PublicLeases(time.Now())
 }
 
-func (s *Server) AdminLeases() []types.AdminLease {
+func (s *Server) PolicyLeases() []types.PolicyLease {
 	if s == nil || s.registry == nil {
 		return nil
 	}
-	return s.registry.AdminLeases(time.Now())
+	return s.registry.PolicyLeases(time.Now())
 }
 
 func (s *Server) RelayIdentity() types.RelayIdentity {

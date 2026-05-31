@@ -201,10 +201,8 @@ type ENSStatus struct {
 	LastError   string `json:"last_error,omitempty"`
 }
 
-type TunnelStatusResponse struct {
-	Hostname     string `json:"hostname"`
-	Registered   bool   `json:"registered"`
-	ServiceAlive bool   `json:"service_alive"`
+type PublicStateResponse struct {
+	Leases []Lease `json:"leases,omitempty"`
 }
 
 type WalletAuthChallengeRequest struct {
@@ -224,6 +222,7 @@ type WalletAuthLoginRequest struct {
 }
 
 type WalletAuthLoginResponse struct {
+	AccessToken   string `json:"access_token,omitempty"`
 	WalletAddress string `json:"wallet_address,omitempty"`
 }
 
@@ -232,50 +231,31 @@ type WalletAuthStatusResponse struct {
 	WalletAddress string `json:"wallet_address,omitempty"`
 }
 
-type AdminSnapshotResponse struct {
-	ApprovalMode       string                       `json:"approval_mode"`
-	LandingPageEnabled bool                         `json:"landing_page_enabled"`
-	Leases             []AdminLease                 `json:"leases,omitempty"`
-	UDP                AdminUDPSettingsResponse     `json:"udp"`
-	TCPPort            AdminTCPPortSettingsResponse `json:"tcp_port"`
+type PolicyStateResponse struct {
+	Policy PolicySettings `json:"policy"`
+	Leases []PolicyLease  `json:"leases,omitempty"`
 }
 
-type AdminApprovalModeRequest struct {
-	Mode string `json:"mode"`
+type PolicySettings struct {
+	ApprovalMode string             `json:"approval_mode"`
+	UDP          PolicyPortSettings `json:"udp"`
+	TCPPort      PolicyPortSettings `json:"tcp_port"`
 }
 
-type AdminApprovalModeResponse struct {
-	ApprovalMode string `json:"approval_mode"`
+type LeasePolicyUpdate struct {
+	IdentityKey string `json:"identity_key"`
+	BPS         *int64 `json:"bps,omitempty"`
+	IsApproved  *bool  `json:"is_approved,omitempty"`
+	IsBanned    *bool  `json:"is_banned,omitempty"`
+	IsDenied    *bool  `json:"is_denied,omitempty"`
 }
 
-type AdminLandingPageSettingsRequest struct {
-	Enabled bool `json:"enabled"`
-}
-
-type AdminLandingPageSettingsResponse struct {
-	Enabled bool `json:"enabled"`
-}
-
-type AdminBPSRequest struct {
-	BPS int64 `json:"bps"`
-}
-
-type AdminUDPSettingsRequest struct {
+type PolicyPortSettings struct {
 	Enabled   bool `json:"enabled"`
 	MaxLeases int  `json:"max_leases"`
 }
 
-type AdminUDPSettingsResponse struct {
-	Enabled   bool `json:"enabled"`
-	MaxLeases int  `json:"max_leases"`
-}
-
-type AdminTCPPortSettingsRequest struct {
-	Enabled   bool `json:"enabled"`
-	MaxLeases int  `json:"max_leases"`
-}
-
-type AdminTCPPortSettingsResponse struct {
-	Enabled   bool `json:"enabled"`
-	MaxLeases int  `json:"max_leases"`
+type IPPolicyUpdate struct {
+	IP       string `json:"ip"`
+	IsBanned bool   `json:"is_banned"`
 }

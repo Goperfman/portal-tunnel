@@ -5,34 +5,19 @@ import { ThemeToggleButton } from "@/components/ThemeToggleButton";
 import { useAuth } from "@/hooks/useAuth";
 import { apiClient } from "@/lib/apiClient";
 import { API_PATHS } from "@/lib/apiPaths";
+import type { DomainResponse, X402FacilitatorInfo } from "@/types/api";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { getReleaseVersion } from "@/lib/releaseVersion";
 
 interface HeaderProps {
   title?: string;
   isAdmin?: boolean;
   onAuthChange?: () => void | Promise<void>;
   showQuickStartLink?: boolean;
-}
-
-interface DomainStatusResponse {
-  ens?: {
-    verified?: boolean;
-  };
-  x402?: X402FacilitatorInfo;
-}
-
-interface X402FacilitatorInfo {
-  enabled?: boolean;
-  url?: string;
-  network?: string;
-  network_name?: string;
-  supported_url?: string;
 }
 
 const repoURL = "https://github.com/gosuda/portal-tunnel";
@@ -55,7 +40,7 @@ export function Header({
   onAuthChange,
   showQuickStartLink = true,
 }: HeaderProps) {
-  const releaseVersion = getReleaseVersion();
+  const [releaseVersion, setReleaseVersion] = useState("");
   const [ensVerified, setENSVerified] = useState(false);
   const [x402, setX402] = useState<X402FacilitatorInfo | null>(null);
   const {
@@ -64,7 +49,7 @@ export function Header({
     walletAddress,
     login,
     logout,
-  } = useAuth(isAdmin ? "admin" : "auto");
+  } = useAuth();
   const [authError, setAuthError] = useState("");
 
   const handleWalletLogin = async () => {
@@ -95,15 +80,21 @@ export function Header({
 
     void (async () => {
       try {
-        const status = await apiClient.get<DomainStatusResponse>(
+        const status = await apiClient.get<DomainResponse>(
           API_PATHS.sdk.domain
         );
         if (!cancelled) {
+          setReleaseVersion(
+            typeof status?.release_version === "string"
+              ? status.release_version.trim()
+              : ""
+          );
           setENSVerified(status?.ens?.verified === true);
           setX402(status?.x402?.enabled === true ? status.x402 : null);
         }
       } catch {
         if (!cancelled) {
+          setReleaseVersion("");
           setENSVerified(false);
           setX402(null);
         }

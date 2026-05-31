@@ -1,13 +1,6 @@
-type APIErrorPayload = {
-  code?: string;
-  message?: string;
-};
-
-type APIEnvelope<T> = {
-  ok?: boolean;
-  data?: T;
-  error?: APIErrorPayload;
-};
+import { readAdminAuthToken } from "@/lib/adminAuthToken";
+import { API_PATHS } from "@/lib/apiPaths";
+import type { APIEnvelope } from "@/types/api";
 
 export class APIClientError extends Error {
   readonly code: string;
@@ -27,36 +20,46 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function headersToObject(headers?: HeadersInit): Record<string, string> {
-  if (!headers) {
-    return {};
+function resolveAPIURL(path: string): string {
+  if (/^[a-z][a-z\d+\-.]*:/i.test(path)) {
+    return path;
   }
-  if (headers instanceof Headers) {
-    return Object.fromEntries(headers.entries());
+
+  const baseURL = import.meta.env.VITE_PORTAL_API_BASE_URL?.trim();
+  if (!baseURL) {
+    return path;
   }
-  if (Array.isArray(headers)) {
-    return Object.fromEntries(headers);
-  }
-  return { ...headers };
+  const normalizedBase = baseURL.endsWith("/") ? baseURL.slice(0, -1) : baseURL;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${normalizedBase}${normalizedPath}`;
 }
 
 function ensureJsonEnvelope<T>(raw: unknown, path: string, status: number): APIEnvelope<T> {
   if (!isRecord(raw) || typeof raw.ok !== "boolean") {
     throw new APIClientError(`Invalid API response for ${path}`, status, "invalid_envelope", raw);
   }
-  if (raw.error !== undefined && !isRecord(raw.error)) {
+  if (raw.ok) {
+    return {
+      ok: true,
+      data: (raw as { data: T }).data,
+    };
+  }
+
+  if (!isRecord(raw.error)) {
     throw new APIClientError(`Invalid error payload for ${path}`, status, "invalid_envelope", raw.error);
   }
   const errorValue = raw.error;
+  if (typeof errorValue.code !== "string" || typeof errorValue.message !== "string") {
+    throw new APIClientError(`Invalid error payload for ${path}`, status, "invalid_envelope", raw.error);
+  }
+
   return {
-    ok: raw.ok,
-    data: (raw as { data?: T }).data,
-    error: errorValue
-      ? {
-          code: typeof errorValue.code === "string" ? errorValue.code : "request_failed",
-          message: typeof errorValue.message === "string" ? errorValue.message : "Request failed",
-        }
-      : undefined,
+    ok: false,
+    data: raw.data,
+    error: {
+      code: errorValue.code,
+      message: errorValue.message,
+    },
   };
 }
 
@@ -89,8 +92,23 @@ async function decodeEnvelope<T>(path: string, response: Response): Promise<APIE
 async function request<T>(path: string, init: RequestInit): Promise<T> {
   let response: Response;
   try {
-    const requestHeaders = headersToObject(init.headers);
-    response = await fetch(path, {
+    const requestHeaders = {
+      ...((init.headers as Record<string, string> | undefined) ?? {}),
+    };
+    const pathname = new URL(path, window.location.origin).pathname;
+    const requiresAdminAuth =
+      pathname === "/policy" || pathname.startsWith("/policy/") || pathname.startsWith("/admin/");
+    if (
+      requiresAdminAuth &&
+      pathname !== API_PATHS.admin.authChallenge &&
+      pathname !== API_PATHS.admin.authLogin
+    ) {
+      const token = readAdminAuthToken();
+      if (token) {
+        requestHeaders.Authorization = `Bearer ${token}`;
+      }
+    }
+    response = await fetch(resolveAPIURL(path), {
       credentials: "same-origin",
       ...init,
       headers: {
@@ -120,13 +138,13 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
   throw new APIClientError(message, response.status, code, envelope.data);
 }
 
-function jsonRequestInit(method: "POST" | "DELETE", body?: unknown): RequestInit {
+function jsonRequestInit(body?: unknown): RequestInit {
   if (body === undefined) {
-    return { method, headers: {} };
+    return { method: "POST", headers: {} };
   }
 
   return {
-    method,
+    method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   };
@@ -137,9 +155,6 @@ export const apiClient = {
     return request<T>(path, { method: "GET" });
   },
   post<T>(path: string, body?: unknown): Promise<T> {
-    return request<T>(path, jsonRequestInit("POST", body));
-  },
-  delete<T>(path: string): Promise<T> {
-    return request<T>(path, jsonRequestInit("DELETE"));
+    return request<T>(path, jsonRequestInit(body));
   },
 };

@@ -11,9 +11,7 @@
 bin/
 chat
 
-cmd/relay-server/dist/app
 data/
-.portal-certs
 
 # Test binary, built with `go test -c`
 *.test
@@ -146,3 +144,7 @@ fabric.properties
 
 # Nested workspace (separate keyless_tls project; not part of the portal module)
 keyless_tls/
+
+# Local relay/tunnel state
+.portal-certs/
+*identity.json

@@ -16,6 +16,7 @@ import { FloatingActionBar } from "@/components/FloatingActionBar";
 import { readCurrentOrigin } from "@/hooks/useTunnelCommand";
 import { apiClient } from "@/lib/apiClient";
 import { API_PATHS, ROUTE_PATHS } from "@/lib/apiPaths";
+import type { DiscoveryResponse, DomainResponse, RelayDescriptor } from "@/types/api";
 import {
   Dialog,
   DialogContent,
@@ -24,18 +25,6 @@ import {
 } from "@/components/ui/dialog";
 
 type ListServer = BaseServer | AdminServer;
-
-interface RelayDomainResponse {
-  release_version?: string;
-}
-
-interface RelayDiscoveryDescriptor {
-  api_https_addr?: string;
-}
-
-interface RelayDiscoveryResponse {
-  relays?: RelayDiscoveryDescriptor[];
-}
 
 interface KnownRelay {
   relayURL: string;
@@ -60,7 +49,7 @@ async function loadRelayReleaseVersion(
 
   try {
     const domain = await Promise.race([
-      apiClient.get<RelayDomainResponse>(domainURL),
+      apiClient.get<DomainResponse>(domainURL),
       timeoutPromise,
     ]);
     return typeof domain?.release_version === "string"
@@ -76,7 +65,7 @@ function normalizeRelayURL(relayURL: string | undefined): string {
 }
 
 function normalizeKnownRelays(
-  relays: RelayDiscoveryDescriptor[] | undefined,
+  relays: RelayDescriptor[] | undefined,
   currentRelayURL: string
 ): KnownRelay[] {
   const seen = new Set<string>();
@@ -193,7 +182,7 @@ export function ServerListView({
   isAdmin = false,
   banFilter = "all",
   approvalMode = "auto",
-  landingPageEnabled = true,
+  landingPageEnabled = false,
   onBanFilterChange,
   onBanStatusChange,
   onBPSChange,
@@ -312,7 +301,7 @@ export function ServerListView({
 
       try {
         const discovery =
-          await apiClient.get<RelayDiscoveryResponse>(API_PATHS.discovery);
+          await apiClient.get<DiscoveryResponse>(API_PATHS.discovery);
         nextKnownRelays = normalizeKnownRelays(
           discovery?.relays,
           currentRelayURL

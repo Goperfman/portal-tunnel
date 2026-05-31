@@ -1,22 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE="ghcr.io/gosuda/portal:latest"
+IMAGES="${IMAGES:-ghcr.io/gosuda/portal:latest ghcr.io/gosuda/portal-frontend:latest ghcr.io/gosuda/portal-api:latest}"
 DIGEST_FILE="${DIGEST_FILE:-.portal_image_digest}"
 INTERVAL="${INTERVAL:-60}"
 DEPLOY_SCRIPT="${DEPLOY_SCRIPT:-deploy_portal.sh}"
 
 get_remote_digest() {
-    docker manifest inspect "$IMAGE" 2>/dev/null \
-        | grep -m1 '"digest"' \
-        | awk -F'"' '{print $4}'
+    for image in $IMAGES; do
+        digest="$(docker manifest inspect "$image" 2>/dev/null \
+            | grep -m1 '"digest"' \
+            | awk -F'"' '{print $4}')"
+        if [[ -z "$digest" ]]; then
+            return 1
+        fi
+        printf '%s=%s\n' "$image" "$digest"
+    done
 }
 
-echo "Watching $IMAGE for digest changes (interval: ${INTERVAL}s)"
+echo "Watching $IMAGES for digest changes (interval: ${INTERVAL}s)"
 echo "Deploy script: $DEPLOY_SCRIPT"
 
 while true; do
-    NEW_DIGEST=$(get_remote_digest)
+    if ! NEW_DIGEST=$(get_remote_digest); then
+        NEW_DIGEST=""
+    fi
 
     if [[ -z "$NEW_DIGEST" ]]; then
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] Failed to fetch digest, retrying in ${INTERVAL}s"

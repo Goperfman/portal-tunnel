@@ -154,7 +154,7 @@ export function buildTunnelPreviewURL(
   return `https://${subdomain}.${baseHost}`;
 }
 
-export function buildTunnelStatusHostname(
+export function buildServiceStatusHostname(
   origin: string,
   name: string,
   target: string,

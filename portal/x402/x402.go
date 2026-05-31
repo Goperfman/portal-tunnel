@@ -84,7 +84,7 @@ func MountFacilitator(mux *http.ServeMux, cfg FacilitatorConfig) error {
 	if err != nil {
 		return fmt.Errorf("create x402 facilitator: %w", err)
 	}
-	mux.Handle(types.PathX402FacilitatorPrefix, http.StripPrefix(types.PathX402Facilitator, facilitatorapi.NewServer(facilitator)))
+	mux.Handle(types.PathX402Facilitator+"/", http.StripPrefix(types.PathX402Facilitator, facilitatorapi.NewServer(facilitator)))
 	return nil
 }
 

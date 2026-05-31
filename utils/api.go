@@ -39,6 +39,19 @@ func WriteAPIError(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
+func HandleAPICORS(w http.ResponseWriter, r *http.Request) bool {
+	header := w.Header()
+	header.Set("Access-Control-Allow-Origin", "*")
+	header.Set("Access-Control-Allow-Methods", "GET, HEAD, POST, DELETE, OPTIONS")
+	header.Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, "+types.HeaderAccessToken)
+	header.Set("Access-Control-Max-Age", "600")
+	if r.Method != http.MethodOptions {
+		return false
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return true
+}
+
 func MethodNotAllowedError() APIErrorResponse {
 	return APIErrorResponse{
 		Status:  http.StatusMethodNotAllowed,

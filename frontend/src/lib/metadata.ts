@@ -1,15 +1,34 @@
-import type { Metadata } from "@/hooks/useSSRData";
+import { API_PATHS } from "./apiPaths.js";
+
+interface Metadata {
+  description: string;
+  tags: string[];
+  thumbnail: string;
+  owner: string;
+}
 
 const EMPTY_METADATA: Metadata = {
   description: "",
   tags: [],
   thumbnail: "",
   owner: "",
-  hide: false,
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function metadataFromRecord(value: Record<string, unknown>): Metadata {
+  return {
+    description: typeof value.description === "string" ? value.description : "",
+    tags: Array.isArray(value.tags)
+      ? value.tags
+          .map((tag) => (typeof tag === "string" ? tag.trim() : ""))
+          .filter(Boolean)
+      : [],
+    thumbnail: typeof value.thumbnail === "string" ? value.thumbnail : "",
+    owner: typeof value.owner === "string" ? value.owner : "",
+  };
 }
 
 export function parseLeaseMetadata(metadataValue: unknown): Metadata {
@@ -18,17 +37,7 @@ export function parseLeaseMetadata(metadataValue: unknown): Metadata {
   }
 
   if (isRecord(metadataValue)) {
-    return {
-      description: typeof metadataValue.description === "string" ? metadataValue.description : "",
-      tags: Array.isArray(metadataValue.tags)
-        ? metadataValue.tags
-            .map((tag) => (typeof tag === "string" ? tag.trim() : ""))
-            .filter(Boolean)
-        : [],
-      thumbnail: typeof metadataValue.thumbnail === "string" ? metadataValue.thumbnail : "",
-      owner: typeof metadataValue.owner === "string" ? metadataValue.owner : "",
-      hide: typeof metadataValue.hide === "boolean" ? metadataValue.hide : false,
-    };
+    return metadataFromRecord(metadataValue);
   }
 
   if (typeof metadataValue !== "string") {
@@ -41,21 +50,21 @@ export function parseLeaseMetadata(metadataValue: unknown): Metadata {
       return EMPTY_METADATA;
     }
 
-    const rawTags = parsed.tags;
-    const tags = Array.isArray(rawTags)
-      ? rawTags
-          .map((tag) => (typeof tag === "string" ? tag.trim() : ""))
-          .filter(Boolean)
-      : [];
-
-    return {
-      description: typeof parsed.description === "string" ? parsed.description : "",
-      tags,
-      thumbnail: typeof parsed.thumbnail === "string" ? parsed.thumbnail : "",
-      owner: typeof parsed.owner === "string" ? parsed.owner : "",
-      hide: typeof parsed.hide === "boolean" ? parsed.hide : false,
-    };
+    return metadataFromRecord(parsed);
   } catch {
     return EMPTY_METADATA;
   }
+}
+
+export function resolveLeaseThumbnail(metadata: Metadata, hostname: string): string {
+  const configuredThumbnail = metadata.thumbnail.trim();
+  if (configuredThumbnail !== "") {
+    return configuredThumbnail;
+  }
+
+  const normalizedHostname = hostname.trim().toLowerCase().replace(/\.$/, "");
+  if (normalizedHostname === "" || normalizedHostname.startsWith("*.")) {
+    return "";
+  }
+  return `${API_PATHS.thumbnail.prefix}${encodeURIComponent(normalizedHostname)}`;
 }
