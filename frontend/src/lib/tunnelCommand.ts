@@ -1,4 +1,4 @@
-import { API_PATHS } from "@/lib/apiPaths";
+import { BROWSER_API_PATHS } from "@/lib/apiPaths";
 import { resolveExposeName } from "@/lib/exposeName";
 
 export type TunnelCommandOS = "unix" | "windows";
@@ -94,11 +94,11 @@ function buildTunnelCommandParts({
   const relayURLValue =
     relayUrls.length > 0 ? relayUrls.join(",") : currentOrigin;
   const installScriptURL = new URL(
-    API_PATHS.install.shell,
+    BROWSER_API_PATHS.install.shell,
     currentOrigin
   ).toString();
   const installPowerShellURL = new URL(
-    API_PATHS.install.powershell,
+    BROWSER_API_PATHS.install.powershell,
     currentOrigin
   ).toString();
 

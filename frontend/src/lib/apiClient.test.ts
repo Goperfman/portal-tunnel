@@ -34,7 +34,18 @@ describe("apiClient", () => {
     expect(init.headers).toEqual({ Accept: "application/json" });
   });
 
-  it("preserves API base URL subpaths", async () => {
+  it("preserves non-API base URL subpaths", async () => {
+    vi.stubEnv("VITE_PORTAL_API_BASE_URL", "https://portal.example.com/custom");
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ ok: true, data: { status: "ok" } }),
+    );
+
+    await apiClient.get("/ui/state");
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://portal.example.com/custom/ui/state");
+  });
+
+  it("treats an API base URL suffix as the public edge root", async () => {
     vi.stubEnv("VITE_PORTAL_API_BASE_URL", "https://portal.example.com/api");
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ ok: true, data: { status: "ok" } }),
@@ -42,7 +53,7 @@ describe("apiClient", () => {
 
     await apiClient.get("/ui/state");
 
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://portal.example.com/api/ui/state");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://portal.example.com/ui/state");
   });
 
   it("rejects successful non-envelope JSON payloads", async () => {

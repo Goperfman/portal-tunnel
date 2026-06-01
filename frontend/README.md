@@ -22,7 +22,7 @@ data.
 - Public presentation state is loaded from `/ui/state`.
 - Operator presentation policy state is loaded from `/ui/policy/state`.
 - All JSON API responses use the `{ ok, data?, error? }` envelope parsed by `src/lib/apiClient.ts`.
-- `VITE_PORTAL_API_BASE_URL` points the frontend at the same API surface exposed by the public edge nginx. Admin auth uses a bearer token returned by `/api/admin/auth/login`.
+- `VITE_PORTAL_API_BASE_URL` points the frontend at the public edge origin or deployment base path, not at `/api`; `/api`, `/ui`, `/sdk`, and `/discovery` are sibling paths. Admin auth uses a bearer token returned by `/api/admin/auth/login`.
 
 ## Project Structure
 
@@ -76,7 +76,7 @@ npm run dev
 
 Default dev URL: `http://localhost:5173`.
 
-To run against another origin, build or run the frontend with the public frontend/API URL:
+To run against another origin, build or run the frontend with the public edge origin:
 
 ```bash
 VITE_PORTAL_API_BASE_URL=https://portal.example.com npm run dev

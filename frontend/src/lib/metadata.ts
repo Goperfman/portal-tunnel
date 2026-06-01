@@ -1,4 +1,4 @@
-import { API_PATHS } from "./apiPaths.js";
+import { BROWSER_API_PATHS } from "./apiPaths.js";
 
 interface Metadata {
   description: string;
@@ -66,5 +66,5 @@ export function resolveLeaseThumbnail(metadata: Metadata, hostname: string): str
   if (normalizedHostname === "" || normalizedHostname.startsWith("*.")) {
     return "";
   }
-  return `${API_PATHS.thumbnail.prefix}${encodeURIComponent(normalizedHostname)}`;
+  return `${BROWSER_API_PATHS.thumbnail.prefix}${encodeURIComponent(normalizedHostname)}`;
 }

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { ThemeToggleButton } from "@/components/ThemeToggleButton";
 import { useAuth } from "@/hooks/useAuth";
 import { apiClient } from "@/lib/apiClient";
-import { API_PATHS } from "@/lib/apiPaths";
+import { BROWSER_API_PATHS } from "@/lib/apiPaths";
 import type { DomainResponse, X402FacilitatorInfo } from "@/types/api";
 import {
   Tooltip,
@@ -81,7 +81,7 @@ export function Header({
     void (async () => {
       try {
         const status = await apiClient.get<DomainResponse>(
-          API_PATHS.sdk.domain
+          BROWSER_API_PATHS.sdk.domain
         );
         if (!cancelled) {
           setReleaseVersion(

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useList, type BaseServer } from "@/hooks/useList";
 import { apiClient } from "@/lib/apiClient";
-import { API_PATHS } from "@/lib/apiPaths";
+import { BROWSER_API_PATHS } from "@/lib/apiPaths";
 import { parseLeaseMetadata, resolveLeaseThumbnail } from "@/lib/metadata";
 import type { Lease, PublicStateResponse } from "@/types/api";
 
@@ -44,7 +44,7 @@ export function useServerList() {
     void (async () => {
       try {
         const data = await apiClient.get<PublicStateResponse>(
-          API_PATHS.public.state
+          BROWSER_API_PATHS.public.state
         );
         if (cancelled) {
           return;

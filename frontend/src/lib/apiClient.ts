@@ -1,5 +1,5 @@
 import { readAdminAuthToken } from "@/lib/adminAuthToken";
-import { API_PATHS, RELAY_API_PATHS } from "@/lib/apiPaths";
+import { BROWSER_API_PATHS, RELAY_API_PATHS } from "@/lib/apiPaths";
 import type { APIEnvelope } from "@/types/api";
 
 export class APIClientError extends Error {
@@ -31,7 +31,10 @@ function resolveAPIURL(path: string): string {
   }
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const parsedBase = new URL(baseURL);
-  const basePath = parsedBase.pathname.replace(/\/$/, "");
+  const rawBasePath = parsedBase.pathname.replace(/\/$/, "");
+  const basePath = rawBasePath.endsWith("/api")
+    ? rawBasePath.slice(0, -"/api".length)
+    : rawBasePath;
   if (
     basePath !== "" &&
     (normalizedPath === basePath || normalizedPath.startsWith(`${basePath}/`))
@@ -112,13 +115,13 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
     };
     const pathname = new URL(path, window.location.origin).pathname;
     const requiresAdminAuth =
-      isPathOrChild(pathname, API_PATHS.policy.root) ||
+      isPathOrChild(pathname, BROWSER_API_PATHS.policy.root) ||
       isPathOrChild(pathname, RELAY_API_PATHS.policy.root) ||
       isPathOrChild(pathname, RELAY_API_PATHS.admin.root);
     if (
       requiresAdminAuth &&
-      pathname !== API_PATHS.admin.authChallenge &&
-      pathname !== API_PATHS.admin.authLogin
+      pathname !== BROWSER_API_PATHS.admin.authChallenge &&
+      pathname !== BROWSER_API_PATHS.admin.authLogin
     ) {
       const token = readAdminAuthToken();
       if (token) {

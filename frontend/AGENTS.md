@@ -22,7 +22,7 @@ High-signal constraints for the relay-server frontend. Only items expensive to r
    - Why: the relay admin API must be usable by any separately hosted frontend without credentialed cookie CORS state.
 
 5. **`VITE_PORTAL_API_BASE_URL` is the only built-in API origin knob.**
-   Leave it empty for same-origin development/proxying, or set it at build/dev time for a separately hosted relay API.
+   Leave it empty for same-origin development/proxying, or set it at build/dev time to the public edge origin/base path. Do not point it at `/api`; `/api`, `/ui`, `/sdk`, and `/discovery` are sibling paths.
    - Why: runtime-generated config files couple the static frontend bundle back to deployment state.
 
 6. **Presentation policy state reads are aggregated through `/ui/policy/state`.**

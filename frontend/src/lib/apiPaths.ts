@@ -43,7 +43,7 @@ export const PRESENTATION_API_PATHS = {
   },
 } as const;
 
-export const API_PATHS = {
+export const BROWSER_API_PATHS = {
   ...RELAY_API_PATHS,
   public: PRESENTATION_API_PATHS.public,
   policy: PRESENTATION_API_PATHS.policy,

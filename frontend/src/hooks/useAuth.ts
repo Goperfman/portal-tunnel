@@ -6,7 +6,7 @@ import {
   useDisconnect,
   useSignMessage,
 } from "wagmi";
-import { API_PATHS } from "@/lib/apiPaths";
+import { BROWSER_API_PATHS } from "@/lib/apiPaths";
 import { APIClientError, apiClient } from "@/lib/apiClient";
 import { writeAdminAuthToken } from "@/lib/adminAuthToken";
 import type {
@@ -37,7 +37,7 @@ function emptyAuthState(): AuthState {
 async function fetchAuthState(): Promise<AuthState> {
   try {
     const data = await apiClient.get<WalletAuthStatusResponse>(
-      API_PATHS.admin.authStatus
+      BROWSER_API_PATHS.admin.authStatus
     );
     return {
       isAuthenticated: data.authenticated,
@@ -86,7 +86,7 @@ export function useAuth() {
         return { success: false, error: "Wallet provider is unavailable." };
       }
       const challenge = await apiClient.post<WalletAuthChallengeResponse>(
-        API_PATHS.admin.authChallenge,
+        BROWSER_API_PATHS.admin.authChallenge,
         { address }
       );
       const signature = await signMessageAsync({
@@ -94,7 +94,7 @@ export function useAuth() {
         message: challenge.siwe_message,
       });
       const data = await apiClient.post<WalletAuthLoginResponse>(
-        API_PATHS.admin.authLogin,
+        BROWSER_API_PATHS.admin.authLogin,
         {
           challenge_id: challenge.challenge_id,
           siwe_message: challenge.siwe_message,
@@ -130,7 +130,7 @@ export function useAuth() {
 
   const logout = async () => {
     try {
-      await apiClient.post<unknown>(API_PATHS.admin.logout);
+      await apiClient.post<unknown>(BROWSER_API_PATHS.admin.logout);
     } catch {
       // Logging out should clear local state even if the remote token is stale.
     } finally {
