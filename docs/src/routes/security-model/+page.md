@@ -27,7 +27,7 @@ For relay-hosted names, the SDK builds a tenant-facing TLS server config backed 
 
 Relay API TLS is separate from tenant TLS:
 
-- Relay API HTTPS protects `/sdk/*`, `/discovery`, `/admin`, installers, and `/v1/sign`.
+- Relay API HTTPS protects `/sdk/*`, `/discovery`, `/api/admin`, installers, and `/v1/sign`.
 - Tenant TLS protects end-user traffic for lease hostnames.
 - The internal QUIC datagram backhaul uses `SNI_PORT/udp` with ALPN `portal-tunnel`.
 

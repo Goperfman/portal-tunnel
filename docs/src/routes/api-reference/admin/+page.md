@@ -9,16 +9,16 @@ Operator endpoints are the control surface for a relay. They all return
 the standard JSON envelope described in [API Reference](/api-reference), except
 for internal operational endpoints that are not part of the stable API.
 
-`/admin` is reserved for the frontend route and wallet auth endpoints. Relay
-enforcement settings live under `/policy`.
+`/admin` is reserved for the frontend route. Relay wallet auth endpoints live
+under `/api/admin`, and enforcement settings live under `/api/policy`.
 
 ## Auth Flow
 
-1. `POST /admin/auth/challenge` with the wallet address.
+1. `POST /api/admin/auth/challenge` with the wallet address.
 2. Sign the returned `siwe_message`.
-3. `POST /admin/auth/login` with the challenge id, message, and signature.
+3. `POST /api/admin/auth/login` with the challenge id, message, and signature.
 4. Send the returned `access_token` as `Authorization: Bearer <token>`.
-5. `POST /admin/auth/logout` to invalidate the current token.
+5. `POST /api/admin/auth/logout` to invalidate the current token.
 
 Admin bearer tokens are separate from SDK lease tokens.
 
@@ -26,15 +26,15 @@ Admin bearer tokens are separate from SDK lease tokens.
 
 | Method | Path | Auth | Body | Data |
 |--------|------|------|------|------|
-| `POST` | `/admin/auth/challenge` | None | `WalletAuthChallengeRequest` | `WalletAuthChallengeResponse` |
-| `POST` | `/admin/auth/login` | SIWE signature body | `WalletAuthLoginRequest` | `WalletAuthLoginResponse` |
-| `GET` | `/admin/auth/status` | Optional bearer | none | `WalletAuthStatusResponse` |
-| `POST` | `/admin/auth/logout` | Bearer | none | `{}` |
-| `GET` | `/policy` | Bearer | none | `PolicySettings` |
-| `POST` | `/policy` | Bearer | `PolicySettings` | `PolicySettings` |
-| `GET` | `/policy/state` | Bearer | none | `PolicyStateResponse` |
-| `POST` | `/policy/leases` | Bearer | `LeasePolicyUpdate` | `{}` |
-| `POST` | `/policy/ips` | Bearer | `IPPolicyUpdate` | `{}` |
+| `POST` | `/api/admin/auth/challenge` | None | `WalletAuthChallengeRequest` | `WalletAuthChallengeResponse` |
+| `POST` | `/api/admin/auth/login` | SIWE signature body | `WalletAuthLoginRequest` | `WalletAuthLoginResponse` |
+| `GET` | `/api/admin/auth/status` | Optional bearer | none | `WalletAuthStatusResponse` |
+| `POST` | `/api/admin/auth/logout` | Bearer | none | `{}` |
+| `GET` | `/api/policy` | Bearer | none | `PolicySettings` |
+| `POST` | `/api/policy` | Bearer | `PolicySettings` | `PolicySettings` |
+| `GET` | `/api/policy/state` | Bearer | none | `PolicyStateResponse` |
+| `POST` | `/api/policy/leases` | Bearer | `LeasePolicyUpdate` | `{}` |
+| `POST` | `/api/policy/ips` | Bearer | `IPPolicyUpdate` | `{}` |
 
 ## Auth Payloads
 
@@ -76,7 +76,7 @@ Admin bearer tokens are separate from SDK lease tokens.
 
 ## State
 
-`GET /policy/state` returns the full policy view:
+`GET /api/policy/state` returns the full policy view:
 
 | Field | Type |
 |-------|------|
@@ -100,7 +100,7 @@ and adds:
 
 ## Policy
 
-Policy settings are written as one object through `POST /policy` and returned
+Policy settings are written as one object through `POST /api/policy` and returned
 in the same shape:
 
 ```json
@@ -128,7 +128,7 @@ Supported modes:
 
 ## Lease Policy
 
-`POST /policy/leases` accepts a partial policy update for one identity:
+`POST /api/policy/leases` accepts a partial policy update for one identity:
 
 | Field | Type | Effect |
 |-------|------|--------|
@@ -142,7 +142,7 @@ Lease policy updates persist to `policy.json` and return `{}` on success.
 
 ## IP Policy
 
-`POST /policy/ips` accepts:
+`POST /api/policy/ips` accepts:
 
 ```json
 { "ip": "203.0.113.10", "is_banned": true }

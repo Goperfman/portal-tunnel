@@ -134,9 +134,9 @@ See [TCP/UDP Tunneling](/tcp-udp-tunneling) for usage details.
 
 ## Optional: Enable x402 Facilitator
 
-The relay can expose a relay-local x402 facilitator at `/x402`. Frontends and
+The relay can expose a relay-local x402 facilitator at `/api/x402`. Frontends and
 configuration tools can read `/sdk/domain` for the current relay's facilitator
-URL and network, then call `/x402/supported` for mechanism details when needed.
+URL and network, then call `/api/x402/supported` for mechanism details when needed.
 
 ```yaml
 environment:
@@ -155,7 +155,7 @@ For CLI-created x402 routes, pass the selected facilitator explicitly:
 portal expose 3000 \
   --relays https://relay.example.com:4017 \
   --discovery=false \
-  --x402-facilitator-url https://relay.example.com:4017/x402 \
+  --x402-facilitator-url https://relay.example.com:4017/api/x402 \
   --x402-network eip155:8453 \
   --x402-price "$0.001"
 ```
@@ -167,7 +167,7 @@ policy in the tunnel config. The payment app includes a native paid image route:
 go run ./cmd/payment-app \
   --relays https://relay.example.com:4017 \
   --discovery=false \
-  --x402-facilitator-url https://relay.example.com:4017/x402 \
+  --x402-facilitator-url https://relay.example.com:4017/api/x402 \
   --x402-network eip155:8453 \
   --x402-price "$0.01"
 ```

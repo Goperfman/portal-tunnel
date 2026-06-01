@@ -55,8 +55,8 @@ function buildTunnelCommandParts({
 	const relayURLValue = relayUrls.length > 0 ? relayUrls.join(',') : currentOrigin;
 
 	// Inlined install paths — no apiPaths dependency
-	const installScriptURL = new URL('/install.sh', currentOrigin).toString();
-	const installPowerShellURL = new URL('/install.ps1', currentOrigin).toString();
+	const installScriptURL = new URL('/api/install.sh', currentOrigin).toString();
+	const installPowerShellURL = new URL('/api/install.ps1', currentOrigin).toString();
 
 	const exposeArgs: string[] = [];
 	exposeArgs.push(`--name ${formatToken(nameValue, os)}`);

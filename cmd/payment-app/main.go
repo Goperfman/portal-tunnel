@@ -63,7 +63,7 @@ func run(args []string) error {
 	utils.StringFlag(fs, &cfg.thumbnail, "thumbnail", defaultPhotoURL, "lease thumbnail")
 	utils.StringFlag(fs, &cfg.photoURL, "photo-url", defaultPhotoURL, "image URL revealed after payment")
 	utils.BoolFlag(fs, &cfg.hide, "hide", false, "hide this lease from listings")
-	utils.StringFlag(fs, &cfg.x402.FacilitatorURL, "x402-facilitator-url", "https://gosunuts.xyz/x402", "x402 facilitator URL, such as https://relay.example.com:4017/x402")
+	utils.StringFlag(fs, &cfg.x402.FacilitatorURL, "x402-facilitator-url", "https://gosunuts.xyz/api/x402", "x402 facilitator URL, such as https://relay.example.com:4017/api/x402")
 	utils.StringFlag(fs, &cfg.x402.Network, "x402-network", "eip155:84532", "x402 payment network, such as eip155:8453")
 	utils.StringFlag(fs, &cfg.x402.Price, "x402-price", "$0.001", "x402 price for the protected image, such as $0.01")
 	utils.StringFlag(fs, &cfg.x402.PayTo, "x402-pay-to", "", "x402 recipient address; empty uses the payment app identity address")
@@ -182,7 +182,7 @@ func printUsage(w io.Writer) {
 		[]string{
 			"payment-app",
 			"payment-app --name paid-photo",
-			"payment-app --x402-facilitator-url https://relay.example.com:4017/x402 --x402-network eip155:8453 --x402-price \"$0.01\"",
+			"payment-app --x402-facilitator-url https://relay.example.com:4017/api/x402 --x402-network eip155:8453 --x402-price \"$0.01\"",
 		},
 	)
 }

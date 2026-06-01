@@ -35,13 +35,13 @@ portal list
 If your relay publishes its own installer, use that relay instead:
 
 ```bash
-curl -sSL https://portal.example.com/install.sh | bash
+curl -sSL https://portal.example.com/api/install.sh | bash
 portal expose 3000 --relays https://portal.example.com --discovery=false
 ```
 
 ```powershell
 $ProgressPreference = 'SilentlyContinue'
-irm https://portal.example.com/install.ps1 | iex
+irm https://portal.example.com/api/install.ps1 | iex
 portal expose 3000 --relays https://portal.example.com --discovery=false
 ```
 
@@ -78,7 +78,7 @@ app receives the request:
 ```text
 portal expose 3000 --name paid-api \
   --description "Paid API" \
-  --x402-facilitator-url https://portal.example.com:4017/x402 \
+  --x402-facilitator-url https://portal.example.com:4017/api/x402 \
   --x402-network eip155:8453 \
   --x402-price "$0.001" \
   --x402-resource /
@@ -117,7 +117,7 @@ upstream = "http://127.0.0.1:3001"
 network = "eip155:8453"
 price = "$0.010"
 pay_to = "identity"
-facilitator_url = "https://portal.example.com:4017/x402"
+facilitator_url = "https://portal.example.com:4017/api/x402"
 resource = "/api/report"
 mime_type = "application/json"
 
@@ -129,7 +129,7 @@ upstream = "http://127.0.0.1:3001"
 network = "eip155:8453"
 price = "$0.050"
 pay_to = "identity"
-facilitator_url = "https://portal.example.com:4017/x402"
+facilitator_url = "https://portal.example.com:4017/api/x402"
 resource = "/api/dataset"
 mime_type = "application/json"
 ```
@@ -153,7 +153,7 @@ protected, err := portalx402.NewHTTPRouteHandler(portalx402.HTTPRouteHandlerConf
 `cmd/payment-app` includes this native x402 pattern. Run it with:
 
 ```text
-payment-app --x402-facilitator-url https://portal.example.com:4017/x402 \
+payment-app --x402-facilitator-url https://portal.example.com:4017/api/x402 \
   --x402-network eip155:8453 \
   --x402-price "$0.01"
 ```
@@ -388,7 +388,7 @@ upstream = "http://127.0.0.1:3000"
 network = "eip155:8453"
 price = "$0.001"
 pay_to = "identity"
-facilitator_url = "https://portal.example.com:4017/x402"
+facilitator_url = "https://portal.example.com:4017/api/x402"
 resource = "/"
 ```
 

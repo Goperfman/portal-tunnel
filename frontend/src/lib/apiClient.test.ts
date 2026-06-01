@@ -40,9 +40,9 @@ describe("apiClient", () => {
       jsonResponse({ ok: true, data: { status: "ok" } }),
     );
 
-    await apiClient.get("/state");
+    await apiClient.get("/ui/state");
 
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://portal.example.com/api/state");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://portal.example.com/api/ui/state");
   });
 
   it("rejects successful non-envelope JSON payloads", async () => {
@@ -162,7 +162,7 @@ describe("apiClient", () => {
     writeAdminAuthToken("admin-token");
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, data: {} }));
 
-    await apiClient.post("/admin/auth/logout");
+    await apiClient.post("/api/admin/auth/logout");
 
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(init.credentials).toBe("same-origin");
@@ -176,7 +176,7 @@ describe("apiClient", () => {
     writeAdminAuthToken("admin-token");
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, data: {} }));
 
-    await apiClient.post("/policy/leases", {
+    await apiClient.post("/ui/policy/leases", {
       identity_key: "relay:0x1",
       is_approved: true,
     });

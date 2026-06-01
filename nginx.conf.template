@@ -57,21 +57,6 @@ http {
     gzip_types text/plain text/css application/json application/javascript
                text/xml application/xml application/xml+rss text/javascript;
 
-    upstream portal_api {
-        server portal:4017;
-        keepalive 16;
-    }
-
-    upstream portal_presentation_api {
-        server portal-api:8081;
-        keepalive 16;
-    }
-
-    upstream portal_frontend {
-        server portal-frontend:8080;
-        keepalive 16;
-    }
-
     server {
         listen 8443 ssl;
         server_name ${PORTAL_HOST};
@@ -87,7 +72,7 @@ http {
         ssl_session_timeout 10m;
 
         location = /sdk/connect {
-            proxy_pass https://portal_api;
+            proxy_pass https://portal:4017;
             proxy_ssl_verify off;
             proxy_ssl_server_name on;
             proxy_ssl_name $host;
@@ -106,59 +91,54 @@ http {
             proxy_send_timeout      86400s;
         }
 
-        location = /state {
-            proxy_pass http://portal_presentation_api;
-            proxy_http_version 1.1;
-
-            proxy_set_header Host              $host;
-            proxy_set_header X-Real-IP         $remote_addr;
-            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto https;
-            proxy_set_header Connection        "";
-
-            proxy_read_timeout 60s;
-        }
-
-        location ~ ^/(policy($|/)|service/status$|thumbnail/) {
-            proxy_pass http://portal_presentation_api;
-            proxy_http_version 1.1;
-
-            proxy_set_header Host              $host;
-            proxy_set_header X-Real-IP         $remote_addr;
-            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto https;
-            proxy_set_header Authorization     $http_authorization;
-            proxy_set_header Connection        "";
-
-            proxy_read_timeout 60s;
-        }
-
-        location ~ ^/(admin/|sdk/|install\.sh$|install\.ps1$|install/bin/|discovery($|/)|healthz$|v1/sign$|x402(/|$)) {
-            proxy_pass https://portal_api;
+        location ~ ^/(sdk/|discovery(?:/|$)|v1/sign$) {
+            proxy_pass https://portal:4017;
             proxy_ssl_verify off;
             proxy_ssl_server_name on;
             proxy_ssl_name $host;
-            proxy_http_version 1.1;
+
+            proxy_set_header Host              $host;
+            proxy_set_header X-Real-IP         $remote_addr;
+            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+
+            proxy_read_timeout 60s;
+        }
+
+        location /api/ {
+            proxy_pass https://portal:4017;
+            proxy_ssl_verify off;
+            proxy_ssl_server_name on;
+            proxy_ssl_name $host;
 
             proxy_set_header Host              $host;
             proxy_set_header X-Real-IP         $remote_addr;
             proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto https;
             proxy_set_header Authorization     $http_authorization;
-            proxy_set_header Connection        "";
+
+            proxy_read_timeout 60s;
+        }
+
+        location /ui/ {
+            proxy_pass http://portal-api:8081;
+
+            proxy_set_header Host              $host;
+            proxy_set_header X-Real-IP         $remote_addr;
+            proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header Authorization     $http_authorization;
 
             proxy_read_timeout 60s;
         }
 
         location / {
-            proxy_pass http://portal_frontend;
-            proxy_http_version 1.1;
+            proxy_pass http://portal-frontend:8080;
 
             proxy_set_header Host              $host;
             proxy_set_header X-Real-IP         $remote_addr;
             proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto https;
-            proxy_set_header Connection        "";
 
             proxy_read_timeout 60s;
         }

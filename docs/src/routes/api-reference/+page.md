@@ -40,8 +40,8 @@ The envelope does not apply to streaming or delegated endpoints:
 |------|--------|
 | `/sdk/connect` | HTTP/1.1 connection hijack |
 | `/v1/sign` | keyless TLS signer protocol |
-| `/install.sh`, `/install.ps1`, `/install/bin/*` | script or binary bytes |
-| `/x402/*` | x402 facilitator API |
+| `/api/install.sh`, `/api/install.ps1`, `/api/install/bin/*` | script or binary bytes |
+| `/api/x402/*` | x402 facilitator API |
 
 Unknown routes may be handled by the frontend/proxy layer or return a normal
 HTTP 404 outside the envelope.
@@ -67,24 +67,25 @@ interchangeable.
 | Method | Path | Auth | Response |
 |--------|------|------|----------|
 | `GET` | `/` | None | service identity |
-| `GET` | `/healthz` | None | `{ "status": "ok" }` |
-| `GET` | `/state` | None | `PublicStateResponse` |
-| `GET`/`HEAD` | `/install.sh`, `/install.ps1` | None | install script |
-| `GET`/`HEAD` | `/install/bin/{slug}` | None | install binary or redirect |
+| `GET` | `/api/healthz` | None | `{ "status": "ok" }` |
+| `GET` | `/api/state` | None | `PublicStateResponse` |
+| `GET`/`HEAD` | `/api/install.sh`, `/api/install.ps1` | None | install script |
+| `GET`/`HEAD` | `/api/install/bin/{slug}` | None | install binary or redirect |
 
 ### Frontend Presentation API
 
 These paths are served by the TypeScript API service when the static frontend stack is
-enabled. They are derived from relay APIs plus frontend-owned presentation state.
+enabled. They live under `/ui/` and are derived from relay APIs plus frontend-owned
+presentation state.
 
 | Method | Path | Auth | Response |
 |--------|------|------|----------|
-| `GET` | `/state` | None | `PublicStateResponse` plus `landing_page_enabled` |
-| `GET` | `/service/status?hostname=...` | None | `ServiceStatusResponse` |
-| `GET` | `/policy/state` | Admin bearer | `PolicyStateResponse` plus `landing_page_enabled` in `policy` |
-| `GET`/`POST` | `/policy` | Admin bearer | `PolicySettings` plus `landing_page_enabled` |
-| `POST` | `/policy/leases`, `/policy/ips` | Admin bearer | relay policy update response |
-| `GET` | `/thumbnail/{hostname}` | None | generated image |
+| `GET` | `/ui/state` | None | `PublicStateResponse` plus `landing_page_enabled` |
+| `GET` | `/ui/service/status?hostname=...` | None | `ServiceStatusResponse` |
+| `GET` | `/ui/policy/state` | Admin bearer | `PolicyStateResponse` plus `landing_page_enabled` in `policy` |
+| `GET`/`POST` | `/ui/policy` | Admin bearer | `PolicySettings` plus `landing_page_enabled` |
+| `POST` | `/ui/policy/leases`, `/ui/policy/ips` | Admin bearer | relay policy update response |
+| `GET` | `/ui/thumbnail/{hostname}` | None | generated image |
 
 ### SDK
 
@@ -104,10 +105,10 @@ SDK clients.
 
 | Method | Path | Auth | Body | Response |
 |--------|------|------|------|----------|
-| `POST` | `/admin/auth/challenge` | None | `WalletAuthChallengeRequest` | `WalletAuthChallengeResponse` |
-| `POST` | `/admin/auth/login` | SIWE signature body | `WalletAuthLoginRequest` | `WalletAuthLoginResponse` |
-| `GET` | `/admin/auth/status` | Optional admin bearer | none | `WalletAuthStatusResponse` |
-| `POST` | `/admin/auth/logout` | Admin bearer | none | `{}` |
+| `POST` | `/api/admin/auth/challenge` | None | `WalletAuthChallengeRequest` | `WalletAuthChallengeResponse` |
+| `POST` | `/api/admin/auth/login` | SIWE signature body | `WalletAuthLoginRequest` | `WalletAuthLoginResponse` |
+| `GET` | `/api/admin/auth/status` | Optional admin bearer | none | `WalletAuthStatusResponse` |
+| `POST` | `/api/admin/auth/logout` | Admin bearer | none | `{}` |
 
 `/admin` itself is a frontend route, not a relay API endpoint.
 
@@ -115,11 +116,11 @@ SDK clients.
 
 | Method | Path | Auth | Body | Response |
 |--------|------|------|------|----------|
-| `GET` | `/policy` | Admin bearer | none | `PolicySettings` |
-| `POST` | `/policy` | Admin bearer | `PolicySettings` | `PolicySettings` |
-| `GET` | `/policy/state` | Admin bearer | none | `PolicyStateResponse` |
-| `POST` | `/policy/leases` | Admin bearer | `LeasePolicyUpdate` | `{}` |
-| `POST` | `/policy/ips` | Admin bearer | `IPPolicyUpdate` | `{}` |
+| `GET` | `/api/policy` | Admin bearer | none | `PolicySettings` |
+| `POST` | `/api/policy` | Admin bearer | `PolicySettings` | `PolicySettings` |
+| `GET` | `/api/policy/state` | Admin bearer | none | `PolicyStateResponse` |
+| `POST` | `/api/policy/leases` | Admin bearer | `LeasePolicyUpdate` | `{}` |
+| `POST` | `/api/policy/ips` | Admin bearer | `IPPolicyUpdate` | `{}` |
 
 ### Relay And Payment
 
@@ -128,7 +129,7 @@ SDK clients.
 | `GET` | `/discovery` | None | `DiscoveryResponse` |
 | `POST` | `/discovery/announce` | Signed descriptor | `DiscoveryAnnounceResponse` |
 | `POST` | `/v1/sign` | Lease token header | keyless signer response |
-| `ANY` | `/x402/*` | x402-specific | delegated facilitator response |
+| `ANY` | `/api/x402/*` | x402-specific | delegated facilitator response |
 
 ## Shared Types
 

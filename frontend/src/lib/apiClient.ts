@@ -1,5 +1,5 @@
 import { readAdminAuthToken } from "@/lib/adminAuthToken";
-import { API_PATHS } from "@/lib/apiPaths";
+import { API_PATHS, RELAY_API_PATHS } from "@/lib/apiPaths";
 import type { APIEnvelope } from "@/types/api";
 
 export class APIClientError extends Error {
@@ -29,9 +29,24 @@ function resolveAPIURL(path: string): string {
   if (!baseURL) {
     return path;
   }
-  const normalizedBase = baseURL.endsWith("/") ? baseURL.slice(0, -1) : baseURL;
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  return `${normalizedBase}${normalizedPath}`;
+  const parsedBase = new URL(baseURL);
+  const basePath = parsedBase.pathname.replace(/\/$/, "");
+  if (
+    basePath !== "" &&
+    (normalizedPath === basePath || normalizedPath.startsWith(`${basePath}/`))
+  ) {
+    parsedBase.pathname = normalizedPath;
+  } else {
+    parsedBase.pathname = `${basePath}${normalizedPath}`;
+  }
+  parsedBase.search = "";
+  parsedBase.hash = "";
+  return parsedBase.toString();
+}
+
+function isPathOrChild(pathname: string, root: string): boolean {
+  return pathname === root || pathname.startsWith(`${root}/`);
 }
 
 function ensureJsonEnvelope<T>(raw: unknown, path: string, status: number): APIEnvelope<T> {
@@ -97,7 +112,9 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
     };
     const pathname = new URL(path, window.location.origin).pathname;
     const requiresAdminAuth =
-      pathname === "/policy" || pathname.startsWith("/policy/") || pathname.startsWith("/admin/");
+      isPathOrChild(pathname, API_PATHS.policy.root) ||
+      isPathOrChild(pathname, RELAY_API_PATHS.policy.root) ||
+      isPathOrChild(pathname, RELAY_API_PATHS.admin.root);
     if (
       requiresAdminAuth &&
       pathname !== API_PATHS.admin.authChallenge &&

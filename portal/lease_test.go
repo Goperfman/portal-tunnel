@@ -351,7 +351,7 @@ func TestIssueRegisterChallengeBoundsPendingPerIP(t *testing.T) {
 	for i := 0; i < defaultRegisterChallengeOutstandingPerIP; i++ {
 		_, err := registry.issueRegisterChallenge(types.RegisterChallengeRequest{
 			Identity: newTestLeaseIdentity(t, fmt.Sprintf("demo-%d", i)),
-		}, "example.com", "https://example.com/sdk/register", clientIP)
+		}, "example.com", "https://example.com"+types.PathSDKRegister, clientIP)
 		if err != nil {
 			t.Fatalf("issueRegisterChallenge(%d) error = %v", i, err)
 		}
@@ -359,7 +359,7 @@ func TestIssueRegisterChallengeBoundsPendingPerIP(t *testing.T) {
 
 	_, err := registry.issueRegisterChallenge(types.RegisterChallengeRequest{
 		Identity: newTestLeaseIdentity(t, "overflow"),
-	}, "example.com", "https://example.com/sdk/register", clientIP)
+	}, "example.com", "https://example.com"+types.PathSDKRegister, clientIP)
 	if !errors.Is(err, errRegisterChallengePending) {
 		t.Fatalf("issueRegisterChallenge() error = %v, want pending limit", err)
 	}
@@ -377,7 +377,7 @@ func TestIssueRegisterChallengeBoundsPendingPerIP(t *testing.T) {
 
 	_, err = registry.issueRegisterChallenge(types.RegisterChallengeRequest{
 		Identity: newTestLeaseIdentity(t, "after-cleanup"),
-	}, "example.com", "https://example.com/sdk/register", clientIP)
+	}, "example.com", "https://example.com"+types.PathSDKRegister, clientIP)
 	if err != nil {
 		t.Fatalf("issueRegisterChallenge() after expired cleanup error = %v", err)
 	}

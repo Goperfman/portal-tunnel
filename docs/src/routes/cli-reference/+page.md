@@ -29,7 +29,7 @@ irm https://github.com/gosuda/portal-tunnel/releases/latest/download/install.ps1
 If your relay publishes its own installer:
 
 ```bash
-curl -sSL https://portal.example.com/install.sh | bash
+curl -sSL https://portal.example.com/api/install.sh | bash
 ```
 
 The installer writes the `portal` binary only. It does not write a config file.
@@ -75,7 +75,7 @@ not supported.
 |------|---------|-------|
 | Default HTTPS stream | `portal expose 3000` | Relay routes by SNI; tunnel process terminates tenant TLS |
 | Routed HTTP | `portal expose --http-route /api=3001 --http-route /=5173` | Tunnel process runs the HTTP reverse proxy |
-| Routed HTTP with x402 | `portal expose 3000 --x402-facilitator-url https://portal.example.com/x402 --x402-network eip155:8453 --x402-price "$0.001"` | Tunnel process enforces payment before proxying to the upstream |
+| Routed HTTP with x402 | `portal expose 3000 --x402-facilitator-url https://portal.example.com/api/x402 --x402-network eip155:8453 --x402-price "$0.001"` | Tunnel process enforces payment before proxying to the upstream |
 | Dedicated raw TCP | `portal expose localhost:25565 --tcp` | Relay allocates a public TCP port |
 | UDP relay | `portal expose 8080 --udp --udp-addr 19132` | Relay allocates a public UDP port |
 
@@ -155,7 +155,7 @@ Require x402 payment before a local upstream receives traffic:
 portal expose 3000 --name paid-api \
   --relays https://portal.example.com \
   --discovery=false \
-  --x402-facilitator-url https://portal.example.com/x402 \
+  --x402-facilitator-url https://portal.example.com/api/x402 \
   --x402-network eip155:8453 \
   --x402-price "$0.001"
 ```
@@ -183,7 +183,7 @@ upstream = "http://127.0.0.1:3001"
 network = "eip155:8453"
 price = "$0.010"
 pay_to = "identity"
-facilitator_url = "https://portal.example.com/x402"
+facilitator_url = "https://portal.example.com/api/x402"
 resource = "/api/report"
 mime_type = "application/json"
 
@@ -195,7 +195,7 @@ upstream = "http://127.0.0.1:3001"
 network = "eip155:8453"
 price = "$0.050"
 pay_to = "identity"
-facilitator_url = "https://portal.example.com/x402"
+facilitator_url = "https://portal.example.com/api/x402"
 resource = "/api/dataset"
 mime_type = "application/json"
 ```
@@ -219,7 +219,7 @@ protected, err := portalx402.NewHTTPRouteHandler(portalx402.HTTPRouteHandlerConf
 The payment app exposes the same pattern:
 
 ```bash
-go run ./cmd/payment-app --x402-facilitator-url https://portal.example.com/x402 --x402-network eip155:8453 --x402-price "$0.01"
+go run ./cmd/payment-app --x402-facilitator-url https://portal.example.com/api/x402 --x402-network eip155:8453 --x402-price "$0.01"
 ```
 
 Expose a Minecraft server:

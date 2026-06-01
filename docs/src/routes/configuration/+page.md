@@ -62,7 +62,7 @@ The relay server (`relay-server`) reads configuration from environment variables
 
 | Variable | Default | Type | Description |
 |----------|---------|------|-------------|
-| `X402_FACILITATOR_ENABLED` | `false` | bool | Enable the relay-local x402 facilitator under `/x402` |
+| `X402_FACILITATOR_ENABLED` | `false` | bool | Enable the relay-local x402 facilitator under `/api/x402` |
 | `X402_NETWORK` | | string | CAIP-2 network served by the facilitator, such as `eip155:8453` |
 | `X402_RPC_URL` | | string | RPC URL used by the facilitator; empty uses the facilitator default for supported networks |
 
@@ -279,7 +279,7 @@ upstream = "http://127.0.0.1:3001"
 network = "eip155:8453"
 price = "$0.010"
 pay_to = "identity"
-facilitator_url = "https://portal.example.com:4017/x402"
+facilitator_url = "https://portal.example.com:4017/api/x402"
 resource = "/api/report"
 mime_type = "application/json"
 max_timeout_seconds = 0

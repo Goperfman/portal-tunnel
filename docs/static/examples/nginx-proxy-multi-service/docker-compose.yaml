@@ -5,8 +5,9 @@
 # Architecture:
 #   nginx:443 (L4 stream, ssl_preread)
 #     - portal.example.com    -> nginx:8443 (L7 path split)
-#         - relay-owned API paths -> portal:${API_PORT:-4017} (portal, HTTPS, Docker network only)
-#         - presentation API paths -> portal-api:8081 (HTTP)
+#         - /sdk/*, /discovery*, /v1/sign -> portal:${API_PORT:-4017} (portal protocol, HTTPS, Docker network only)
+#         - /api/* relay API -> portal:${API_PORT:-4017} (portal, HTTPS, Docker network only)
+#         - /ui/* presentation API -> portal-api:8081 (HTTP)
 #         - frontend/UI paths     -> portal-frontend:8080 (HTTP)
 #     - *.portal.example.com  -> portal:443 (portal SNI passthrough, Docker network only)
 #     - everything else       -> nginx:8443 (L7 for other apps)
