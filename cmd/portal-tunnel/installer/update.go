@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/mod/semver"
+
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
@@ -48,7 +50,12 @@ func StartUpdateCheck(currentVersion string) {
 						segments := strings.Split(strings.TrimPrefix(parsed.Path, "/"), "/")
 						if len(segments) >= 5 {
 							version := segments[4]
-							if strings.HasPrefix(version, "v") && version != currentVersion {
+							current := strings.TrimSpace(currentVersion)
+							if current != "" && !strings.HasPrefix(current, "v") {
+								current = "v" + current
+							}
+							latestValid := strings.HasPrefix(version, "v") && semver.IsValid(version)
+							if latestValid && semver.IsValid(current) && semver.Compare(version, current) > 0 {
 								fmt.Fprintf(os.Stderr, "\nA new version is available: %s. Run 'portal update' to upgrade.\n", version)
 							}
 						}

@@ -31,7 +31,7 @@ describe("tunnelCommand", () => {
     expect(command).not.toContain("\n  --name");
   });
 
-  it("wraps display commands before relays while keeping copied commands flat", () => {
+  it("keeps display and copied commands flat", () => {
     const options = {
       currentOrigin: "https://relay.example.com",
       target: "localhost:3000",
@@ -54,8 +54,7 @@ describe("tunnelCommand", () => {
       [
         `$ProgressPreference = 'SilentlyContinue'`,
         `irm https://relay.example.com/api/install.ps1 | iex`,
-        `portal expose localhost:3000 --name my-app`,
-        `--relays https://relay.example.com --discovery=false --thumbnail https://example.com/thumb.png`,
+        `portal expose localhost:3000 --name my-app --relays https://relay.example.com --discovery=false --thumbnail https://example.com/thumb.png`,
       ].join("\n")
     );
   });
