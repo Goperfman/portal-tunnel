@@ -23,7 +23,7 @@ describe("tunnelCommand", () => {
 
     expect(command).toBe(
       [
-        "curl -ksSL https://localhost:4017/install.sh | bash",
+        "curl -ksSL https://localhost:4017/api/install.sh | bash",
         "portal expose 3000 --name my-app --relays https://localhost:4017",
       ].join("\n")
     );
@@ -31,7 +31,7 @@ describe("tunnelCommand", () => {
     expect(command).not.toContain("\n  --name");
   });
 
-  it("wraps display commands before relays while keeping copied commands flat", () => {
+  it("keeps display and copied commands flat", () => {
     const options = {
       currentOrigin: "https://relay.example.com",
       target: "localhost:3000",
@@ -46,16 +46,15 @@ describe("tunnelCommand", () => {
     expect(buildTunnelCommand(options)).toBe(
       [
         `$ProgressPreference = 'SilentlyContinue'`,
-        `irm https://relay.example.com/install.ps1 | iex`,
+        `irm https://relay.example.com/api/install.ps1 | iex`,
         `portal expose localhost:3000 --name my-app --relays https://relay.example.com --discovery=false --thumbnail https://example.com/thumb.png`,
       ].join("\n")
     );
     expect(buildTunnelDisplayCommand(options)).toBe(
       [
         `$ProgressPreference = 'SilentlyContinue'`,
-        `irm https://relay.example.com/install.ps1 | iex`,
-        `portal expose localhost:3000 --name my-app`,
-        `--relays https://relay.example.com --discovery=false --thumbnail https://example.com/thumb.png`,
+        `irm https://relay.example.com/api/install.ps1 | iex`,
+        `portal expose localhost:3000 --name my-app --relays https://relay.example.com --discovery=false --thumbnail https://example.com/thumb.png`,
       ].join("\n")
     );
   });

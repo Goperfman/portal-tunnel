@@ -171,7 +171,7 @@ func (api *RelayAPI) serveAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch path {
-	case "/admin/metrics":
+	case types.PathAdmin + "/metrics":
 		promhttp.Handler().ServeHTTP(w, r)
 		return
 	default:

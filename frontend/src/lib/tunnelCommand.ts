@@ -1,4 +1,4 @@
-import { API_PATHS } from "@/lib/apiPaths";
+import { BROWSER_API_PATHS } from "@/lib/apiPaths";
 import { resolveExposeName } from "@/lib/exposeName";
 
 export type TunnelCommandOS = "unix" | "windows";
@@ -70,7 +70,7 @@ export function buildTunnelDisplayCommand({
     udpPort,
   });
 
-  return joinTunnelDisplayCommand(installLine, exposeHead, exposeOptions);
+  return joinTunnelCommand(installLine, exposeHead, exposeOptions);
 }
 
 function buildTunnelCommandParts({
@@ -94,11 +94,11 @@ function buildTunnelCommandParts({
   const relayURLValue =
     relayUrls.length > 0 ? relayUrls.join(",") : currentOrigin;
   const installScriptURL = new URL(
-    API_PATHS.install.shell,
+    BROWSER_API_PATHS.install.shell,
     currentOrigin
   ).toString();
   const installPowerShellURL = new URL(
-    API_PATHS.install.powershell,
+    BROWSER_API_PATHS.install.powershell,
     currentOrigin
   ).toString();
 
@@ -233,25 +233,4 @@ function joinTunnelCommand(
   exposeOptions: string[]
 ): string {
   return [installLine, [exposeHead, ...exposeOptions].join(" ")].join("\n");
-}
-
-function joinTunnelDisplayCommand(
-  installLine: string,
-  exposeHead: string,
-  exposeOptions: string[]
-): string {
-  const relayIndex = exposeOptions.findIndex((option) =>
-    option.startsWith("--relays ")
-  );
-
-  if (relayIndex < 0) {
-    return joinTunnelCommand(installLine, exposeHead, exposeOptions);
-  }
-
-  const exposeLines = [
-    [exposeHead, ...exposeOptions.slice(0, relayIndex)].join(" "),
-    exposeOptions.slice(relayIndex).join(" "),
-  ];
-
-  return [installLine, exposeLines.join("\n")].join("\n");
 }

@@ -10,7 +10,7 @@ import { request as httpsRequest, type RequestOptions as HTTPSRequestOptions } f
 import { dirname } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { URL } from "node:url";
-import { API_PATHS } from "../src/lib/apiPaths.js";
+import { PRESENTATION_API_PATHS, RELAY_API_PATHS } from "../src/lib/apiPaths.js";
 import { parseLeaseMetadata } from "../src/lib/metadata.js";
 
 const PORT = parseIntegerEnv("PORT", 8081);
@@ -391,7 +391,7 @@ function authorizationHeader(req: IncomingMessage): string {
 }
 
 async function servePublicState(res: ServerResponse): Promise<void> {
-  const relayResponse = await requestRelay<RelayPublicStateResponse>(API_PATHS.public.state);
+  const relayResponse = await requestRelay<RelayPublicStateResponse>(RELAY_API_PATHS.public.state);
   if (!relayResponse.envelope.ok) {
     writeRelayEnvelope(res, relayResponse);
     return;
@@ -400,7 +400,7 @@ async function servePublicState(res: ServerResponse): Promise<void> {
 }
 
 async function publicLeases(): Promise<Lease[]> {
-  const relayResponse = await requestRelay<RelayPublicStateResponse>(API_PATHS.public.state);
+  const relayResponse = await requestRelay<RelayPublicStateResponse>(RELAY_API_PATHS.public.state);
   if (!relayResponse.envelope.ok) {
     return [];
   }
@@ -438,7 +438,7 @@ async function serveServiceStatus(req: IncomingMessage, res: ServerResponse): Pr
 }
 
 async function servePolicyState(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const relayResponse = await requestRelay<RelayPolicyStateResponse>(API_PATHS.policy.state, {
+  const relayResponse = await requestRelay<RelayPolicyStateResponse>(RELAY_API_PATHS.policy.state, {
     authorization: authorizationHeader(req),
   });
   if (!relayResponse.envelope.ok) {
@@ -453,7 +453,7 @@ async function servePolicyState(req: IncomingMessage, res: ServerResponse): Prom
 
 async function servePolicy(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method === "GET") {
-    const relayResponse = await requestRelay<RelayPolicySettings>(API_PATHS.policy.root, {
+    const relayResponse = await requestRelay<RelayPolicySettings>(RELAY_API_PATHS.policy.root, {
       authorization: authorizationHeader(req),
     });
     if (!relayResponse.envelope.ok) {
@@ -479,7 +479,7 @@ async function servePolicy(req: IncomingMessage, res: ServerResponse): Promise<v
   let relayBody = { ...body };
   delete relayBody.landing_page_enabled;
   if (!("approval_mode" in relayBody) || !("udp" in relayBody) || !("tcp_port" in relayBody)) {
-    const current = await requestRelay<RelayPolicyStateResponse>(API_PATHS.policy.state, {
+    const current = await requestRelay<RelayPolicyStateResponse>(RELAY_API_PATHS.policy.state, {
       authorization: authorizationHeader(req),
     });
     if (!current.envelope.ok) {
@@ -493,7 +493,7 @@ async function servePolicy(req: IncomingMessage, res: ServerResponse): Promise<v
       tcp_port: relayBody.tcp_port ?? currentSettings.tcp_port,
     };
   }
-  const relayResponse = await requestRelay<RelayPolicySettings>(API_PATHS.policy.root, {
+  const relayResponse = await requestRelay<RelayPolicySettings>(RELAY_API_PATHS.policy.root, {
     method: "POST",
     body: relayBody,
     authorization: authorizationHeader(req),
@@ -840,12 +840,12 @@ function loadThumbnail(hostname: string): Promise<Buffer> {
 
 function requestedThumbnailHostname(req: IncomingMessage): string {
   const url = new URL(req.url || "/", "http://api.local");
-  if (!url.pathname.startsWith(API_PATHS.thumbnail.prefix)) {
+  if (!url.pathname.startsWith(PRESENTATION_API_PATHS.thumbnail.prefix)) {
     return "";
   }
   try {
     const hostname = normalizeHostname(
-      decodeURIComponent(url.pathname.slice(API_PATHS.thumbnail.prefix.length))
+      decodeURIComponent(url.pathname.slice(PRESENTATION_API_PATHS.thumbnail.prefix.length))
     );
     return hostname.includes("*") ? "" : hostname;
   } catch {
@@ -904,7 +904,7 @@ const server = createServer((req, res) => {
       writeData(res, 200, { status: "ok" });
       return;
     }
-    if (url.pathname === API_PATHS.public.state) {
+    if (url.pathname === PRESENTATION_API_PATHS.public.state) {
       if (req.method !== "GET") {
         writeMethodNotAllowed(res);
         return;
@@ -912,7 +912,7 @@ const server = createServer((req, res) => {
       await servePublicState(res);
       return;
     }
-    if (url.pathname === API_PATHS.service.status) {
+    if (url.pathname === PRESENTATION_API_PATHS.service.status) {
       if (req.method !== "GET") {
         writeMethodNotAllowed(res);
         return;
@@ -920,7 +920,7 @@ const server = createServer((req, res) => {
       await serveServiceStatus(req, res);
       return;
     }
-    if (url.pathname === API_PATHS.policy.state) {
+    if (url.pathname === PRESENTATION_API_PATHS.policy.state) {
       if (req.method !== "GET") {
         writeMethodNotAllowed(res);
         return;
@@ -928,7 +928,7 @@ const server = createServer((req, res) => {
       await servePolicyState(req, res);
       return;
     }
-    if (url.pathname === API_PATHS.policy.root) {
+    if (url.pathname === PRESENTATION_API_PATHS.policy.root) {
       if (req.method !== "GET" && req.method !== "POST") {
         writeMethodNotAllowed(res, "GET, POST");
         return;
@@ -936,15 +936,24 @@ const server = createServer((req, res) => {
       await servePolicy(req, res);
       return;
     }
-    if (url.pathname === API_PATHS.policy.leases || url.pathname === API_PATHS.policy.ips) {
+    if (
+      url.pathname === PRESENTATION_API_PATHS.policy.leases ||
+      url.pathname === PRESENTATION_API_PATHS.policy.ips
+    ) {
       if (req.method !== "POST") {
         writeMethodNotAllowed(res, "POST");
         return;
       }
-      await forwardPolicyUpdate(req, res, url.pathname);
+      await forwardPolicyUpdate(
+        req,
+        res,
+        url.pathname === PRESENTATION_API_PATHS.policy.leases
+          ? RELAY_API_PATHS.policy.leases
+          : RELAY_API_PATHS.policy.ips
+      );
       return;
     }
-    if (url.pathname.startsWith(API_PATHS.thumbnail.prefix)) {
+    if (url.pathname.startsWith(PRESENTATION_API_PATHS.thumbnail.prefix)) {
       await serveThumbnail(req, res);
       return;
     }
@@ -952,7 +961,7 @@ const server = createServer((req, res) => {
   })().catch((error) => {
     console.warn("portal api request failed", error);
     const url = new URL(req.url || "/", "http://api.local");
-    if (url.pathname.startsWith(API_PATHS.thumbnail.prefix)) {
+    if (url.pathname.startsWith(PRESENTATION_API_PATHS.thumbnail.prefix)) {
       writeNotFound(res);
       return;
     }

@@ -220,20 +220,20 @@ func TestServerStartInitializesLocalACMEAndSigner(t *testing.T) {
 
 	healthResp, err := client.Get("https://" + utils.HostPortOrLoopback(server.apiListener.Addr().String()) + types.PathHealthz)
 	if err != nil {
-		t.Fatalf("GET /healthz error = %v", err)
+		t.Fatalf("GET /api/healthz error = %v", err)
 	}
 	defer healthResp.Body.Close()
 
 	if healthResp.StatusCode != http.StatusOK {
-		t.Fatalf("GET /healthz status = %d, want %d", healthResp.StatusCode, http.StatusOK)
+		t.Fatalf("GET /api/healthz status = %d, want %d", healthResp.StatusCode, http.StatusOK)
 	}
 
 	var healthEnvelope types.APIEnvelope[map[string]string]
 	if err := json.NewDecoder(healthResp.Body).Decode(&healthEnvelope); err != nil {
-		t.Fatalf("decode /healthz response: %v", err)
+		t.Fatalf("decode /api/healthz response: %v", err)
 	}
 	if !healthEnvelope.OK || healthEnvelope.Data["status"] != "ok" {
-		t.Fatalf("GET /healthz response = %+v, want ok status", healthEnvelope)
+		t.Fatalf("GET /api/healthz response = %+v, want ok status", healthEnvelope)
 	}
 
 	signResp, err := client.Get("https://" + utils.HostPortOrLoopback(server.apiListener.Addr().String()) + types.PathV1Sign)
@@ -349,11 +349,11 @@ func TestServerStartDomainReportsCompatibilityInfo(t *testing.T) {
 	if envelope.Data.X402.NetworkName != "Base Sepolia" {
 		t.Fatalf("DomainResponse.X402.NetworkName = %q, want Base Sepolia", envelope.Data.X402.NetworkName)
 	}
-	if envelope.Data.X402.URL != "https://localhost:4017/x402" {
-		t.Fatalf("DomainResponse.X402.URL = %q, want https://localhost:4017/x402", envelope.Data.X402.URL)
+	if envelope.Data.X402.URL != "https://localhost:4017/api/x402" {
+		t.Fatalf("DomainResponse.X402.URL = %q, want https://localhost:4017/api/x402", envelope.Data.X402.URL)
 	}
-	if envelope.Data.X402.SupportedURL != "https://localhost:4017/x402/supported" {
-		t.Fatalf("DomainResponse.X402.SupportedURL = %q, want https://localhost:4017/x402/supported", envelope.Data.X402.SupportedURL)
+	if envelope.Data.X402.SupportedURL != "https://localhost:4017/api/x402/supported" {
+		t.Fatalf("DomainResponse.X402.SupportedURL = %q, want https://localhost:4017/api/x402/supported", envelope.Data.X402.SupportedURL)
 	}
 }
 
@@ -420,12 +420,12 @@ func TestServerStartUsesManualCertificateWithoutACMEProvider(t *testing.T) {
 
 	healthResp, err := client.Get("https://" + utils.HostPortOrLoopback(server.apiListener.Addr().String()) + types.PathHealthz)
 	if err != nil {
-		t.Fatalf("GET /healthz error = %v", err)
+		t.Fatalf("GET /api/healthz error = %v", err)
 	}
 	defer healthResp.Body.Close()
 
 	if healthResp.StatusCode != http.StatusOK {
-		t.Fatalf("GET /healthz status = %d, want %d", healthResp.StatusCode, http.StatusOK)
+		t.Fatalf("GET /api/healthz status = %d, want %d", healthResp.StatusCode, http.StatusOK)
 	}
 }
 

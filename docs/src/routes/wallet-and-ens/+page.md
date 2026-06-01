@@ -79,9 +79,9 @@ jq -r .address .portal-certs/identity.json
 
 Admin wallet flow:
 
-1. `POST /admin/auth/challenge` with `{ "address": "0x..." }`.
+1. `POST /api/admin/auth/challenge` with `{ "address": "0x..." }`.
 2. Sign the returned `siwe_message` in the browser wallet.
-3. `POST /admin/auth/login` with the challenge id, exact SIWE message, and
+3. `POST /api/admin/auth/login` with the challenge id, exact SIWE message, and
    signature.
 4. The relay returns an `access_token`.
 5. Admin endpoints require `Authorization: Bearer <access_token>`.

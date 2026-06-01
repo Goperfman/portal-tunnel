@@ -167,7 +167,7 @@ func RunDashboard(configPath, stateDir string) error {
 		metadataOwner:       newAgentDashboardInlineInput("owner"),
 		metadataThumbnail:   newAgentDashboardInlineInput("https://..."),
 		metadataHide:        newAgentDashboardInlineInput("true or false"),
-		x402FacilitatorURL:  newAgentDashboardInlineInput("https://relay.example.com/x402"),
+		x402FacilitatorURL:  newAgentDashboardInlineInput("https://relay.example.com/api/x402"),
 	}
 	model.resizeInputs(0)
 

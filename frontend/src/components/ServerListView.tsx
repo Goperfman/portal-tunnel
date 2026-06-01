@@ -15,7 +15,7 @@ import { ApprovalModeToggle } from "@/components/button/ApprovalModeToggle";
 import { FloatingActionBar } from "@/components/FloatingActionBar";
 import { readCurrentOrigin } from "@/hooks/useTunnelCommand";
 import { apiClient } from "@/lib/apiClient";
-import { API_PATHS, ROUTE_PATHS } from "@/lib/apiPaths";
+import { BROWSER_API_PATHS, ROUTE_PATHS } from "@/lib/apiPaths";
 import type { DiscoveryResponse, DomainResponse, RelayDescriptor } from "@/types/api";
 import {
   Dialog,
@@ -41,7 +41,7 @@ async function loadRelayReleaseVersion(
   relayURL: string,
   timeoutMs: number = 5000
 ): Promise<string> {
-  const domainURL = new URL(API_PATHS.sdk.domain, relayURL).toString();
+  const domainURL = new URL(BROWSER_API_PATHS.sdk.domain, relayURL).toString();
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     setTimeout(() => reject(new Error("timeout")), timeoutMs);
@@ -301,7 +301,7 @@ export function ServerListView({
 
       try {
         const discovery =
-          await apiClient.get<DiscoveryResponse>(API_PATHS.discovery);
+          await apiClient.get<DiscoveryResponse>(BROWSER_API_PATHS.discovery);
         nextKnownRelays = normalizeKnownRelays(
           discovery?.relays,
           currentRelayURL

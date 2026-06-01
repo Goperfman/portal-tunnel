@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGES="${IMAGES:-ghcr.io/gosuda/portal:latest ghcr.io/gosuda/portal-frontend:latest ghcr.io/gosuda/portal-api:latest}"
+default_images() {
+    docker compose config --images 2>/dev/null \
+        | grep -E '^ghcr\.io/gosuda/portal(:|-frontend:|-api:)' \
+        | sort -u \
+        | tr '\n' ' ' || true
+}
+
+IMAGES="${IMAGES:-$(default_images)}"
+IMAGES="${IMAGES:-ghcr.io/gosuda/portal:2 ghcr.io/gosuda/portal-frontend:2 ghcr.io/gosuda/portal-api:2}"
 DIGEST_FILE="${DIGEST_FILE:-.portal_image_digest}"
 INTERVAL="${INTERVAL:-60}"
 DEPLOY_SCRIPT="${DEPLOY_SCRIPT:-deploy_portal.sh}"

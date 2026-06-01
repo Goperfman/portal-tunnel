@@ -8,7 +8,7 @@ import {
 import { Check, Copy, RefreshCw, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/apiClient";
-import { API_PATHS } from "@/lib/apiPaths";
+import { BROWSER_API_PATHS } from "@/lib/apiPaths";
 import type { ServiceStatusResponse } from "@/types/api";
 import { cn } from "@/lib/utils";
 import {
@@ -88,7 +88,7 @@ function HeroTunnelCommandForm({
       try {
         const params = new URLSearchParams({ hostname: statusHostname });
         const statusResponse = await apiClient.get<ServiceStatusResponse>(
-          `${API_PATHS.service.status}?${params.toString()}`
+          `${BROWSER_API_PATHS.service.status}?${params.toString()}`
         );
         if (cancelled) {
           return;

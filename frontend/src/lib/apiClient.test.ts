@@ -34,15 +34,26 @@ describe("apiClient", () => {
     expect(init.headers).toEqual({ Accept: "application/json" });
   });
 
-  it("preserves API base URL subpaths", async () => {
+  it("preserves non-API base URL subpaths", async () => {
+    vi.stubEnv("VITE_PORTAL_API_BASE_URL", "https://portal.example.com/custom");
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ ok: true, data: { status: "ok" } }),
+    );
+
+    await apiClient.get("/ui/state");
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://portal.example.com/custom/ui/state");
+  });
+
+  it("treats an API base URL suffix as the public edge root", async () => {
     vi.stubEnv("VITE_PORTAL_API_BASE_URL", "https://portal.example.com/api");
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ ok: true, data: { status: "ok" } }),
     );
 
-    await apiClient.get("/state");
+    await apiClient.get("/ui/state");
 
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://portal.example.com/api/state");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://portal.example.com/ui/state");
   });
 
   it("rejects successful non-envelope JSON payloads", async () => {
@@ -162,7 +173,7 @@ describe("apiClient", () => {
     writeAdminAuthToken("admin-token");
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, data: {} }));
 
-    await apiClient.post("/admin/auth/logout");
+    await apiClient.post("/api/admin/auth/logout");
 
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(init.credentials).toBe("same-origin");
@@ -176,7 +187,7 @@ describe("apiClient", () => {
     writeAdminAuthToken("admin-token");
     fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, data: {} }));
 
-    await apiClient.post("/policy/leases", {
+    await apiClient.post("/ui/policy/leases", {
       identity_key: "relay:0x1",
       is_approved: true,
     });

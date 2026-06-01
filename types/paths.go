@@ -1,43 +1,46 @@
 package types
 
 const (
-	PathRoot    = "/"
-	PathV1Sign  = "/v1/sign"
-	PathHealthz = "/healthz"
-	PathState   = "/state"
+	PathRoot      = "/"
+	PathAPIPrefix = "/api"
+	PathHealthz   = PathAPIPrefix + "/healthz"
+	PathState     = PathAPIPrefix + "/state"
 
-	PathAdmin              = "/admin"
-	PathAdminPrefix        = "/admin/"
-	PathAdminAuthChallenge = "/admin/auth/challenge"
-	PathAdminAuthLogin     = "/admin/auth/login"
-	PathAdminLogout        = "/admin/auth/logout"
-	PathAdminAuthStatus    = "/admin/auth/status"
+	PathAdmin              = PathAPIPrefix + "/admin"
+	PathAdminPrefix        = PathAdmin + "/"
+	PathAdminAuthChallenge = PathAdmin + "/auth/challenge"
+	PathAdminAuthLogin     = PathAdmin + "/auth/login"
+	PathAdminLogout        = PathAdmin + "/auth/logout"
+	PathAdminAuthStatus    = PathAdmin + "/auth/status"
 
-	PathPolicy       = "/policy"
-	PathPolicyPrefix = "/policy/"
+	PathPolicy       = PathAPIPrefix + "/policy"
+	PathPolicyPrefix = PathPolicy + "/"
 	PathPolicyState  = PathPolicy + "/state"
 	PathPolicyLeases = PathPolicy + "/leases"
 	PathPolicyIPs    = PathPolicy + "/ips"
 
-	PathInstallShell      = "/install.sh"
-	PathInstallPowerShell = "/install.ps1"
-	PathInstallBinPrefix  = "/install/bin/"
+	PathInstallShell      = PathAPIPrefix + "/install.sh"
+	PathInstallPowerShell = PathAPIPrefix + "/install.ps1"
+	PathInstallBinPrefix  = PathAPIPrefix + "/install/bin/"
 
-	PathSDKDomain            = "/sdk/domain"
-	PathSDKRegisterChallenge = "/sdk/register/challenge"
-	PathSDKRegister          = "/sdk/register"
-	PathSDKRenew             = "/sdk/renew"
-	PathSDKUnregister        = "/sdk/unregister"
-	PathSDKHop               = "/sdk/hop"
-	PathSDKConnect           = "/sdk/connect"
-
-	PathDiscovery         = "/discovery"
-	PathDiscoveryAnnounce = "/discovery/announce"
-
-	PathX402Facilitator = "/x402"
+	PathX402Facilitator = PathAPIPrefix + "/x402"
 	X402SupportedPath   = PathX402Facilitator + "/supported"
 	X402VerifyPath      = PathX402Facilitator + "/verify"
 	X402SettlePath      = PathX402Facilitator + "/settle"
+
+	PathV1Sign = "/v1/sign"
+
+	PathSDKPrefix            = "/sdk"
+	PathSDKDomain            = PathSDKPrefix + "/domain"
+	PathSDKRegisterChallenge = PathSDKPrefix + "/register/challenge"
+	PathSDKRegister          = PathSDKPrefix + "/register"
+	PathSDKRenew             = PathSDKPrefix + "/renew"
+	PathSDKUnregister        = PathSDKPrefix + "/unregister"
+	PathSDKHop               = PathSDKPrefix + "/hop"
+	PathSDKConnect           = PathSDKPrefix + "/connect"
+
+	PathDiscovery         = "/discovery"
+	PathDiscoveryAnnounce = PathDiscovery + "/announce"
 )
 
 const (

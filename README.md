@@ -72,7 +72,7 @@ portal expose --name myapp \
 
 # Require x402 payment before a local HTTP upstream receives traffic
 portal expose 3000 --name paid-api \
-  --x402-facilitator-url https://portal.example.com/x402 \
+  --x402-facilitator-url https://portal.example.com/api/x402 \
   --x402-network eip155:8453 \
   --x402-price "$0.001"
 

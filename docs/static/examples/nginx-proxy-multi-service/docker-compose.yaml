@@ -5,8 +5,9 @@
 # Architecture:
 #   nginx:443 (L4 stream, ssl_preread)
 #     - portal.example.com    -> nginx:8443 (L7 path split)
-#         - relay-owned API paths -> portal:${API_PORT:-4017} (portal, HTTPS, Docker network only)
-#         - presentation API paths -> portal-api:8081 (HTTP)
+#         - /sdk/*, /discovery*, /v1/sign -> portal:${API_PORT:-4017} (portal protocol, HTTPS, Docker network only)
+#         - /api/* relay API -> portal:${API_PORT:-4017} (portal, HTTPS, Docker network only)
+#         - /ui/* presentation API -> portal-api:8081 (HTTP)
 #         - frontend/UI paths     -> portal-frontend:8080 (HTTP)
 #     - *.portal.example.com  -> portal:443 (portal SNI passthrough, Docker network only)
 #     - everything else       -> nginx:8443 (L7 for other apps)
@@ -55,7 +56,7 @@ services:
   #   restart: unless-stopped
 
   portal:
-    image: ghcr.io/gosuda/portal:latest
+    image: ghcr.io/gosuda/portal:2
     container_name: portal
     ports:
       - "${WIREGUARD_PORT:-51820}:${WIREGUARD_PORT:-51820}/udp"
@@ -103,7 +104,7 @@ services:
     restart: unless-stopped
 
   portal-frontend:
-    image: ghcr.io/gosuda/portal-frontend:latest
+    image: ghcr.io/gosuda/portal-frontend:2
     container_name: portal-frontend
     depends_on:
       - portal
@@ -111,7 +112,7 @@ services:
     restart: unless-stopped
 
   portal-api:
-    image: ghcr.io/gosuda/portal-api:latest
+    image: ghcr.io/gosuda/portal-api:2
     container_name: portal-api
     depends_on:
       - portal

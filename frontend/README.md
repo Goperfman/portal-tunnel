@@ -19,10 +19,10 @@ The Go relay is API-only. This frontend is a standalone Vite app that talks to
 the relay over the JSON API and does not receive server-side injected lease
 data.
 
-- Public relay state is loaded from `/state`.
-- Operator policy state is loaded from `/policy/state`.
+- Public presentation state is loaded from `/ui/state`.
+- Operator presentation policy state is loaded from `/ui/policy/state`.
 - All JSON API responses use the `{ ok, data?, error? }` envelope parsed by `src/lib/apiClient.ts`.
-- `VITE_PORTAL_API_BASE_URL` points the frontend at the same API surface exposed by the public edge nginx. Admin auth uses a bearer token returned by `/admin/auth/login`.
+- `VITE_PORTAL_API_BASE_URL` points the frontend at the public edge origin or deployment base path, not at `/api`; `/api`, `/ui`, `/sdk`, and `/discovery` are sibling paths. Admin auth uses a bearer token returned by `/api/admin/auth/login`.
 
 ## Project Structure
 
@@ -76,7 +76,7 @@ npm run dev
 
 Default dev URL: `http://localhost:5173`.
 
-To run against another origin, build or run the frontend with the public frontend/API URL:
+To run against another origin, build or run the frontend with the public edge origin:
 
 ```bash
 VITE_PORTAL_API_BASE_URL=https://portal.example.com npm run dev
@@ -86,7 +86,7 @@ VITE_PORTAL_API_BASE_URL=https://portal.example.com npm run dev
 
 The frontend Docker image serves the built Vite app with nginx over HTTP. It
 does not own API path routing; the public edge nginx routes relay-owned paths to
-`portal:4017` and presentation-owned paths to `portal-api:8081`.
+`portal:4017` and `/ui/*` presentation paths to `portal-api:8081`.
 TLS for public domains should live in the outer reverse proxy. The app uses
 same-origin relative API paths, so it does not need runtime config file
 generation.
@@ -112,23 +112,23 @@ docker compose up -d portal-frontend
 Relay server exposes:
 
 - `/` - relay API identity response
-- `/state` - public leases
-- `/install.sh` and `/install.ps1` - CLI installers
-- `/admin/auth/*` - admin wallet auth endpoints
-- `/policy/*` - relay policy endpoints
+- `/api/state` - public leases
+- `/api/install.sh` and `/api/install.ps1` - CLI installers
+- `/api/admin/auth/*` - admin wallet auth endpoints
+- `/api/policy/*` - relay policy endpoints
 - `/sdk/*` - SDK/control endpoints
 - `/discovery` - relay discovery when enabled
 
 The TypeScript API service composes frontend-owned presentation
-state on top of relay data:
+state on top of relay data under the `/ui/` prefix:
 
-- `/state` - relay leases plus `landing_page_enabled`
-- `/policy/*` - relay policy, with `landing_page_enabled` composed into `/policy` and `/policy/state`
-- `/service/status` - hostname and service readiness derived from relay `/state`
-- `/thumbnail/{hostname}` - generated screenshots, disabled when `HEADLESS_SHELL_URL` is empty
+- `/ui/state` - relay leases plus `landing_page_enabled`
+- `/ui/policy/*` - relay policy, with `landing_page_enabled` composed into `/ui/policy` and `/ui/policy/state`
+- `/ui/service/status` - hostname and service readiness derived from relay `/api/state`
+- `/ui/thumbnail/{hostname}` - generated screenshots, disabled when `HEADLESS_SHELL_URL` is empty
 
 ## Notes
 
-- Relay path constants live in Go (`types/paths.go`); frontend facade paths also need matching entries in `api/server.ts`, the edge nginx config, and `src/lib/apiPaths.ts`.
+- Relay path constants are owned by Go (`types/paths.go`) and mirrored in `src/lib/apiPaths.ts` for browser calls; presentation paths live under `/ui/` in `api/server.ts`, the edge nginx config, and `src/lib/apiPaths.ts`.
 - Frontend API wire types live in `src/types/api.ts`.
 - Radix Select values cannot be empty strings. Use stable values such as `"all"` and `"default"`.

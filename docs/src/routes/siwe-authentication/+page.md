@@ -36,9 +36,9 @@ protocol.
 
 The relay admin UI uses browser wallet login:
 
-1. request `/admin/auth/challenge`
+1. request `/api/admin/auth/challenge`
 2. sign the returned SIWE message with the connected wallet
-3. submit `/admin/auth/login`
+3. submit `/api/admin/auth/login`
 4. use the returned `access_token` as `Authorization: Bearer <access_token>`
 
 The relay identity address is allowed by default. Add more admin wallets with

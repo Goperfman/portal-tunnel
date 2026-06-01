@@ -10,7 +10,17 @@ priority: P1
 
 # Portal Relay Deployment Guide
 
-This guide starts from the production topology. Read this as the source of truth for how the split relay, frontend, and presentation API are expected to be deployed.
+Portal supports two deployment profiles:
+
+- API-only relay: one `portal` image exposes relay API paths and tunnel ingress
+  directly. This is documented in [Self-Hosting](/self-hosting).
+- Full Portal edge: `nginx`, `portal`, `portal-frontend`, and `portal-api`
+  provide one browser-facing HTTPS origin with dashboard, presentation API, and
+  wildcard tunnel routing.
+
+This guide covers the full Portal edge profile and is the source of truth for
+how the split relay, frontend, and presentation API are expected to be deployed
+together.
 
 ## 1. Production Topology
 
@@ -30,8 +40,8 @@ Browser
   -> https://portal.example.com
   -> nginx public TLS edge
       -> portal-frontend for SPA routes and assets
-      -> portal for relay-owned API paths
-      -> portal-api for presentation-owned API paths
+      -> portal for /sdk/*, /discovery*, /v1/sign, and /api/* relay paths
+      -> portal-api for /ui/* presentation API paths
 
 Tunnel clients and public app visitors
   -> https://*.portal.example.com
@@ -44,8 +54,9 @@ Tunnel clients and public app visitors
 | Public request | nginx behavior | Upstream |
 |---|---|---|
 | `portal.example.com/`, `/admin`, SPA assets | Terminate TLS, HTTP proxy | `portal-frontend:8080` |
-| `/admin/auth/*`, `/sdk/*`, `/install.*`, `/discovery`, `/discovery/*`, `/healthz`, `/v1/sign`, `/x402/*` | Terminate TLS, HTTP proxy | `portal:4017` over HTTPS |
-| `/state`, `/policy/*`, `/service/status`, `/thumbnail/*` | Terminate TLS, HTTP proxy | `portal-api:8081` |
+| `/sdk/*`, `/discovery*`, `/v1/sign` | Terminate TLS, HTTP proxy | `portal:4017` over HTTPS |
+| `/api/*` | Terminate TLS, HTTP proxy | `portal:4017` over HTTPS |
+| `/ui/*` | Terminate TLS, HTTP proxy | `portal-api:8081` |
 | `*.portal.example.com` | Raw TCP passthrough with `ssl_preread` | `portal` SNI listener |
 
 The root relay host needs HTTP path routing, so it is not TCP-passthrough. Wildcard app hosts need TCP passthrough, so nginx must not terminate TLS for them.
@@ -67,7 +78,7 @@ To keep the same practical security level as the embedded frontend deployment:
 
 - Public users reach the dashboard only through `https://portal.example.com`.
 - `portal:4017`, `portal-frontend:8080`, and `portal-api:8081` are not exposed directly to the internet.
-- Root-host API paths are HTTP reverse-proxied by nginx to either the relay API upstream or presentation API upstream.
+- Root-host relay protocol paths (`/sdk/*`, `/discovery*`, `/v1/sign`) and relay JSON API paths (`/api/*`) are HTTP reverse-proxied by nginx to the relay API upstream, while `/ui/*` presentation paths go to `portal-api`.
 - Wildcard app hosts are TCP-passthrough to the relay SNI listener.
 - The nginx browser certificate and the relay API certificate are separate operational concerns unless you intentionally share the same certificate files.
 
@@ -165,7 +176,7 @@ TRUSTED_PROXY_CIDRS=
 LANDING_PAGE_ENABLED=false
 ```
 
-`API_PORT` defaults to `4017`. If you change it, update the `portal_api` upstream in the bundled `nginx.conf` to the same port. Keep `SNI_PORT=443` because this is the public SNI port advertised to tunnel clients. The single-domain Compose example maps the relay container's SNI listener to `127.0.0.1:4443` on the host so nginx can own public `443/tcp` and still pass wildcard TCP traffic to the relay. Do not open `4443/tcp` publicly; it is only a host-local upstream in that example.
+`API_PORT` defaults to `4017`. If you change it, update the relay `proxy_pass` targets in the bundled `nginx.conf` to the same port. Keep `SNI_PORT=443` because this is the public SNI port advertised to tunnel clients. The single-domain Compose example maps the relay container's SNI listener to `127.0.0.1:4443` on the host so nginx can own public `443/tcp` and still pass wildcard TCP traffic to the relay. Do not open `4443/tcp` publicly; it is only a host-local upstream in that example.
 
 If the relay joins public discovery, set `BOOTSTRAPS` to at least one reachable relay URL and keep `WIREGUARD_PORT/udp` open.
 
@@ -346,10 +357,10 @@ Persist those values in `/etc/sysctl.conf` or a file under `/etc/sysctl.d/` if n
 
 It owns:
 
-- `/state` composition with frontend-owned fields.
-- `/policy/*` composition, while relay-enforced policy changes are still forwarded to `portal`.
-- `/service/status`, derived from relay state for quick-start UI checks.
-- `/thumbnail/<hostname>`, when optional screenshot generation is enabled.
+- `/ui/state` composition with frontend-owned fields.
+- `/ui/policy/*` composition, while relay-enforced policy changes are still forwarded to `portal`.
+- `/ui/service/status`, derived from relay state for quick-start UI checks.
+- `/ui/thumbnail/<hostname>`, when optional screenshot generation is enabled.
 - The landing-page flag persisted at `PORTAL_FRONTEND_STATE_PATH`; the bundled Compose files store it under `./.portal-certs/frontend-state/state.json`.
 
 The Go relay remains the owner of authentication, policy enforcement, lease state, tunnel ingress, install scripts, discovery, and x402 facilitator paths.
@@ -375,11 +386,16 @@ Disable the feature by removing `HEADLESS_SHELL_URL` and stopping the `headless-
 
 ## 7. Auto-Update
 
-Auto-update must pull all production images together:
+Auto-update should follow a published release tag, not `latest`. The `latest`
+image tag tracks default-branch image builds, so using it can update production
+on a `main` merge before the GitHub Release and tunnel binaries are published.
 
-- `ghcr.io/gosuda/portal:latest`
-- `ghcr.io/gosuda/portal-frontend:latest`
-- `ghcr.io/gosuda/portal-api:latest`
+The bundled Compose examples use the v2 release track directly. Auto-update must
+pull all production images from that same release track:
+
+- `ghcr.io/gosuda/portal:2`
+- `ghcr.io/gosuda/portal-frontend:2`
+- `ghcr.io/gosuda/portal-api:2`
 
 The bundled `deploy_portal.sh` pulls all Portal images together and reloads nginx after the services are updated:
 
@@ -392,7 +408,9 @@ docker compose up -d portal portal-frontend portal-api
 bash nginx_deploy.sh
 ```
 
-The bundled `watch_and_deploy.sh` polls remote image digests and runs the deploy script when any watched image changes.
+The bundled `watch_and_deploy.sh` reads the Portal images from Docker Compose,
+polls their remote digests, and runs the deploy script when any watched release
+tag changes.
 
 Systemd example:
 
