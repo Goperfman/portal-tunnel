@@ -141,7 +141,7 @@ The `portal expose` subcommand accepts the following flags. Flags that read from
 | `--multi-hop` | `MULTI_HOP` | string | | Ordered multi-hop relay API URLs, comma-separated |
 | `--multi-hop-depth` | `MULTI_HOP_DEPTH` | int | `0` | Automatically select one multi-hop route with this hop count; 0 or 1 disables multi-hop |
 | `--max-active-relays` | `MAX_ACTIVE_RELAYS` | int | `3` | Maximum auto-selected relays to keep connected; explicit relays are always included |
-| `--ban-mitm` | `BAN_MITM` | bool | `true` | Ban relay when the MITM self-probe detects TLS termination |
+| `--ban-mitm` | `BAN_MITM` | bool | `false` | Ban relay when the MITM self-probe detects TLS termination |
 
 ### Identity
 

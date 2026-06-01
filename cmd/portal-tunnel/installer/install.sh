@@ -34,7 +34,14 @@ RELAY_URL="${RELAY_URL:-https://your-relay.example.com}"
 
 is_local_https_url() {
   case "$1" in
-    https://localhost|https://localhost:*|https://127.0.0.1|https://127.0.0.1:*|https://[::1]|https://[::1]:*|https://*.localhost|https://*.localhost:*)
+    https://*) ;;
+    *) return 1 ;;
+  esac
+
+  URL_HOSTPORT="${1#https://}"
+  URL_HOSTPORT="${URL_HOSTPORT%%/*}"
+  case "$URL_HOSTPORT" in
+    localhost|localhost:*|127.0.0.1|127.0.0.1:*|\[::1\]|\[::1\]:*|*.localhost|*.localhost:*)
       return 0
       ;;
   esac

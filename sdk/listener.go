@@ -494,6 +494,12 @@ func (l *listener) runReverseSessionLoop(ctx context.Context, tlsConfig *tls.Con
 		case errors.Is(err, context.Canceled), errors.Is(err, net.ErrClosed):
 			return nil
 		case claimed:
+			log.Debug().
+				Err(err).
+				Str("relay_url", l.relayURL.String()).
+				Str("address", l.identity.Address).
+				Int("reverse_session_slot", sessionSlot).
+				Msg("tenant tls handshake failed")
 			retries = 0
 		default:
 			retries++

@@ -15,7 +15,7 @@ import (
 
 const (
 	RelayKeyID         = "relay-cert"
-	defaultAllowedSkew = 30 * time.Second
+	defaultAllowedSkew = 5 * time.Minute
 )
 
 type Signer struct {
