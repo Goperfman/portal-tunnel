@@ -48,7 +48,7 @@ services:
   #   restart: unless-stopped
 
   portal:
-    image: ghcr.io/gosuda/portal:latest
+    image: ghcr.io/gosuda/portal:2
     container_name: portal
     ports:
       - "127.0.0.1:${API_PORT:-4017}:${API_PORT:-4017}/tcp"
@@ -98,7 +98,7 @@ services:
     restart: unless-stopped
 
   portal-frontend:
-    image: ghcr.io/gosuda/portal-frontend:latest
+    image: ghcr.io/gosuda/portal-frontend:2
     container_name: portal-frontend
     depends_on:
       - portal
@@ -108,7 +108,7 @@ services:
     restart: unless-stopped
 
   portal-api:
-    image: ghcr.io/gosuda/portal-api:latest
+    image: ghcr.io/gosuda/portal-api:2
     container_name: portal-api
     depends_on:
       - portal

@@ -327,7 +327,9 @@ Prints the installed version string and exits.
 
 ## Behavior Notes
 
-- `portal expose` and `portal list` check for new releases in the background.
+- `portal expose` and `portal list` check the latest published GitHub Release in
+  the background. A `main` merge or branch artifact is not offered to installed
+  clients until the release is created with matching binary and checksum assets.
 - `portal expose` loads or creates a signing identity at `identity.json` or
   `--identity-path`.
 - Multiple relay URLs are registered independently. A failed relay does not stop

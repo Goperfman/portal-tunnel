@@ -10,7 +10,17 @@ priority: P1
 
 # Portal Relay Deployment Guide
 
-This guide starts from the production topology. Read this as the source of truth for how the split relay, frontend, and presentation API are expected to be deployed.
+Portal supports two deployment profiles:
+
+- API-only relay: one `portal` image exposes relay API paths and tunnel ingress
+  directly. This is documented in [Self-Hosting](/self-hosting).
+- Full Portal edge: `nginx`, `portal`, `portal-frontend`, and `portal-api`
+  provide one browser-facing HTTPS origin with dashboard, presentation API, and
+  wildcard tunnel routing.
+
+This guide covers the full Portal edge profile and is the source of truth for
+how the split relay, frontend, and presentation API are expected to be deployed
+together.
 
 ## 1. Production Topology
 
@@ -376,11 +386,16 @@ Disable the feature by removing `HEADLESS_SHELL_URL` and stopping the `headless-
 
 ## 7. Auto-Update
 
-Auto-update must pull all production images together:
+Auto-update should follow a published release tag, not `latest`. The `latest`
+image tag tracks default-branch image builds, so using it can update production
+on a `main` merge before the GitHub Release and tunnel binaries are published.
 
-- `ghcr.io/gosuda/portal:latest`
-- `ghcr.io/gosuda/portal-frontend:latest`
-- `ghcr.io/gosuda/portal-api:latest`
+The bundled Compose examples use the v2 release track directly. Auto-update must
+pull all production images from that same release track:
+
+- `ghcr.io/gosuda/portal:2`
+- `ghcr.io/gosuda/portal-frontend:2`
+- `ghcr.io/gosuda/portal-api:2`
 
 The bundled `deploy_portal.sh` pulls all Portal images together and reloads nginx after the services are updated:
 
@@ -393,7 +408,9 @@ docker compose up -d portal portal-frontend portal-api
 bash nginx_deploy.sh
 ```
 
-The bundled `watch_and_deploy.sh` polls remote image digests and runs the deploy script when any watched image changes.
+The bundled `watch_and_deploy.sh` reads the Portal images from Docker Compose,
+polls their remote digests, and runs the deploy script when any watched release
+tag changes.
 
 Systemd example:
 

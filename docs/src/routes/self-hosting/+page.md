@@ -5,7 +5,13 @@ description: Run your own Portal relay for private tunneling.
 
 # Self-Hosting Guide
 
-This guide is for developers who want their own relay for a single project or team — not a platform operator managing relay infrastructure for many users. If you need production-grade deployment with managed TLS, ACME automation, or multi-tenant relay infrastructure, see the [Deployment Guide](/deployment) instead.
+This guide is for developers who want their own API-only relay for a single
+project or team. It runs the `portal` relay image directly and exposes relay API
+paths plus tunnel ingress without the hosted dashboard, `/ui/*` presentation API,
+generated thumbnails, or frontend-owned landing page state.
+
+If you need the browser dashboard and presentation API behind one public HTTPS
+origin, use the [Deployment Guide](/deployment) instead.
 
 You should have a relay running and accepting tunnel connections in about 10 minutes.
 
@@ -33,10 +39,11 @@ docker run -d \
   -e PORTAL_URL=https://relay.example.com:4017 \
   -e IDENTITY_PATH=/portal-certs \
   -v $(pwd)/relay-data:/portal-certs \
-  ghcr.io/gosuda/portal:latest
+  ghcr.io/gosuda/portal:2
 ```
 
-Replace `relay.example.com` with your domain. The relay identity address is allowed to sign in to the admin UI by default.
+Replace `relay.example.com` with your domain. The relay identity address is
+allowed to use relay admin auth by default.
 
 ## Docker Compose Setup
 
@@ -46,7 +53,7 @@ For a more maintainable setup, use Docker Compose:
 # compose.yml
 services:
   relay:
-    image: ghcr.io/gosuda/portal:latest
+    image: ghcr.io/gosuda/portal:2
     restart: unless-stopped
     ports:
       - "443:443"
