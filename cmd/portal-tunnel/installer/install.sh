@@ -40,8 +40,34 @@ is_local_https_url() {
 
   URL_HOSTPORT="${1#https://}"
   URL_HOSTPORT="${URL_HOSTPORT%%/*}"
+  URL_HOSTPORT="${URL_HOSTPORT%%\?*}"
+  URL_HOSTPORT="${URL_HOSTPORT%%#*}"
+
   case "$URL_HOSTPORT" in
-    localhost|localhost:*|127.0.0.1|127.0.0.1:*|\[::1\]|\[::1\]:*|*.localhost|*.localhost:*)
+    \[::1\]:*)
+      URL_HOST="[::1]"
+      URL_PORT="${URL_HOSTPORT#\[::1\]:}"
+      ;;
+    \[::1\])
+      URL_HOST="[::1]"
+      URL_PORT=""
+      ;;
+    *:*)
+      URL_HOST="${URL_HOSTPORT%%:*}"
+      URL_PORT="${URL_HOSTPORT#*:}"
+      ;;
+    *)
+      URL_HOST="$URL_HOSTPORT"
+      URL_PORT=""
+      ;;
+  esac
+
+  case "$URL_PORT" in
+    *[!0-9]*) return 1 ;;
+  esac
+
+  case "$URL_HOST" in
+    localhost|127.0.0.1|\[::1\]|*.localhost)
       return 0
       ;;
   esac
