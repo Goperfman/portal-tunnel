@@ -12,7 +12,8 @@ IMAGES="${IMAGES:-$(default_images)}"
 IMAGES="${IMAGES:-ghcr.io/gosuda/portal:2 ghcr.io/gosuda/portal-frontend:2 ghcr.io/gosuda/portal-api:2}"
 DIGEST_FILE="${DIGEST_FILE:-.portal_image_digest}"
 INTERVAL="${INTERVAL:-60}"
-DEPLOY_SCRIPT="${DEPLOY_SCRIPT:-deploy_portal.sh}"
+SERVICES="${SERVICES:-portal portal-frontend portal-api}"
+RELOAD_NGINX="${RELOAD_NGINX:-true}"
 
 get_remote_digest() {
     for image in $IMAGES; do
@@ -27,7 +28,16 @@ get_remote_digest() {
 }
 
 echo "Watching $IMAGES for digest changes (interval: ${INTERVAL}s)"
-echo "Deploy script: $DEPLOY_SCRIPT"
+echo "Compose services: $SERVICES"
+
+update_services() {
+    docker compose pull $SERVICES
+    docker compose up -d $SERVICES
+
+    if [[ "$RELOAD_NGINX" == "true" ]]; then
+        docker compose exec -T nginx nginx -s reload
+    fi
+}
 
 while true; do
     if ! NEW_DIGEST=$(get_remote_digest); then
@@ -47,9 +57,9 @@ while true; do
 
     if [[ "$NEW_DIGEST" != "$OLD_DIGEST" ]]; then
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] Digest changed: ${OLD_DIGEST:-<none>} -> $NEW_DIGEST"
+        update_services
         echo "$NEW_DIGEST" > "$DIGEST_FILE"
-        bash "$DEPLOY_SCRIPT"
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Deploy completed"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Update completed"
     fi
 
     sleep "$INTERVAL"
