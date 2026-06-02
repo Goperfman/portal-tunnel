@@ -104,7 +104,7 @@ Open only the public ports that match the topology:
 
 | Port | Required | Purpose |
 |---|---|---|
-| `80/tcp` | optional | HTTP to HTTPS redirect in the bundled nginx example |
+| `80/tcp` | optional | HTTP to HTTPS redirect in a front nginx |
 | `443/tcp` | yes | Public nginx edge for dashboard, relay API path routing, and wildcard TCP passthrough |
 | `WIREGUARD_PORT/udp` | when `DISCOVERY=true` | Relay discovery WireGuard transport |
 | `SNI_PORT/udp` | when UDP transport is enabled | QUIC tunnel ingress |
@@ -121,33 +121,26 @@ Keep these ports private or loopback-only in the recommended topology:
 
 Certificate files are also split by owner:
 
-| Certificate | Default path in the example | Used by |
+| Certificate | Location | Used by |
 |---|---|---|
-| Browser-facing HTTPS certificate | `./certs/fullchain.pem`, `./certs/privkey.pem` | nginx public edge |
+| Browser-facing HTTPS certificate | Edge-specific certificate path | nginx instance that terminates `portal.example.com` |
 | Relay API and SNI certificate | `./.portal-certs/fullchain.pem`, `./.portal-certs/privatekey.pem` | `portal` unless managed ACME is configured |
 
-Portal-managed ACME can manage the relay certificate and relay DNS records. The bundled nginx example still expects a browser-facing certificate in `./certs`; manage that with your normal edge certificate process.
+Portal-managed ACME can manage the relay certificate and relay DNS records. If a separate front nginx only TCP-passthroughs Portal hostnames, it does not need Portal certificate material; the Portal nginx or relay edge behind it still terminates the Portal root host.
 
 ## 3. Deploy the Recommended Stack
 
-Start from the single-domain nginx example:
+Deploy the Portal services with your own Compose, systemd, or orchestration
+manifest. If another nginx already owns public `443/tcp`, use the nginx
+passthrough example only for SNI routing to the Portal nginx:
 
 ```bash
-mkdir -p portal-deploy
-cd portal-deploy
-
-cp <repo>/docs/static/examples/nginx-proxy/docker-compose.yaml ./docker-compose.yaml
 cp <repo>/docs/static/examples/nginx-proxy/nginx.conf ./nginx.conf
-cp <repo>/docs/static/examples/nginx-proxy/.env.example ./.env
-cp <repo>/docs/static/examples/nginx-proxy/deploy_portal.sh ./deploy_portal.sh
-cp <repo>/docs/static/examples/nginx-proxy/watch_and_deploy.sh ./watch_and_deploy.sh
-cp <repo>/docs/static/examples/nginx-proxy/nginx_deploy.sh ./nginx_deploy.sh
-chmod +x deploy_portal.sh watch_and_deploy.sh nginx_deploy.sh
 ```
 
-Replace every `portal.example.com` in `nginx.conf` and `.env`.
-
-For deployments with multiple additional services behind the same edge nginx, use `docs/static/examples/nginx-proxy-multi-service` instead. The same Portal routing rules apply.
+Replace `portal.example.com` and the `portal_nginx` upstream in `nginx.conf`.
+The example does not deploy Portal containers, write Portal `.env` files, or
+reload Portal services.
 
 ### Configure `.env`
 
@@ -176,7 +169,10 @@ TRUSTED_PROXY_CIDRS=
 LANDING_PAGE_ENABLED=false
 ```
 
-`API_PORT` defaults to `4017`. If you change it, update the relay `proxy_pass` targets in the bundled `nginx.conf` to the same port. Keep `SNI_PORT=443` because this is the public SNI port advertised to tunnel clients. The single-domain Compose example maps the relay container's SNI listener to `127.0.0.1:4443` on the host so nginx can own public `443/tcp` and still pass wildcard TCP traffic to the relay. Do not open `4443/tcp` publicly; it is only a host-local upstream in that example.
+`API_PORT` defaults to `4017`. Keep `SNI_PORT=443` because this is the public
+SNI port advertised to tunnel clients. If a separate nginx sits in front of
+Portal's own nginx, it should TCP-passthrough `portal.example.com` and
+`*.portal.example.com` instead of proxying Portal API paths itself.
 
 If the relay joins public discovery, set `BOOTSTRAPS` to at least one reachable relay URL and keep `WIREGUARD_PORT/udp` open.
 
@@ -361,9 +357,35 @@ It owns:
 - `/ui/policy/*` composition, while relay-enforced policy changes are still forwarded to `portal`.
 - `/ui/service/status`, derived from relay state for quick-start UI checks.
 - `/ui/thumbnail/<hostname>`, when optional screenshot generation is enabled.
-- The landing-page flag persisted at `PORTAL_FRONTEND_STATE_PATH`; the bundled Compose files store it under `./.portal-certs/frontend-state/state.json`.
+- The landing-page flag persisted at `PORTAL_FRONTEND_STATE_PATH`; a Compose deployment can store it under `./.portal-certs/frontend-state/state.json`.
 
 The Go relay remains the owner of authentication, policy enforcement, lease state, tunnel ingress, install scripts, discovery, and x402 facilitator paths.
+
+### Custom Frontend
+
+To attach your own dashboard frontend, replace only the `portal-frontend`
+service image. Keep the service name `portal-frontend` and serve plain HTTP on
+port `8080` so the existing nginx route for SPA paths can continue to point at
+`portal-frontend:8080`.
+
+The custom frontend should use same-origin browser requests and leave these
+paths owned by the Portal services:
+
+| Path | Owner |
+|---|---|
+| `/ui/*` | `portal-api` presentation API |
+| `/api/*` | `portal` relay API |
+| `/sdk/*`, `/discovery*`, `/v1/sign` | `portal` relay protocols |
+| `*.portal.example.com` | `portal` SNI listener |
+
+```bash
+cp <repo>/docs/static/examples/custom-frontend/docker-compose.override.yaml ./docker-compose.override.yaml
+docker compose up -d portal-frontend
+```
+
+If the automated release updater should also track your custom frontend image,
+set `IMAGES` to include that image in addition to the Portal release-track
+images.
 
 ### Thumbnail Screenshots
 
@@ -384,33 +406,30 @@ thumbnail captured hostname=myapp.portal.example.com size=36209
 
 Disable the feature by removing `HEADLESS_SHELL_URL` and stopping the `headless-shell` container.
 
-## 7. Auto-Update
+## 7. Automated Release Updates
 
 Auto-update should follow a published release tag, not `latest`. The `latest`
 image tag tracks default-branch image builds, so using it can update production
 on a `main` merge before the GitHub Release and tunnel binaries are published.
 
-The bundled Compose examples use the v2 release track directly. Auto-update must
-pull all production images from that same release track:
+Production deployments should follow the v2 release track directly.
+Auto-update must pull all production images from that same release track:
 
 - `ghcr.io/gosuda/portal:2`
 - `ghcr.io/gosuda/portal-frontend:2`
 - `ghcr.io/gosuda/portal-api:2`
 
-The bundled `deploy_portal.sh` pulls all Portal images together and reloads nginx after the services are updated:
+The auto-update example watches those image digests, pulls the changed official
+images, recreates the Portal services, and reloads the Portal nginx:
 
 ```bash
-#!/bin/bash
-set -e
-
-docker compose pull portal portal-frontend portal-api
-docker compose up -d portal portal-frontend portal-api
-bash nginx_deploy.sh
+cp <repo>/docs/static/examples/auto-update/watch_and_deploy.sh ./watch_and_deploy.sh
+chmod +x watch_and_deploy.sh
 ```
 
-The bundled `watch_and_deploy.sh` reads the Portal images from Docker Compose,
-polls their remote digests, and runs the deploy script when any watched release
-tag changes.
+The example watcher reads Portal images from Docker Compose when available,
+falls back to the v2 image set, and updates `portal`, `portal-frontend`, and
+`portal-api` when any watched release tag changes.
 
 Systemd example:
 
@@ -430,7 +449,6 @@ ExecStart=/bin/bash <path-to-project>/watch_and_deploy.sh
 Restart=always
 RestartSec=10
 Environment=INTERVAL=60
-Environment=DEPLOY_SCRIPT=deploy_portal.sh
 
 [Install]
 WantedBy=multi-user.target
@@ -461,7 +479,7 @@ Logs like `"\x16\x03\x01..." 400` mean a client sent HTTPS to the plain HTTP `po
 
 ### Relay Logs Show `tls: unknown certificate`
 
-This usually means a browser or proxy hit the relay API certificate directly instead of the public nginx certificate, or an upstream proxy tried to verify the relay's internal certificate. In the bundled nginx example, public browsers verify nginx's certificate, while nginx proxies to the relay API over internal HTTPS.
+This usually means a browser or proxy hit the relay API certificate directly instead of the public nginx certificate, or an upstream proxy tried to verify the relay's internal certificate. In the recommended topology, public browsers verify the Portal HTTPS edge certificate, while the edge proxies to the relay API over internal HTTPS.
 
 ### Root Host Works but Wildcard Apps Fail
 

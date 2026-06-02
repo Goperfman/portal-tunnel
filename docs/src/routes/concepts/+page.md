@@ -142,8 +142,8 @@ Portal runs a TLS passthrough self-probe after real stream traffic starts:
 4. Matching exporter values indicate passthrough for that sampled connection.
 5. A mismatch is treated as suspected relay-side TLS termination.
 
-By default, `portal expose` bans a relay when the self-probe detects
-termination. Use `--ban-mitm=false` for warning-only behavior.
+By default, `portal expose` logs self-probe detections without banning the relay.
+Use `--ban-mitm` when suspected TLS termination should ban the relay.
 
 The probe is a detection signal, not a mathematical proof for every future
 connection. It raises the cost of relay-side termination while preserving the

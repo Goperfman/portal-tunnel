@@ -34,7 +34,40 @@ RELAY_URL="${RELAY_URL:-https://your-relay.example.com}"
 
 is_local_https_url() {
   case "$1" in
-    https://localhost|https://localhost:*|https://127.0.0.1|https://127.0.0.1:*|https://[::1]|https://[::1]:*|https://*.localhost|https://*.localhost:*)
+    https://*) ;;
+    *) return 1 ;;
+  esac
+
+  URL_HOSTPORT="${1#https://}"
+  URL_HOSTPORT="${URL_HOSTPORT%%/*}"
+  URL_HOSTPORT="${URL_HOSTPORT%%\?*}"
+  URL_HOSTPORT="${URL_HOSTPORT%%#*}"
+
+  case "$URL_HOSTPORT" in
+    \[::1\]:*)
+      URL_HOST="[::1]"
+      URL_PORT="${URL_HOSTPORT#\[::1\]:}"
+      ;;
+    \[::1\])
+      URL_HOST="[::1]"
+      URL_PORT=""
+      ;;
+    *:*)
+      URL_HOST="${URL_HOSTPORT%%:*}"
+      URL_PORT="${URL_HOSTPORT#*:}"
+      ;;
+    *)
+      URL_HOST="$URL_HOSTPORT"
+      URL_PORT=""
+      ;;
+  esac
+
+  case "$URL_PORT" in
+    *[!0-9]*) return 1 ;;
+  esac
+
+  case "$URL_HOST" in
+    localhost|127.0.0.1|\[::1\]|*.localhost)
       return 0
       ;;
   esac
@@ -137,7 +170,33 @@ echo "Installed portal to $INSTALL_PATH" >&2
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
   *)
-    echo "Warning: $INSTALL_DIR is not on PATH. Add it before running 'portal expose 3000'." >&2
+    PROFILE_PATH=""
+    if [ -n "${HOME:-}" ]; then
+      SHELL_NAME="${SHELL:-}"
+      SHELL_NAME="${SHELL_NAME##*/}"
+      case "$SHELL_NAME" in
+        zsh) PROFILE_PATH="$HOME/.zshrc" ;;
+        bash) PROFILE_PATH="$HOME/.bashrc" ;;
+        *) PROFILE_PATH="$HOME/.profile" ;;
+      esac
+    fi
+
+    if [ -n "$PROFILE_PATH" ]; then
+      mkdir -p "$(dirname "$PROFILE_PATH")" 2>/dev/null || true
+      if [ ! -f "$PROFILE_PATH" ] || ! grep -F "$INSTALL_DIR" "$PROFILE_PATH" >/dev/null 2>&1; then
+        {
+          printf '\n# Added by Portal installer\n'
+          printf 'export PATH="%s:$PATH"\n' "$INSTALL_DIR"
+        } >> "$PROFILE_PATH" || PROFILE_PATH=""
+      fi
+    fi
+
+    if [ -n "$PROFILE_PATH" ]; then
+      echo "Added $INSTALL_DIR to PATH in $PROFILE_PATH" >&2
+      echo "Open a new shell or run: export PATH=\"$INSTALL_DIR:\$PATH\"" >&2
+    else
+      echo "Warning: $INSTALL_DIR is not on PATH. Add it before running 'portal expose 3000'." >&2
+    fi
     ;;
 esac
 

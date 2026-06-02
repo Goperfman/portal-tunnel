@@ -170,7 +170,7 @@ Common fields:
 | `tcp` | Dedicated raw TCP port setting |
 | `multi_hop` | Explicit ordered multi-hop relay URLs |
 | `multi_hop_depth` | Automatically choose one multi-hop route with this depth |
-| `ban_mitm` | Ban relays when the TLS self-probe detects termination |
+| `ban_mitm` | Ban relays when the TLS self-probe detects termination; defaults to warning-only |
 | `description`, `tags`, `owner`, `thumbnail`, `hide` | Public relay metadata |
 
 Constraints match `portal expose`:

@@ -32,7 +32,8 @@ If your relay publishes its own installer:
 curl -sSL https://portal.example.com/api/install.sh | bash
 ```
 
-The installer writes the `portal` binary only. It does not write a config file.
+The installer downloads the `portal` binary and adds it to your `PATH`. It does
+not create a config file.
 
 ## Command Overview
 
@@ -88,7 +89,7 @@ not supported.
 | `--max-active-relays` | int | `3` | Maximum auto-selected relays to keep connected; explicit relays are always included |
 | `--multi-hop` | string | | Ordered multi-hop relay API URLs, comma-separated |
 | `--multi-hop-depth` | int | `0` | Automatically select one multi-hop route with this hop count; `0` or `1` disables multi-hop |
-| `--ban-mitm` | bool | `true` | Ban relay when the MITM self-probe detects TLS termination |
+| `--ban-mitm` | bool | `false` | Ban relay when the MITM self-probe detects TLS termination |
 | `--identity-path` | string | `identity.json` | Identity JSON file path; created automatically when missing |
 | `--identity-json` | string | | Identity JSON payload; overrides `--identity-path` contents and is persisted there when both are set |
 | `--name` | string | auto | Public hostname prefix, one DNS label |
@@ -246,10 +247,10 @@ Ask Portal to select one three-hop route:
 portal expose 3000 --multi-hop-depth 3
 ```
 
-Keep MITM probe failures warning-only:
+Ban relays on MITM probe detection:
 
 ```bash
-portal expose 3000 --ban-mitm=false
+portal expose 3000 --ban-mitm
 ```
 
 ## `portal list`

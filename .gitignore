@@ -42,8 +42,8 @@ profile.cov
 /target
 
 # Docker Compose Override
-docker-compose.override.yml
-docker-compose.override.yaml
+/docker-compose.override.yml
+/docker-compose.override.yaml
 
 # Added by goreleaser init:
 dist/

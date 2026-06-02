@@ -687,7 +687,7 @@ func (t *managedTunnel) runOnce(ctx context.Context) error {
 	if cfg.Discovery != nil {
 		discovery = *cfg.Discovery
 	}
-	banMITM := true
+	banMITM := false
 	if cfg.BanMITM != nil {
 		banMITM = *cfg.BanMITM
 	}

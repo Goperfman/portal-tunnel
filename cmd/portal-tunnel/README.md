@@ -394,7 +394,8 @@ resource = "/"
 
 ## Install Behavior
 
-- `install.sh` installs the downloaded binary as `portal`.
+- `install.sh` installs the downloaded binary as `portal` and adds the install
+  directory to the user's shell profile when it is not already on `PATH`.
 - `install.ps1` installs `portal.exe` for the current Windows user and updates
   the user `PATH`.
 - The installer does not write a config file.
@@ -429,8 +430,8 @@ resource = "/"
   are dropped from the active set after their retry budget is exhausted.
 - Tenant TLS is provisioned automatically through the relay keyless signer. The
   SDK fetches the relay certificate chain and uses `/v1/sign` for remote signing.
-- `portal expose` enables MITM strict enforcement by default. Use
-  `--ban-mitm=false` for warning-only behavior.
+- `portal expose` logs MITM self-probe failures by default. Use `--ban-mitm`
+  when suspected TLS termination should ban the relay automatically.
 - When the local stream target is unreachable, the tunnel returns an HTTP 503
   page to browser-style clients.
 - `--tcp` requires the relay to have TCP port transport enabled and a valid

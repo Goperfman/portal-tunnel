@@ -45,7 +45,7 @@ Legacy clients and raw TCP/UDP transports still use the legacy hostname registra
 
 `portal expose` runs an asynchronous TLS passthrough self-probe after real tenant traffic starts. The SDK connects to its own public hostname, exports TLS keying material from the client side, recognizes the returning probe after SDK-side TLS termination, and compares exporter values.
 
-Matching exporter values mean the sampled connection preserved passthrough. A mismatch is treated as suspected relay-side TLS termination. By default, `portal expose` bans that relay; use `--ban-mitm=false` for warning-only behavior.
+Matching exporter values mean the sampled connection preserved passthrough. A mismatch is treated as suspected relay-side TLS termination and logged by default; use `--ban-mitm` when suspected TLS termination should ban the relay.
 
 ## Relay Visibility
 
