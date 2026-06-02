@@ -394,7 +394,8 @@ resource = "/"
 
 ## Install Behavior
 
-- `install.sh` installs the downloaded binary as `portal`.
+- `install.sh` installs the downloaded binary as `portal` and adds the install
+  directory to the user's shell profile when it is not already on `PATH`.
 - `install.ps1` installs `portal.exe` for the current Windows user and updates
   the user `PATH`.
 - The installer does not write a config file.

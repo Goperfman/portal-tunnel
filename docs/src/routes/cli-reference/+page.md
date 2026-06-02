@@ -32,7 +32,8 @@ If your relay publishes its own installer:
 curl -sSL https://portal.example.com/api/install.sh | bash
 ```
 
-The installer writes the `portal` binary only. It does not write a config file.
+The installer downloads the `portal` binary and adds it to your `PATH`. It does
+not create a config file.
 
 ## Command Overview
 
