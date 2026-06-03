@@ -56,6 +56,8 @@ type ServerConfig struct {
 	MaxPort           int
 	PProfEnabled      bool
 	PProfListenAddr   string
+	X402Enabled       bool
+	X402Testnet       bool
 	ACME              acme.Config
 }
 
@@ -90,7 +92,6 @@ func normalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 	if cfg.PProfEnabled {
 		cfg.PProfListenAddr = utils.StringOrDefault(strings.TrimSpace(cfg.PProfListenAddr), DefaultPProfListenAddr)
 	}
-
 	hasPortRange := cfg.MinPort > 0 && cfg.MaxPort > 0
 	if cfg.UDPEnabled || cfg.TCPEnabled {
 		switch {

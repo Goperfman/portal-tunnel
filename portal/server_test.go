@@ -338,6 +338,9 @@ func TestServerStartDomainReportsCompatibilityInfo(t *testing.T) {
 	if envelope.Data.ReleaseVersion != types.ReleaseVersion {
 		t.Fatalf("DomainResponse.ReleaseVersion = %q, want %q", envelope.Data.ReleaseVersion, types.ReleaseVersion)
 	}
+	if envelope.Data.X402.Enabled {
+		t.Fatalf("DomainResponse.X402.Enabled = true, want false")
+	}
 }
 
 func TestRegisterLeaseIncludesSNIPortForPublicIngress(t *testing.T) {

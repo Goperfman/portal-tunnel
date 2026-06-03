@@ -40,6 +40,7 @@ The envelope does not apply to streaming or delegated endpoints:
 |------|--------|
 | `/sdk/connect` | HTTP/1.1 connection hijack |
 | `/v1/sign` | keyless TLS signer protocol |
+| `/api/x402/*` | embedded x402 facilitator response |
 | `/api/install.sh`, `/api/install.ps1`, `/api/install/bin/*` | script or binary bytes |
 
 Unknown routes may be handled by the frontend/proxy layer or return a normal
@@ -110,6 +111,19 @@ SDK clients.
 | `POST` | `/api/admin/auth/logout` | Admin bearer | none | `{}` |
 
 `/admin` itself is a frontend route, not a relay API endpoint.
+
+### Payments
+
+These Sui-only endpoints are available only when
+`X402_ENABLED=true`. They are served by the embedded
+`gosuda/x402-facilitator` handler and do not use the Portal JSON envelope.
+Portal selects Sui mainnet by default and Sui testnet when `X402_TESTNET=true`.
+
+| Method | Path | Auth | Body | Response |
+|--------|------|------|------|----------|
+| `GET` | `/api/x402/supported` | None | none | x402 supported kinds |
+| `POST` | `/api/x402/verify` | None | x402 verify request | x402 verify response |
+| `POST` | `/api/x402/settle` | None | x402 settle request | x402 settle response |
 
 ### Policy
 

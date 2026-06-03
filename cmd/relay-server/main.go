@@ -16,6 +16,7 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/portal/acme"
 	"github.com/gosuda/portal-tunnel/v2/portal/identity"
 	"github.com/gosuda/portal-tunnel/v2/portal/overlay"
+	portalx402 "github.com/gosuda/portal-tunnel/v2/portal/x402"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
@@ -49,6 +50,8 @@ type relayServerConfig struct {
 	AdminToken        string
 	PProfEnabled      bool
 	PProfAddr         string
+	X402Enabled       bool
+	X402Testnet       bool
 
 	ACMEDNSProvider    string
 	ENSGaslessEnabled  bool
@@ -89,6 +92,8 @@ func runServeCommand(args []string) error {
 	utils.StringFlagEnv(fs, &cfg.AdminToken, "admin-token", "", "admin bearer token for relay admin and policy APIs", "ADMIN_TOKEN")
 	utils.BoolFlagEnv(fs, &cfg.PProfEnabled, "pprof-enabled", false, "enable pprof diagnostics HTTP server", "PPROF_ENABLED")
 	utils.StringFlagEnv(fs, &cfg.PProfAddr, "pprof-addr", portal.DefaultPProfListenAddr, "pprof diagnostics listen address when enabled", "PPROF_ADDR")
+	utils.BoolFlagEnv(fs, &cfg.X402Enabled, "x402-enabled", false, "enable embedded Sui x402 facilitator endpoints under /api/x402", "X402_ENABLED")
+	utils.BoolFlagEnv(fs, &cfg.X402Testnet, "x402-testnet", false, "use Sui testnet for embedded x402 facilitator payments", "X402_TESTNET")
 
 	utils.StringFlagEnv(fs, &cfg.ACMEDNSProvider, "acme-dns-provider", "", "DNS provider for managed DNS-01/A-record sync, ECH HTTPS records, and ENS gasless DNSSEC/TXT automation (cloudflare|gcloud|hetzner|njalla|route53|vultr); leave empty to use manual fullchain.pem/privatekey.pem from IDENTITY_PATH", "ACME_DNS_PROVIDER")
 	utils.BoolFlagEnv(fs, &cfg.ENSGaslessEnabled, "ens-gasless-enabled", false, "enable ENS gasless DNS import automation for the managed DNS zone and lease hostnames", "ENS_GASLESS_ENABLED")
@@ -135,6 +140,8 @@ func runServeCommand(args []string) error {
 		Bool("admin_token_configured", strings.TrimSpace(cfg.AdminToken) != "").
 		Bool("pprof_enabled", cfg.PProfEnabled).
 		Str("pprof_addr", cfg.PProfAddr).
+		Bool("x402_facilitator_enabled", cfg.X402Enabled).
+		Bool("x402_testnet", cfg.X402Testnet).
 		Str("acme_dns_provider", cfg.ACMEDNSProvider).
 		Bool("ens_gasless_enabled", cfg.ENSGaslessEnabled).
 		Msg("configured relay server")
@@ -162,6 +169,8 @@ func runServer(ctx context.Context, cfg relayServerConfig) error {
 		MaxPort:           cfg.MaxPort,
 		PProfEnabled:      cfg.PProfEnabled,
 		PProfListenAddr:   cfg.PProfAddr,
+		X402Enabled:       cfg.X402Enabled,
+		X402Testnet:       cfg.X402Testnet,
 		ACME: acme.Config{
 			KeyDir:             cfg.IdentityPath,
 			DNSProvider:        cfg.ACMEDNSProvider,
@@ -190,6 +199,20 @@ func runServer(ctx context.Context, cfg relayServerConfig) error {
 	}
 
 	apiMux := relayAPI.Handler()
+	if cfg.X402Enabled {
+		x402Network := portalx402.Network(cfg.X402Testnet)
+		relayIdentity := server.RelayIdentity()
+		if err := portalx402.MountFacilitator(apiMux, portalx402.FacilitatorConfig{
+			Identity: relayIdentity.Identity,
+			Testnet:  cfg.X402Testnet,
+		}); err != nil {
+			return fmt.Errorf("mount x402 facilitator: %w", err)
+		}
+		log.Info().
+			Str("path", types.PathX402Facilitator).
+			Str("network", x402Network).
+			Msg("embedded x402 facilitator enabled")
+	}
 
 	if err := server.Start(ctx, apiMux); err != nil {
 		return fmt.Errorf("start relay server: %w", err)

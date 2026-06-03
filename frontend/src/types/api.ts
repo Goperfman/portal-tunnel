@@ -95,10 +95,19 @@ export interface ENSStatus {
   last_error?: string;
 }
 
+export interface X402FacilitatorInfo {
+  enabled: boolean;
+  url?: string;
+  network?: string;
+  network_name?: string;
+  supported_url?: string;
+}
+
 export interface DomainResponse {
   protocol_version: string;
   release_version: string;
   ens: ENSStatus;
+  x402: X402FacilitatorInfo;
 }
 
 export interface RelayDescriptor {

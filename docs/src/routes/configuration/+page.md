@@ -37,6 +37,13 @@ The relay server (`relay-server`) reads configuration from environment variables
 | `DISCOVERY` | `false` | bool | Serve relay discovery endpoints and poll discovery peers |
 | `BOOTSTRAPS` | `""` | string | Additional bootstrap relay API URLs used for discovery expansion (comma-separated) |
 
+### Payments
+
+| Variable | Default | Type | Description |
+|----------|---------|------|-------------|
+| `X402_ENABLED` | `false` | bool | Enable embedded Sui x402 facilitator endpoints under `/api/x402` |
+| `X402_TESTNET` | `false` | bool | Use Sui testnet for payments; `false` uses Sui mainnet |
+
 ### Proxy
 
 | Variable | Default | Type | Description |

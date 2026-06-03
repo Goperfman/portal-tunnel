@@ -22,6 +22,11 @@ const (
 	PathInstallPowerShell = PathAPIPrefix + "/install.ps1"
 	PathInstallBinPrefix  = PathAPIPrefix + "/install/bin/"
 
+	PathX402Facilitator = PathAPIPrefix + "/x402"
+	X402SupportedPath   = PathX402Facilitator + "/supported"
+	X402VerifyPath      = PathX402Facilitator + "/verify"
+	X402SettlePath      = PathX402Facilitator + "/settle"
+
 	PathV1Sign = "/v1/sign"
 
 	PathSDKPrefix            = "/sdk"

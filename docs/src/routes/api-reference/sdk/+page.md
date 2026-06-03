@@ -12,7 +12,7 @@ that switches to a raw stream after a successful HTTP/1.1 response.
 
 ## Flow
 
-1. `GET /sdk/domain` checks relay compatibility and optional ENS support.
+1. `GET /sdk/domain` checks relay compatibility, optional ENS support, and optional Sui x402 facilitator support.
 2. `POST /sdk/register/challenge` creates a SIWE challenge for the requested identity.
 3. The SDK signs the returned `siwe_message`.
 4. `POST /sdk/register` exchanges the signature for a lease `access_token`.
@@ -39,6 +39,7 @@ that switches to a raw stream after a successful HTTP/1.1 response.
 | `protocol_version` | `string` | SDK tunnel protocol version |
 | `release_version` | `string` | relay software release |
 | `ens` | `ENSStatus` | gasless ENS status |
+| `x402` | `X402FacilitatorInfo` | embedded Sui x402 facilitator status |
 
 `ENSStatus`:
 
@@ -46,6 +47,13 @@ that switches to a raw stream after a successful HTTP/1.1 response.
 |-------|------|
 | `enabled`, `verified` | `boolean` |
 | `provider`, `address`, `dnssec_state`, `ds_record`, `message`, `last_error` | `string` |
+
+`X402FacilitatorInfo`:
+
+| Field | Type |
+|-------|------|
+| `enabled` | `boolean` |
+| `url`, `network`, `network_name`, `supported_url` | `string` |
 
 ## Register Challenge
 

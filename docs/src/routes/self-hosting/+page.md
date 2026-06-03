@@ -85,6 +85,22 @@ docker compose up -d
 | `IDENTITY_PATH` | `./.portal-certs` | Relay state directory containing `identity.json`, `policy.json`, and TLS materials. |
 | `ADMIN_TOKEN` | | Bearer token source for relay admin and policy APIs. |
 
+## Optional: Enable Embedded Sui x402 Facilitator
+
+To expose Sui x402 facilitator endpoints from the relay process itself, enable
+the embedded handler. Payments use Sui mainnet by default; set
+`X402_TESTNET=true` for Sui testnet.
+
+```yaml
+environment:
+  X402_ENABLED: "true"
+  X402_TESTNET: "false"
+```
+
+This serves `/api/x402/supported`, `/api/x402/verify`, and `/api/x402/settle`.
+Portal payments intentionally support only Sui mainnet and testnet. Route-level
+payment enforcement is configured separately from the facilitator endpoint.
+
 ## Connecting Your Tunnel
 
 Point `portal-tunnel` at your relay with the `--relays` flag:
