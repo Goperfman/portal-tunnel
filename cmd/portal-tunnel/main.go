@@ -59,6 +59,8 @@ type exposeFlags struct {
 	owner           string
 	thumbnail       string
 	hide            bool
+	x402PayTo       string
+	x402Prices      []string
 	targetAddr      string
 	httpRoutes      []string
 	udp             bool
@@ -87,6 +89,8 @@ func runExposeCommand(args []string) error {
 	utils.StringFlag(fs, &flags.owner, "owner", "", "Service owner metadata")
 	utils.StringFlag(fs, &flags.thumbnail, "thumbnail", "", "Service thumbnail URL metadata")
 	utils.BoolFlag(fs, &flags.hide, "hide", false, "Hide service from relay listing screens")
+	utils.StringFlag(fs, &flags.x402PayTo, "x402-pay-to", "", "Sui payment recipient address for this tunnel")
+	utils.RepeatedStringFlag(fs, &flags.x402Prices, "x402-price", "Sui x402 price mapping in PATH=PRICE form; repeat to price multiple HTTP routes")
 	utils.RepeatedStringFlag(fs, &flags.httpRoutes, "http-route", "HTTP route mapping in PATH=UPSTREAM form; repeat to aggregate multiple local HTTP services behind one public URL")
 	utils.BoolFlagEnv(fs, &flags.udp, "udp", false, "Enable public UDP relay in addition to the default TCP relay", "UDP_ENABLED")
 	utils.StringFlagEnv(fs, &flags.udpAddr, "udp-addr", "", "Local UDP target address for relayed datagrams (host:port or port only); defaults to the target when --udp is enabled", "UDP_ADDR")
@@ -119,6 +123,68 @@ func runExposeCommand(args []string) error {
 	case len(httpRouteInputs) > 0 && flags.udp:
 		printExposeUsage(os.Stderr)
 		return errors.New("--udp cannot be combined with --http-route")
+	case len(flags.x402Prices) > 0 && len(httpRouteInputs) == 0:
+		printExposeUsage(os.Stderr)
+		return errors.New("--x402-price requires --http-route")
+	case len(flags.x402Prices) > 0 && strings.TrimSpace(flags.x402PayTo) == "":
+		printExposeUsage(os.Stderr)
+		return errors.New("--x402-price requires --x402-pay-to")
+	}
+
+	x402Prices := make(map[string]string, len(flags.x402Prices))
+	for _, raw := range flags.x402Prices {
+		prefix, price, ok := strings.Cut(raw, "=")
+		if !ok {
+			return fmt.Errorf("--x402-price %q: expected PATH=PRICE", raw)
+		}
+		prefix = strings.TrimSpace(prefix)
+		if prefix == "" {
+			return fmt.Errorf("--x402-price %q: path is required", raw)
+		}
+		if !strings.HasPrefix(prefix, "/") {
+			return fmt.Errorf("--x402-price %q: path must start with /", raw)
+		}
+		prefix = utils.NormalizeURLPath(prefix)
+		price = strings.TrimSpace(price)
+		if price == "" {
+			return fmt.Errorf("--x402-price %q: price is required", raw)
+		}
+		if _, exists := x402Prices[prefix]; exists {
+			return fmt.Errorf("--x402-price path %q repeated", prefix)
+		}
+		x402Prices[prefix] = price
+	}
+
+	httpRoutes := make([]sdk.HTTPRoute, 0, len(httpRouteInputs))
+	for _, raw := range httpRouteInputs {
+		prefix, upstream, ok := strings.Cut(raw, "=")
+		if !ok {
+			return fmt.Errorf("--http-route %q: expected PATH=UPSTREAM", raw)
+		}
+		prefix = strings.TrimSpace(prefix)
+		if prefix == "" {
+			return fmt.Errorf("--http-route %q: path is required", raw)
+		}
+		if !strings.HasPrefix(prefix, "/") {
+			return fmt.Errorf("--http-route %q: path must start with /", raw)
+		}
+		upstream = strings.TrimSpace(upstream)
+		if upstream == "" {
+			return fmt.Errorf("--http-route %q: upstream is required", raw)
+		}
+		normalizedPrefix := utils.NormalizeURLPath(prefix)
+		route := sdk.HTTPRoute{
+			Prefix:   prefix,
+			Upstream: upstream,
+		}
+		if price, ok := x402Prices[normalizedPrefix]; ok {
+			route.X402Price = price
+			delete(x402Prices, normalizedPrefix)
+		}
+		httpRoutes = append(httpRoutes, route)
+	}
+	for prefix := range x402Prices {
+		return fmt.Errorf("--x402-price path %q has no matching --http-route", prefix)
 	}
 
 	ctx, stop := utils.SignalContext()
@@ -161,23 +227,12 @@ func runExposeCommand(args []string) error {
 			Thumbnail:   flags.thumbnail,
 			Hide:        flags.hide,
 		},
+		X402PayTo: flags.x402PayTo,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to start relays: %w", err)
 	}
 	if len(httpRouteInputs) > 0 {
-		httpRoutes := make([]sdk.HTTPRoute, 0, len(httpRouteInputs))
-		for _, raw := range httpRouteInputs {
-			prefix, upstream, ok := strings.Cut(raw, "=")
-			if !ok {
-				return fmt.Errorf("--http-route %q: expected PATH=UPSTREAM", raw)
-			}
-			httpRoutes = append(httpRoutes, sdk.HTTPRoute{
-				Prefix:   strings.TrimSpace(prefix),
-				Upstream: strings.TrimSpace(upstream),
-			})
-		}
-
 		defer exposure.Close()
 		return exposure.RunHTTPRoutes(ctx, httpRoutes, "")
 	}

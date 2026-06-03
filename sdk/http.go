@@ -132,6 +132,8 @@ type HTTPRoute struct {
 	Prefix string
 	// Upstream is the target HTTP URL, or a loopback host:port shorthand.
 	Upstream string
+	// X402Price enables Sui x402 payment for this public path prefix.
+	X402Price string
 }
 
 type httpRoute struct {
@@ -141,20 +143,25 @@ type httpRoute struct {
 	upstreamPath      string
 	upstreamPathSlash string
 	upstreamDomain    string
+	x402Price         string
 	handler           http.Handler
 }
 
-func newHTTPRouteHandler(routeConfigs []HTTPRoute, tunnelIdentity types.Identity, metadata types.LeaseMetadata) (http.Handler, error) {
+func newHTTPRouteHandler(routeConfigs []HTTPRoute, tunnelIdentity types.Identity, metadata types.LeaseMetadata, x402PayTo string) (http.Handler, error) {
 	if len(routeConfigs) == 0 {
 		return nil, errors.New("at least one http route is required")
 	}
 
+	x402PayTo = strings.TrimSpace(x402PayTo)
 	routes := make([]*httpRoute, 0, len(routeConfigs))
 	seen := make(map[string]struct{}, len(routeConfigs))
 	for _, routeConfig := range routeConfigs {
 		route, err := newHTTPRoute(routeConfig)
 		if err != nil {
 			return nil, err
+		}
+		if route.x402Price != "" && x402PayTo == "" {
+			return nil, fmt.Errorf("http route %q x402 price requires x402 pay-to", route.prefix)
 		}
 		if _, ok := seen[route.prefix]; ok {
 			return nil, fmt.Errorf("duplicate http route prefix %q", route.prefix)
@@ -226,6 +233,7 @@ func newHTTPRoute(routeConfig HTTPRoute) (*httpRoute, error) {
 		upstream:       upstream,
 		upstreamPath:   upstream.Path,
 		upstreamDomain: utils.NormalizeHostname(upstream.Hostname()),
+		x402Price:      strings.TrimSpace(routeConfig.X402Price),
 	}
 	if prefix != "/" {
 		route.prefixSlash = prefix + "/"

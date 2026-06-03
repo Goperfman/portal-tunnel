@@ -34,16 +34,14 @@ func NetworkDisplayName(network string) string {
 }
 
 type FacilitatorConfig struct {
-	Identity types.Identity
-	Testnet  bool
+	Testnet bool
 }
 
 func MountFacilitator(mux *http.ServeMux, cfg FacilitatorConfig) error {
 	if mux == nil {
 		return errors.New("x402 facilitator requires an api mux")
 	}
-	privateKey := strings.TrimSpace(cfg.Identity.PrivateKey)
-	facilitator, err := facilitatorcore.NewSuiFacilitator(Network(cfg.Testnet), "", privateKey)
+	facilitator, err := facilitatorcore.NewSuiFacilitator(Network(cfg.Testnet), "", "")
 	if err != nil {
 		return fmt.Errorf("create sui x402 facilitator: %w", err)
 	}

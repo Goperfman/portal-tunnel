@@ -661,6 +661,7 @@ func (t *managedTunnel) runOnce(ctx context.Context) error {
 		BanMITM:         banMITM,
 		MaxActiveRelays: cfg.MaxActiveRelays,
 		Metadata:        metadataFromTunnelConfig(cfg),
+		X402PayTo:       cfg.X402PayTo,
 	})
 	if err != nil {
 		return err
@@ -684,8 +685,9 @@ func (t *managedTunnel) runOnce(ctx context.Context) error {
 		routes := make([]sdk.HTTPRoute, 0, len(cfg.HTTPRoutes))
 		for _, route := range cfg.HTTPRoutes {
 			routes = append(routes, sdk.HTTPRoute{
-				Prefix:   route.Prefix,
-				Upstream: route.Upstream,
+				Prefix:    route.Prefix,
+				Upstream:  route.Upstream,
+				X402Price: route.X402Price,
 			})
 		}
 		err = exposure.RunHTTPRoutes(ctx, routes, "")

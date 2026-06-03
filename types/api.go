@@ -196,6 +196,7 @@ type X402FacilitatorInfo struct {
 	Network      string `json:"network,omitempty"`
 	NetworkName  string `json:"network_name,omitempty"`
 	SupportedURL string `json:"supported_url,omitempty"`
+	PayTo        string `json:"pay_to,omitempty"`
 }
 
 type ENSStatus struct {

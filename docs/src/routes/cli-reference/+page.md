@@ -97,6 +97,8 @@ not supported.
 | `--thumbnail` | string | | Service thumbnail URL metadata |
 | `--owner` | string | | Service owner metadata |
 | `--hide` | bool | `false` | Hide service from relay listing screens |
+| `--x402-pay-to` | string | | Sui payment recipient address for this tunnel |
+| `--x402-price` | string | | Sui x402 price mapping in `PATH=PRICE` form; repeatable; requires `--http-route` and `--x402-pay-to` |
 | `--http-route` | string | | HTTP route mapping in `PATH=UPSTREAM` form; repeatable |
 | `--tcp` | bool | `false` | Request a dedicated raw TCP port on the relay |
 | `--udp` | bool | `false` | Enable public UDP relay in addition to the default stream path |
@@ -110,6 +112,9 @@ not supported.
 - Explicit `--multi-hop` cannot be combined with automatic `--multi-hop-depth`.
 - Multi-hop currently supports only the default SNI TLS stream transport.
 - `--tcp` and `--udp` require matching transport support on the relay.
+- `--x402-price` applies only to routed HTTP prefixes and requires a
+  tunnel-owned `--x402-pay-to`; relay `X402_PAY_TO` is not used as a tunnel
+  default.
 
 ### Examples
 
@@ -169,6 +174,16 @@ Ban relays on MITM probe detection:
 
 ```bash
 portal expose 3000 --ban-mitm
+```
+
+Publish a paid HTTP route:
+
+```bash
+portal expose --name myapp \
+  --http-route /api=http://127.0.0.1:3001 \
+  --http-route /=http://127.0.0.1:5173 \
+  --x402-pay-to 0x... \
+  --x402-price /api=100000
 ```
 
 ## `portal list`

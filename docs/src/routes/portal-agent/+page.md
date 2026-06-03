@@ -70,10 +70,12 @@ id = "frontend"
 name = "myapp"
 relays = ["https://portal.example.com"]
 discovery = false
+x402_pay_to = "0x..."
 
 [[tunnels.http_routes]]
 prefix = "/api"
 upstream = "http://127.0.0.1:3001"
+x402_price = "100000"
 
 [[tunnels.http_routes]]
 prefix = "/"
@@ -172,6 +174,8 @@ Common fields:
 | `multi_hop_depth` | Automatically choose one multi-hop route with this depth |
 | `ban_mitm` | Ban relays when the TLS self-probe detects termination; defaults to warning-only |
 | `description`, `tags`, `owner`, `thumbnail`, `hide` | Public relay metadata |
+| `x402_pay_to` | Tunnel-owned Sui x402 recipient for priced HTTP routes |
+| `http_routes[].x402_price` | Optional Sui x402 price for one HTTP route prefix |
 
 Constraints match `portal expose`:
 
@@ -181,6 +185,8 @@ Constraints match `portal expose`:
 - `multi_hop` cannot be combined with `multi_hop_depth`.
 - Multi-hop currently supports only the default stream transport, not UDP or raw
   TCP port mode.
+- `http_routes[].x402_price` requires `x402_pay_to`; relay `X402_PAY_TO` is
+  independent and is not used as a tunnel default.
 
 ## Identity Layout
 

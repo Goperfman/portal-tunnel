@@ -153,6 +153,8 @@ Mode constraints:
 - `--http-route` cannot be combined with `--udp`.
 - Multi-hop currently supports only the default SNI TLS stream transport.
 - `--multi-hop` cannot be combined with automatic `--multi-hop-depth`.
+- `--x402-price` applies only to routed HTTP prefixes and requires a
+  tunnel-owned `--x402-pay-to`.
 
 Common flags:
 
@@ -171,6 +173,8 @@ Common flags:
 --thumbnail          Service thumbnail URL metadata
 --owner              Service owner metadata
 --hide               Hide service from relay listing screens
+--x402-pay-to        Sui payment recipient address for this tunnel
+--x402-price         Sui x402 price mapping in PATH=PRICE form; repeatable
 --http-route         HTTP route mapping in PATH=UPSTREAM form; repeatable
 --tcp                Request a dedicated raw TCP port on the relay
 --udp                Enable public UDP relay in addition to the default stream path
@@ -271,8 +275,9 @@ id = "frontend"
 name = "myapp-http"
 relays = ["https://portal.example.com"]
 discovery = false
+x402_pay_to = "0x..."
 http_routes = [
-  { prefix = "/api", upstream = "http://127.0.0.1:3001" },
+  { prefix = "/api", upstream = "http://127.0.0.1:3001", x402_price = "100000" },
   { prefix = "/", upstream = "http://127.0.0.1:5173" },
 ]
 ```

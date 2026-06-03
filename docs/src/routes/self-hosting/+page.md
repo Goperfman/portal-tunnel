@@ -95,11 +95,14 @@ the embedded handler. Payments use Sui mainnet by default; set
 environment:
   X402_ENABLED: "true"
   X402_TESTNET: "false"
+  X402_PAY_TO: "0x..."
 ```
 
 This serves `/api/x402/supported`, `/api/x402/verify`, and `/api/x402/settle`.
 Portal payments intentionally support only Sui mainnet and testnet. Route-level
-payment enforcement is configured separately from the facilitator endpoint.
+payment enforcement is configured separately from the facilitator endpoint. The
+relay `X402_PAY_TO` address is for relay-owned resources; tunnel apps set their
+own recipient with `portal expose --x402-pay-to`.
 
 ## Connecting Your Tunnel
 

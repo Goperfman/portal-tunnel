@@ -101,6 +101,7 @@ export interface X402FacilitatorInfo {
   network?: string;
   network_name?: string;
   supported_url?: string;
+  pay_to?: string;
 }
 
 export interface DomainResponse {

@@ -53,7 +53,7 @@ that switches to a raw stream after a successful HTTP/1.1 response.
 | Field | Type |
 |-------|------|
 | `enabled` | `boolean` |
-| `url`, `network`, `network_name`, `supported_url` | `string` |
+| `url`, `network`, `network_name`, `supported_url`, `pay_to` | `string` |
 
 ## Register Challenge
 

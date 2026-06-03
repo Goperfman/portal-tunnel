@@ -118,6 +118,8 @@ These Sui-only endpoints are available only when
 `X402_ENABLED=true`. They are served by the embedded
 `gosuda/x402-facilitator` handler and do not use the Portal JSON envelope.
 Portal selects Sui mainnet by default and Sui testnet when `X402_TESTNET=true`.
+`X402_PAY_TO` is only the relay-owned payment recipient. Tunnel payment
+settings are local tunnel configuration and are not part of the relay lease API.
 
 | Method | Path | Auth | Body | Response |
 |--------|------|------|------|----------|

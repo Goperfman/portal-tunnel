@@ -258,6 +258,7 @@ func (s *Server) handleDomain(w http.ResponseWriter, r *http.Request) {
 		x402Info.Network = network
 		x402Info.NetworkName = x402.NetworkDisplayName(network)
 		x402Info.SupportedURL = baseURL + types.X402SupportedPath
+		x402Info.PayTo = cfg.X402PayTo
 	}
 
 	utils.WriteAPIData(w, http.StatusOK, types.DomainResponse{
