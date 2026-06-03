@@ -38,12 +38,13 @@ docker run -d \
   -p 4017:4017 \
   -e PORTAL_URL=https://relay.example.com:4017 \
   -e IDENTITY_PATH=/portal-certs \
+  -e ADMIN_TOKEN="$(openssl rand -hex 32)" \
   -v $(pwd)/relay-data:/portal-certs \
   ghcr.io/gosuda/portal:2
 ```
 
-Replace `relay.example.com` with your domain. The relay identity address is
-allowed to use relay admin auth by default.
+Replace `relay.example.com` with your domain. Keep the generated
+`ADMIN_TOKEN`; it is required for relay admin and policy access.
 
 ## Docker Compose Setup
 
@@ -63,6 +64,7 @@ services:
       API_PORT: "4017"
       SNI_PORT: "443"
       IDENTITY_PATH: /portal-certs
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
     volumes:
       - ./relay-data:/portal-certs
 ```
@@ -81,6 +83,7 @@ docker compose up -d
 | `API_PORT` | `4017` | Admin/API server port. |
 | `SNI_PORT` | `443` | TCP SNI router port for tunnel traffic. |
 | `IDENTITY_PATH` | `./.portal-certs` | Relay state directory containing `identity.json`, `policy.json`, and TLS materials. |
+| `ADMIN_TOKEN` | | Bearer token source for relay admin and policy APIs. |
 
 ## Connecting Your Tunnel
 
@@ -138,46 +141,6 @@ ports:
 ```
 
 See [TCP/UDP Tunneling](/tcp-udp-tunneling) for usage details.
-
-## Optional: Enable x402 Facilitator
-
-The relay can expose a relay-local x402 facilitator at `/api/x402`. Frontends and
-configuration tools can read `/sdk/domain` for the current relay's facilitator
-URL and network, then call `/api/x402/supported` for mechanism details when needed.
-
-```yaml
-environment:
-  X402_FACILITATOR_ENABLED: "true"
-  X402_NETWORK: eip155:8453
-  X402_RPC_URL: https://base-mainnet.example
-```
-
-The relay-local facilitator uses the relay identity private key from
-`IDENTITY_PATH/identity.json`. Fund that identity only as required for
-settlement gas.
-
-For CLI-created x402 routes, pass the selected facilitator explicitly:
-
-```bash
-portal expose 3000 \
-  --relays https://relay.example.com:4017 \
-  --discovery=false \
-  --x402-facilitator-url https://relay.example.com:4017/api/x402 \
-  --x402-network eip155:8453 \
-  --x402-price "$0.001"
-```
-
-Native Go apps can use the same relay facilitator without putting payment
-policy in the tunnel config. The payment app includes a native paid image route:
-
-```bash
-go run ./cmd/payment-app \
-  --relays https://relay.example.com:4017 \
-  --discovery=false \
-  --x402-facilitator-url https://relay.example.com:4017/api/x402 \
-  --x402-network eip155:8453 \
-  --x402-price "$0.01"
-```
 
 ## Troubleshooting
 

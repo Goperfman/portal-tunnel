@@ -6,12 +6,11 @@ const (
 	PathHealthz   = PathAPIPrefix + "/healthz"
 	PathState     = PathAPIPrefix + "/state"
 
-	PathAdmin              = PathAPIPrefix + "/admin"
-	PathAdminPrefix        = PathAdmin + "/"
-	PathAdminAuthChallenge = PathAdmin + "/auth/challenge"
-	PathAdminAuthLogin     = PathAdmin + "/auth/login"
-	PathAdminLogout        = PathAdmin + "/auth/logout"
-	PathAdminAuthStatus    = PathAdmin + "/auth/status"
+	PathAdmin           = PathAPIPrefix + "/admin"
+	PathAdminPrefix     = PathAdmin + "/"
+	PathAdminAuthLogin  = PathAdmin + "/auth/login"
+	PathAdminLogout     = PathAdmin + "/auth/logout"
+	PathAdminAuthStatus = PathAdmin + "/auth/status"
 
 	PathPolicy       = PathAPIPrefix + "/policy"
 	PathPolicyPrefix = PathPolicy + "/"
@@ -22,11 +21,6 @@ const (
 	PathInstallShell      = PathAPIPrefix + "/install.sh"
 	PathInstallPowerShell = PathAPIPrefix + "/install.ps1"
 	PathInstallBinPrefix  = PathAPIPrefix + "/install/bin/"
-
-	PathX402Facilitator = PathAPIPrefix + "/x402"
-	X402SupportedPath   = PathX402Facilitator + "/supported"
-	X402VerifyPath      = PathX402Facilitator + "/verify"
-	X402SettlePath      = PathX402Facilitator + "/settle"
 
 	PathV1Sign = "/v1/sign"
 

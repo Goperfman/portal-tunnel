@@ -176,7 +176,7 @@ Portal's own nginx, it should TCP-passthrough `portal.example.com` and
 
 If the relay joins public discovery, set `BOOTSTRAPS` to at least one reachable relay URL and keep `WIREGUARD_PORT/udp` open.
 
-The relay identity wallet can always sign in through admin auth. Set `ADMIN_WALLETS` only when you need additional admin wallets.
+Set `ADMIN_TOKEN` to a long random value before exposing the admin UI or policy API.
 
 Leave `TRUSTED_PROXY_CIDRS` empty for the default private and loopback proxy ranges. Set it only when you need a stricter proxy source allowlist.
 
@@ -359,7 +359,7 @@ It owns:
 - `/ui/thumbnail/<hostname>`, when optional screenshot generation is enabled.
 - The landing-page flag persisted at `PORTAL_FRONTEND_STATE_PATH`; a Compose deployment can store it under `./.portal-certs/frontend-state/state.json`.
 
-The Go relay remains the owner of authentication, policy enforcement, lease state, tunnel ingress, install scripts, discovery, and x402 facilitator paths.
+The Go relay remains the owner of authentication, policy enforcement, lease state, tunnel ingress, install scripts, and discovery paths.
 
 ### Custom Frontend
 

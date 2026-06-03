@@ -296,8 +296,6 @@ func TestServerStartDomainReportsCompatibilityInfo(t *testing.T) {
 		SNIPort:       4443,
 		APIListenAddr: "127.0.0.1:0",
 		SNIListenAddr: "127.0.0.1:0",
-		X402Enabled:   true,
-		X402Network:   " eip155:84532 ",
 	})
 	if err != nil {
 		t.Fatalf("NewServer() error = %v", err)
@@ -339,21 +337,6 @@ func TestServerStartDomainReportsCompatibilityInfo(t *testing.T) {
 	}
 	if envelope.Data.ReleaseVersion != types.ReleaseVersion {
 		t.Fatalf("DomainResponse.ReleaseVersion = %q, want %q", envelope.Data.ReleaseVersion, types.ReleaseVersion)
-	}
-	if !envelope.Data.X402.Enabled {
-		t.Fatal("DomainResponse.X402.Enabled = false, want true")
-	}
-	if envelope.Data.X402.Network != "eip155:84532" {
-		t.Fatalf("DomainResponse.X402.Network = %q, want eip155:84532", envelope.Data.X402.Network)
-	}
-	if envelope.Data.X402.NetworkName != "Base Sepolia" {
-		t.Fatalf("DomainResponse.X402.NetworkName = %q, want Base Sepolia", envelope.Data.X402.NetworkName)
-	}
-	if envelope.Data.X402.URL != "https://localhost:4017/api/x402" {
-		t.Fatalf("DomainResponse.X402.URL = %q, want https://localhost:4017/api/x402", envelope.Data.X402.URL)
-	}
-	if envelope.Data.X402.SupportedURL != "https://localhost:4017/api/x402/supported" {
-		t.Fatalf("DomainResponse.X402.SupportedURL = %q, want https://localhost:4017/api/x402/supported", envelope.Data.X402.SupportedURL)
 	}
 }
 

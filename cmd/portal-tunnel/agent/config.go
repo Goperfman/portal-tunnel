@@ -13,7 +13,6 @@ import (
 	"github.com/knadh/koanf/v2"
 
 	"github.com/gosuda/portal-tunnel/v2/cmd/portal-tunnel/agent/service"
-	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
@@ -63,9 +62,8 @@ type TunnelConfig struct {
 }
 
 type HTTPRouteConfig struct {
-	Prefix   string            `koanf:"prefix"`
-	Upstream string            `koanf:"upstream"`
-	X402     *types.X402Config `koanf:"x402"`
+	Prefix   string `koanf:"prefix"`
+	Upstream string `koanf:"upstream"`
 }
 
 func LoadExistingConfig(path string) (Config, error) {
@@ -179,9 +177,6 @@ func tunnelConfigDocumentMap(cfg TunnelConfig) map[string]any {
 			routeMap := make(map[string]any)
 			addStringDocumentField(routeMap, "prefix", route.Prefix)
 			addStringDocumentField(routeMap, "upstream", route.Upstream)
-			if route.X402 != nil && !route.X402.Empty() {
-				routeMap["x402"] = x402ConfigDocumentMap(*route.X402)
-			}
 			routes = append(routes, routeMap)
 		}
 		out["http_routes"] = routes
@@ -215,23 +210,6 @@ func tunnelConfigDocumentMap(cfg TunnelConfig) map[string]any {
 	addStringDocumentField(out, "thumbnail", cfg.Thumbnail)
 	if cfg.Hide {
 		out["hide"] = cfg.Hide
-	}
-	return out
-}
-
-func x402ConfigDocumentMap(cfg types.X402Config) map[string]any {
-	out := make(map[string]any)
-	addStringDocumentField(out, "network", cfg.Network)
-	addStringDocumentField(out, "price", cfg.Price)
-	addStringDocumentField(out, "pay_to", cfg.PayTo)
-	addStringDocumentField(out, "facilitator_url", cfg.FacilitatorURL)
-	addStringDocumentField(out, "resource", cfg.Resource)
-	addStringDocumentField(out, "mime_type", cfg.MimeType)
-	if cfg.MaxTimeoutSeconds != 0 {
-		out["max_timeout_seconds"] = cfg.MaxTimeoutSeconds
-	}
-	if cfg.PaymentTimeoutSecs != 0 {
-		out["payment_timeout_seconds"] = cfg.PaymentTimeoutSecs
 	}
 	return out
 }

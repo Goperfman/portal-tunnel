@@ -4,7 +4,6 @@ export const RELAY_API_PATHS = {
   },
   admin: {
     root: "/api/admin",
-    authChallenge: "/api/admin/auth/challenge",
     authLogin: "/api/admin/auth/login",
     logout: "/api/admin/auth/logout",
     authStatus: "/api/admin/auth/status",

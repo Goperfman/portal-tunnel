@@ -72,92 +72,6 @@ connections. Because the tunnel process parses HTTP in this mode, this is the
 right mode for HTTP-specific behavior such as path routing, response header
 policy, redirect rewriting, and cookie path remapping.
 
-Use x402 when a routed HTTP endpoint should require payment before the upstream
-app receives the request:
-
-```text
-portal expose 3000 --name paid-api \
-  --description "Paid API" \
-  --x402-facilitator-url https://portal.example.com:4017/api/x402 \
-  --x402-network eip155:8453 \
-  --x402-price "$0.001" \
-  --x402-resource /
-```
-
-When `--x402-*` is used with a positional target, the CLI runs routed HTTP mode
-internally as `--http-route /=<target>`. `--x402-pay-to` defaults to the tunnel
-identity address; set it explicitly when payments should be received by another
-wallet. The x402 paywall uses tunnel metadata: `--name` for the app name,
-`--description` for the resource description, and `--thumbnail` for the app
-logo. Empty `--x402-resource` uses the requested URL in the x402 payment
-requirement. Set it only when a stable resource URL should be advertised. The tunnel does
-not infer a relay facilitator URL; set `--x402-facilitator-url` explicitly, or
-use relay/frontend tooling that writes the desired facilitator URL into the
-tunnel config. x402 is not available in raw TCP or UDP modes.
-
-For route-specific static prices, use agent config and attach `x402` to the
-routes that should be paid:
-
-```toml
-[[tunnels]]
-id = "paid-site"
-name = "paid-site"
-relays = ["https://portal.example.com"]
-discovery = false
-
-[[tunnels.http_routes]]
-prefix = "/"
-upstream = "http://127.0.0.1:5173"
-
-[[tunnels.http_routes]]
-prefix = "/api/report"
-upstream = "http://127.0.0.1:3001"
-
-[tunnels.http_routes.x402]
-network = "eip155:8453"
-price = "$0.010"
-pay_to = "identity"
-facilitator_url = "https://portal.example.com:4017/api/x402"
-resource = "/api/report"
-mime_type = "application/json"
-
-[[tunnels.http_routes]]
-prefix = "/api/dataset"
-upstream = "http://127.0.0.1:3001"
-
-[tunnels.http_routes.x402]
-network = "eip155:8453"
-price = "$0.050"
-pay_to = "identity"
-facilitator_url = "https://portal.example.com:4017/api/x402"
-resource = "/api/dataset"
-mime_type = "application/json"
-```
-
-For product/catalog pricing that depends on each request, put x402 in the Go
-app itself and wrap the protected handler with `portal/x402`:
-
-```go
-protected, err := portalx402.NewHTTPRouteHandler(portalx402.HTTPRouteHandlerConfig{
-	Prefix:         "/api/premium",
-	Next:           premiumHandler,
-	X402:           x402Config,
-	TunnelIdentity: appIdentity,
-	Metadata:       metadata,
-	PriceResolver: func(ctx context.Context, req portalx402.HTTPRequestContext) (string, error) {
-		return catalog.PriceForPath(req.Path)
-	},
-})
-```
-
-`cmd/payment-app` includes this native x402 pattern. Run it with:
-
-```text
-payment-app --x402-facilitator-url https://portal.example.com:4017/api/x402 \
-  --x402-network eip155:8453 \
-  --x402-price "$0.01"
-```
-
 Use dedicated raw TCP mode for non-HTTP services that need a public TCP port:
 
 ```text
@@ -258,16 +172,6 @@ Common flags:
 --owner              Service owner metadata
 --hide               Hide service from relay listing screens
 --http-route         HTTP route mapping in PATH=UPSTREAM form; repeatable
---x402-network       x402 payment network, such as eip155:8453
---x402-price         x402 route price, such as $0.001
---x402-pay-to        x402 recipient address; defaults to the tunnel identity address
---x402-facilitator-url
-                     x402 facilitator URL
---x402-resource      x402 protected resource URL; empty uses the requested URL
---x402-mime-type     x402 protected resource MIME type
---x402-max-timeout   x402 max payment timeout seconds advertised to clients
---x402-payment-timeout
-                     x402 middleware verify/settle timeout seconds
 --tcp                Request a dedicated raw TCP port on the relay
 --udp                Enable public UDP relay in addition to the default stream path
 --udp-addr           Local UDP target; defaults to the primary target when --udp is enabled
@@ -326,8 +230,7 @@ Useful commands:
 - `portal agent run --config config.toml --foreground` runs the agent in the
   current terminal and opens the dashboard when the terminal is interactive.
 - `portal agent dashboard` attaches to a running agent and opens the local TUI
-  for tunnels, relays, multi-hop routes, editable tunnel settings, and x402
-  facilitator URLs.
+  for tunnels, relays, multi-hop routes, and editable tunnel settings.
 - `portal agent stop` asks the local agent to shut down, then disables or stops
   the OS service so intentional shutdown is not immediately restarted.
 - `portal agent restart` stops the running agent if present, installs or updates
@@ -372,24 +275,6 @@ http_routes = [
   { prefix = "/api", upstream = "http://127.0.0.1:3001" },
   { prefix = "/", upstream = "http://127.0.0.1:5173" },
 ]
-
-[[tunnels]]
-id = "paid-api"
-name = "paid-api"
-description = "Paid API"
-relays = ["https://portal.example.com"]
-discovery = false
-
-[[tunnels.http_routes]]
-prefix = "/"
-upstream = "http://127.0.0.1:3000"
-
-[tunnels.http_routes.x402]
-network = "eip155:8453"
-price = "$0.001"
-pay_to = "identity"
-facilitator_url = "https://portal.example.com:4017/api/x402"
-resource = "/"
 ```
 
 ## Install Behavior

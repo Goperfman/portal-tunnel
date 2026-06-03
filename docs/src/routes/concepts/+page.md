@@ -160,8 +160,8 @@ datagram authentication.
 
 Reusing the same identity path keeps the same tunnel identity across runs.
 
-Browser wallet login is separate from tunnel registration. It is used for relay
-admin access and optional local agent status access. See
+Relay admin token login and optional browser wallet login for local agent status
+are both separate from tunnel registration. See
 [Wallet and ENS](/wallet-and-ens) for the distinction.
 
 ## Domain Boundary

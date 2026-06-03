@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { Loader2, LogOut, Wallet } from "lucide-react";
+import { KeyRound, Loader2, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggleButton } from "@/components/ThemeToggleButton";
 import { useAuth } from "@/hooks/useAuth";
 import { apiClient } from "@/lib/apiClient";
 import { BROWSER_API_PATHS } from "@/lib/apiPaths";
-import type { DomainResponse, X402FacilitatorInfo } from "@/types/api";
+import type { DomainResponse } from "@/types/api";
 import {
   Tooltip,
   TooltipContent,
@@ -22,18 +22,6 @@ interface HeaderProps {
 
 const repoURL = "https://github.com/gosuda/portal-tunnel";
 
-function formatWalletAddress(address: string): string {
-  const trimmed = address.trim();
-  if (trimmed.length <= 12) {
-    return trimmed;
-  }
-  return `${trimmed.slice(0, 6)}...${trimmed.slice(-4)}`;
-}
-
-function facilitatorNetworkLabel(x402: X402FacilitatorInfo): string {
-  return x402.network_name?.trim() || x402.network?.trim() || "enabled";
-}
-
 export function Header({
   title = "PORTAL",
   isAdmin,
@@ -42,23 +30,23 @@ export function Header({
 }: HeaderProps) {
   const [releaseVersion, setReleaseVersion] = useState("");
   const [ensVerified, setENSVerified] = useState(false);
-  const [x402, setX402] = useState<X402FacilitatorInfo | null>(null);
   const {
     isAuthenticated,
     isLoading,
-    walletAddress,
     login,
     logout,
   } = useAuth();
+  const [adminToken, setAdminToken] = useState("");
   const [authError, setAuthError] = useState("");
 
-  const handleWalletLogin = async () => {
+  const handleAdminLogin = async () => {
     setAuthError("");
-    const result = await login();
+    const result = await login(adminToken);
     if (!result.success) {
-      setAuthError(result.error || "Wallet login failed.");
+      setAuthError(result.error || "Admin login failed.");
       return;
     }
+    setAdminToken("");
     await onAuthChange?.();
   };
 
@@ -67,13 +55,6 @@ export function Header({
     await logout();
     await onAuthChange?.();
   };
-
-  const walletLabel = isAuthenticated && walletAddress
-    ? formatWalletAddress(walletAddress)
-    : "Wallet";
-  const walletTooltip = authError || (
-    isAuthenticated && walletAddress ? walletAddress : "Connect wallet"
-  );
 
   useEffect(() => {
     let cancelled = false;
@@ -90,13 +71,11 @@ export function Header({
               : ""
           );
           setENSVerified(status?.ens?.verified === true);
-          setX402(status?.x402?.enabled === true ? status.x402 : null);
         }
       } catch {
         if (!cancelled) {
           setReleaseVersion("");
           setENSVerified(false);
-          setX402(null);
         }
       }
     })();
@@ -138,14 +117,6 @@ export function Header({
               {ensVerified && (
                 <span className="inline-flex h-6 items-center rounded-full bg-primary/12 px-2.5 text-xs font-semibold text-primary ring-1 ring-primary/20">
                   ENS verified
-                </span>
-              )}
-              {x402 && (
-                <span
-                  className="inline-flex h-6 max-w-40 cursor-default items-center overflow-hidden text-ellipsis whitespace-nowrap rounded-full bg-emerald-500/10 px-2.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-500/20 dark:text-emerald-300"
-                  title="x402 facilitator enabled"
-                >
-                  x402 {facilitatorNetworkLabel(x402)}
                 </span>
               )}
             </div>
@@ -200,55 +171,66 @@ export function Header({
 
         <ThemeToggleButton className="inline-flex shrink-0" />
 
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant={isAuthenticated ? "secondary" : "outline"}
-                onClick={isAuthenticated ? undefined : handleWalletLogin}
-                disabled={isLoading}
-                className={`h-12 rounded-full border-border/70 bg-background/90 px-3 text-foreground shadow-sm transition-all hover:bg-background disabled:cursor-not-allowed sm:px-4 ${
-                  isAuthenticated
-                    ? "cursor-default"
-                    : "cursor-pointer hover:-translate-y-0.5 hover:border-primary/40 hover:text-primary"
-                }`}
-                aria-label={isAuthenticated ? "Wallet connected" : "Connect wallet"}
-              >
-                {isLoading ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                ) : (
-                  <Wallet className="h-5 w-5" />
-                )}
-                <span className="max-w-28 truncate font-mono text-xs sm:max-w-36">
-                  {walletLabel}
-                </span>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{walletTooltip}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        {isAdmin && (
+          <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+            {authError && (
+              <span className="max-w-64 text-right text-xs font-medium text-destructive">
+                {authError}
+              </span>
+            )}
 
-        {isAuthenticated && (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
+            {!isAuthenticated ? (
+              <form
+                className="flex max-w-full flex-wrap items-center justify-end gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleAdminLogin();
+                }}
+              >
+                <input
+                  type="password"
+                  value={adminToken}
+                  onChange={(event) => setAdminToken(event.target.value)}
+                  placeholder="Admin token"
+                  autoComplete="current-password"
+                  className="h-12 w-44 rounded-full border border-border/70 bg-background/90 px-4 text-sm text-foreground shadow-sm outline-none transition focus:border-primary/50 sm:w-56"
+                  disabled={isLoading}
+                />
                 <Button
+                  type="submit"
                   variant="outline"
-                  size="icon"
-                  onClick={handleLogout}
-                  className="h-12 w-12 cursor-pointer rounded-full border-border/70 bg-background/90 text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-destructive/40 hover:bg-background hover:text-destructive"
-                  aria-label="Logout"
+                  disabled={isLoading}
+                  className="h-12 rounded-full border-border/70 bg-background/90 px-4 text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed"
                 >
-                  <LogOut className="h-5 w-5" />
+                  {isLoading ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <KeyRound className="h-5 w-5" />
+                  )}
+                  <span className="text-sm font-semibold">Login</span>
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Logout</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+              </form>
+            ) : (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={handleLogout}
+                      className="h-12 w-12 cursor-pointer rounded-full border-border/70 bg-background/90 text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-destructive/40 hover:bg-background hover:text-destructive"
+                      aria-label="Logout"
+                    >
+                      <LogOut className="h-5 w-5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Logout</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </div>
         )}
       </div>
     </header>

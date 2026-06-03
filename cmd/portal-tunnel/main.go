@@ -61,24 +61,12 @@ type exposeFlags struct {
 	hide            bool
 	targetAddr      string
 	httpRoutes      []string
-	x402            exposeX402Flags
 	udp             bool
 	udpAddr         string
 	tcp             bool
 	maxActiveRelays int
 	multiHopDepth   int
 	metricsAddr     string
-}
-
-type exposeX402Flags struct {
-	network        string
-	price          string
-	payTo          string
-	facilitator    string
-	resource       string
-	mimeType       string
-	maxTimeout     int
-	paymentTimeout int
 }
 
 func runExposeCommand(args []string) error {
@@ -100,7 +88,6 @@ func runExposeCommand(args []string) error {
 	utils.StringFlag(fs, &flags.thumbnail, "thumbnail", "", "Service thumbnail URL metadata")
 	utils.BoolFlag(fs, &flags.hide, "hide", false, "Hide service from relay listing screens")
 	utils.RepeatedStringFlag(fs, &flags.httpRoutes, "http-route", "HTTP route mapping in PATH=UPSTREAM form; repeat to aggregate multiple local HTTP services behind one public URL")
-	flags.x402.bind(fs)
 	utils.BoolFlagEnv(fs, &flags.udp, "udp", false, "Enable public UDP relay in addition to the default TCP relay", "UDP_ENABLED")
 	utils.StringFlagEnv(fs, &flags.udpAddr, "udp-addr", "", "Local UDP target address for relayed datagrams (host:port or port only); defaults to the target when --udp is enabled", "UDP_ADDR")
 	utils.BoolFlagEnv(fs, &flags.tcp, "tcp", false, "Request a dedicated TCP port on the relay for raw TCP services (no TLS; e.g., Minecraft, game servers)", "TCP_ENABLED")
@@ -121,15 +108,7 @@ func runExposeCommand(args []string) error {
 		printExposeUsage(os.Stderr)
 		return err
 	}
-	x402Config, err := flags.x402.config()
-	if err != nil {
-		printExposeUsage(os.Stderr)
-		return err
-	}
 	httpRouteInputs := append([]string(nil), flags.httpRoutes...)
-	if x402Config != nil && flags.targetAddr != "" && len(httpRouteInputs) == 0 {
-		httpRouteInputs = []string{"/=" + flags.targetAddr}
-	}
 	switch {
 	case flags.targetAddr == "" && len(httpRouteInputs) == 0:
 		printExposeUsage(os.Stderr)
@@ -140,9 +119,6 @@ func runExposeCommand(args []string) error {
 	case len(httpRouteInputs) > 0 && flags.udp:
 		printExposeUsage(os.Stderr)
 		return errors.New("--udp cannot be combined with --http-route")
-	case x402Config != nil && flags.tcp:
-		printExposeUsage(os.Stderr)
-		return errors.New("--x402 cannot be combined with --tcp")
 	}
 
 	ctx, stop := utils.SignalContext()
@@ -199,7 +175,6 @@ func runExposeCommand(args []string) error {
 			httpRoutes = append(httpRoutes, sdk.HTTPRoute{
 				Prefix:   strings.TrimSpace(prefix),
 				Upstream: strings.TrimSpace(upstream),
-				X402:     x402Config,
 			})
 		}
 
@@ -207,46 +182,6 @@ func runExposeCommand(args []string) error {
 		return exposure.RunHTTPRoutes(ctx, httpRoutes, "")
 	}
 	return sdk.ProxyExposure(ctx, exposure)
-}
-
-func (f *exposeX402Flags) bind(fs *flag.FlagSet) {
-	utils.StringFlag(fs, &f.network, "x402-network", "", "x402 payment network, such as eip155:8453")
-	utils.StringFlag(fs, &f.price, "x402-price", "", "x402 route price, such as $0.001")
-	utils.StringFlag(fs, &f.payTo, "x402-pay-to", "", "x402 recipient address; empty uses the tunnel identity address")
-	utils.StringFlag(fs, &f.facilitator, "x402-facilitator-url", "", "x402 facilitator URL")
-	utils.StringFlag(fs, &f.resource, "x402-resource", "", "x402 protected resource URL; empty uses the requested URL")
-	utils.StringFlag(fs, &f.mimeType, "x402-mime-type", "", "x402 protected resource MIME type")
-	fs.IntVar(&f.maxTimeout, "x402-max-timeout", 0, "x402 max payment timeout seconds advertised to clients")
-	fs.IntVar(&f.paymentTimeout, "x402-payment-timeout", 0, "x402 middleware verify/settle timeout seconds")
-}
-
-func (f exposeX402Flags) config() (*types.X402Config, error) {
-	cfg := &types.X402Config{
-		Network:            f.network,
-		Price:              f.price,
-		PayTo:              f.payTo,
-		FacilitatorURL:     f.facilitator,
-		Resource:           f.resource,
-		MimeType:           f.mimeType,
-		MaxTimeoutSeconds:  f.maxTimeout,
-		PaymentTimeoutSecs: f.paymentTimeout,
-	}
-	if cfg.Empty() {
-		return nil, nil
-	}
-	switch {
-	case strings.TrimSpace(cfg.FacilitatorURL) == "":
-		return nil, errors.New("--x402-facilitator-url is required when x402 is enabled")
-	case strings.TrimSpace(cfg.Network) == "":
-		return nil, errors.New("--x402-network is required when x402 is enabled")
-	case strings.TrimSpace(cfg.Price) == "":
-		return nil, errors.New("--x402-price is required when x402 is enabled")
-	case cfg.MaxTimeoutSeconds < 0:
-		return nil, errors.New("--x402-max-timeout cannot be negative")
-	case cfg.PaymentTimeoutSecs < 0:
-		return nil, errors.New("--x402-payment-timeout cannot be negative")
-	}
-	return cfg, nil
 }
 
 func runUpdateCommand(args []string) error {

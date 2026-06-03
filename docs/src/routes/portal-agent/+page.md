@@ -126,7 +126,7 @@ Dashboard panes:
 | Pane | Purpose |
 |------|---------|
 | Tunnels | Add, select, and delete simple target tunnels |
-| Settings | Edit max active relays, public metadata, and x402 facilitator URLs for x402 routes |
+| Settings | Edit max active relays and public metadata |
 | Relays | Connect or disconnect relays for the selected tunnel |
 | Multi-hop | Build and apply an ordered multi-hop route |
 
@@ -215,7 +215,7 @@ Control endpoints:
 | `GET` | `/agent/status` | Bearer token or wallet session | Read agent and tunnel status |
 | `POST` | `/agent/shutdown` | Bearer token | Ask the agent to stop |
 | `POST` | `/agent/tunnels` | Bearer token | Add a simple target tunnel |
-| `PATCH` | `/agent/tunnels/{id}` | Bearer token | Update metadata, max active relays, or x402 facilitator URL |
+| `PATCH` | `/agent/tunnels/{id}` | Bearer token | Update metadata or max active relays |
 | `DELETE` | `/agent/tunnels/{id}` | Bearer token | Delete a tunnel |
 | `POST` | `/agent/tunnels/{id}/relays` | Bearer token | Connect a relay |
 | `DELETE` | `/agent/tunnels/{id}/relays` | Bearer token | Disconnect a relay |
@@ -260,5 +260,5 @@ transport disabled on the relay, or an invalid multi-hop route.
 ## Next Steps
 
 - [Configuration Reference](/configuration#configtoml): every agent config field
-- [Wallet and ENS](/wallet-and-ens): wallet auth and ENS gasless behavior
+- [Wallet and ENS](/wallet-and-ens): admin tokens, wallet auth, and ENS gasless behavior
 - [CLI Reference](/cli-reference): command flags and examples

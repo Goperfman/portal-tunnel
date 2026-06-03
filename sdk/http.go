@@ -19,7 +19,6 @@ import (
 	"github.com/andybalholm/brotli"
 	"github.com/rs/zerolog/log"
 
-	portalx402 "github.com/gosuda/portal-tunnel/v2/portal/x402"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
@@ -133,8 +132,6 @@ type HTTPRoute struct {
 	Prefix string
 	// Upstream is the target HTTP URL, or a loopback host:port shorthand.
 	Upstream string
-	// X402 enables payment enforcement for this public route.
-	X402 *types.X402Config
 }
 
 type httpRoute struct {
@@ -163,20 +160,7 @@ func newHTTPRouteHandler(routeConfigs []HTTPRoute, tunnelIdentity types.Identity
 			return nil, fmt.Errorf("duplicate http route prefix %q", route.prefix)
 		}
 		seen[route.prefix] = struct{}{}
-		var handler http.Handler = route.newReverseProxy()
-		if routeConfig.X402 != nil && !routeConfig.X402.Empty() {
-			handler, err = portalx402.NewHTTPRouteHandler(portalx402.HTTPRouteHandlerConfig{
-				Prefix:         route.prefix,
-				Next:           handler,
-				X402:           *routeConfig.X402,
-				TunnelIdentity: tunnelIdentity,
-				Metadata:       metadata,
-			})
-			if err != nil {
-				return nil, err
-			}
-		}
-		route.handler = handler
+		route.handler = route.newReverseProxy()
 		routes = append(routes, route)
 	}
 

@@ -76,7 +76,6 @@ not supported.
 |------|---------|-------|
 | Default HTTPS stream | `portal expose 3000` | Relay routes by SNI; tunnel process terminates tenant TLS |
 | Routed HTTP | `portal expose --http-route /api=3001 --http-route /=5173` | Tunnel process runs the HTTP reverse proxy |
-| Routed HTTP with x402 | `portal expose 3000 --x402-facilitator-url https://portal.example.com/api/x402 --x402-network eip155:8453 --x402-price "$0.001"` | Tunnel process enforces payment before proxying to the upstream |
 | Dedicated raw TCP | `portal expose localhost:25565 --tcp` | Relay allocates a public TCP port |
 | UDP relay | `portal expose 8080 --udp --udp-addr 19132` | Relay allocates a public UDP port |
 
@@ -99,14 +98,6 @@ not supported.
 | `--owner` | string | | Service owner metadata |
 | `--hide` | bool | `false` | Hide service from relay listing screens |
 | `--http-route` | string | | HTTP route mapping in `PATH=UPSTREAM` form; repeatable |
-| `--x402-network` | string | | x402 payment network, such as `eip155:8453` |
-| `--x402-price` | string | | x402 route price, such as `$0.001` |
-| `--x402-pay-to` | string | identity | x402 recipient address; empty uses the tunnel identity address |
-| `--x402-facilitator-url` | string | | x402 facilitator URL |
-| `--x402-resource` | string | requested URL | x402 protected resource URL |
-| `--x402-mime-type` | string | | x402 protected resource MIME type |
-| `--x402-max-timeout` | int | `0` | x402 max payment timeout seconds advertised to clients |
-| `--x402-payment-timeout` | int | `0` | x402 middleware verify/settle timeout seconds |
 | `--tcp` | bool | `false` | Request a dedicated raw TCP port on the relay |
 | `--udp` | bool | `false` | Enable public UDP relay in addition to the default stream path |
 | `--udp-addr` | string | | Local UDP target; defaults to the primary target when `--udp` is enabled |
@@ -149,79 +140,6 @@ portal expose --name myapp \
 
 Route matching is longest-prefix-first. `/api` matches `/api/*` and strips the
 `/api` prefix before proxying to the upstream.
-
-Require x402 payment before a local upstream receives traffic:
-
-```bash
-portal expose 3000 --name paid-api \
-  --relays https://portal.example.com \
-  --discovery=false \
-  --x402-facilitator-url https://portal.example.com/api/x402 \
-  --x402-network eip155:8453 \
-  --x402-price "$0.001"
-```
-
-With `portal expose`, the `--x402-*` flags apply one shared price to the routed
-HTTP handler created by that command. For route-specific prices, use agent
-config and attach x402 to each paid route:
-
-```toml
-[[tunnels]]
-id = "paid-site"
-name = "paid-site"
-relays = ["https://portal.example.com"]
-discovery = false
-
-[[tunnels.http_routes]]
-prefix = "/"
-upstream = "http://127.0.0.1:5173"
-
-[[tunnels.http_routes]]
-prefix = "/api/report"
-upstream = "http://127.0.0.1:3001"
-
-[tunnels.http_routes.x402]
-network = "eip155:8453"
-price = "$0.010"
-pay_to = "identity"
-facilitator_url = "https://portal.example.com/api/x402"
-resource = "/api/report"
-mime_type = "application/json"
-
-[[tunnels.http_routes]]
-prefix = "/api/dataset"
-upstream = "http://127.0.0.1:3001"
-
-[tunnels.http_routes.x402]
-network = "eip155:8453"
-price = "$0.050"
-pay_to = "identity"
-facilitator_url = "https://portal.example.com/api/x402"
-resource = "/api/dataset"
-mime_type = "application/json"
-```
-
-Native Go apps can keep pricing inside the application instead. Wrap the paid
-handler with `portal/x402` and provide a resolver:
-
-```go
-protected, err := portalx402.NewHTTPRouteHandler(portalx402.HTTPRouteHandlerConfig{
-	Prefix:         "/api/premium",
-	Next:           premiumHandler,
-	X402:           x402Config,
-	TunnelIdentity: appIdentity,
-	Metadata:       metadata,
-	PriceResolver: func(ctx context.Context, req portalx402.HTTPRequestContext) (string, error) {
-		return catalog.PriceForPath(req.Path)
-	},
-})
-```
-
-The payment app exposes the same pattern:
-
-```bash
-go run ./cmd/payment-app --x402-facilitator-url https://portal.example.com/api/x402 --x402-network eip155:8453 --x402-price "$0.01"
-```
 
 Expose a Minecraft server:
 
@@ -284,7 +202,7 @@ portal agent restart
 |---------|-------------|
 | `portal agent run` | Install or update and start the managed agent service |
 | `portal agent run --config config.toml --foreground` | Run the agent in the current terminal |
-| `portal agent dashboard` | Open the local TUI for tunnels, relays, multi-hop routes, settings, and x402 facilitator URLs |
+| `portal agent dashboard` | Open the local TUI for tunnels, relays, multi-hop routes, and settings |
 | `portal agent stop` | Gracefully stop the agent and disable or stop the OS service |
 | `portal agent restart` | Stop the current agent if present, install or update the service, and start it again |
 
@@ -353,7 +271,7 @@ Prints the installed version string and exits.
 
 - [Getting Started](/getting-started): run your first tunnel
 - [Portal Agent](/portal-agent): run durable multi-tunnel services
-- [Wallet and ENS](/wallet-and-ens): understand wallet auth and ENS gasless DNS
+- [Wallet and ENS](/wallet-and-ens): understand admin tokens, wallet auth, and ENS gasless DNS
 - [Concepts](/concepts): understand the relay and transport model
 - [TCP and UDP Tunneling](/tcp-udp-tunneling): raw TCP and UDP setup
 - [Deployment](/deployment): run your own relay server

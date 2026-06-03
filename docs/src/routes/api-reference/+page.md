@@ -41,7 +41,6 @@ The envelope does not apply to streaming or delegated endpoints:
 | `/sdk/connect` | HTTP/1.1 connection hijack |
 | `/v1/sign` | keyless TLS signer protocol |
 | `/api/install.sh`, `/api/install.ps1`, `/api/install/bin/*` | script or binary bytes |
-| `/api/x402/*` | x402 facilitator API |
 
 Unknown routes may be handled by the frontend/proxy layer or return a normal
 HTTP 404 outside the envelope.
@@ -57,8 +56,9 @@ HTTP 404 outside the envelope.
 | Signed descriptor | relay discovery announce | signed `RelayDescriptor` body |
 | Signed hop route | relay overlay route | signed `HopRoute` body |
 
-Admin and SDK login both use SIWE, but they issue different tokens and are not
-interchangeable.
+Admin auth and SDK lease auth issue different tokens and are not
+interchangeable. SDK lease registration uses SIWE; relay admin access uses the
+configured admin token.
 
 ## Endpoint Groups
 
@@ -105,9 +105,8 @@ SDK clients.
 
 | Method | Path | Auth | Body | Response |
 |--------|------|------|------|----------|
-| `POST` | `/api/admin/auth/challenge` | None | `WalletAuthChallengeRequest` | `WalletAuthChallengeResponse` |
-| `POST` | `/api/admin/auth/login` | SIWE signature body | `WalletAuthLoginRequest` | `WalletAuthLoginResponse` |
-| `GET` | `/api/admin/auth/status` | Optional admin bearer | none | `WalletAuthStatusResponse` |
+| `POST` | `/api/admin/auth/login` | None | `AdminAuthLoginRequest` | `AdminAuthLoginResponse` |
+| `GET` | `/api/admin/auth/status` | Optional admin bearer | none | `AdminAuthStatusResponse` |
 | `POST` | `/api/admin/auth/logout` | Admin bearer | none | `{}` |
 
 `/admin` itself is a frontend route, not a relay API endpoint.
@@ -122,14 +121,13 @@ SDK clients.
 | `POST` | `/api/policy/leases` | Admin bearer | `LeasePolicyUpdate` | `{}` |
 | `POST` | `/api/policy/ips` | Admin bearer | `IPPolicyUpdate` | `{}` |
 
-### Relay And Payment
+### Relay
 
 | Method | Path | Auth | Response |
 |--------|------|------|----------|
 | `GET` | `/discovery` | None | `DiscoveryResponse` |
 | `POST` | `/discovery/announce` | Signed descriptor | `DiscoveryAnnounceResponse` |
 | `POST` | `/v1/sign` | Lease token header | keyless signer response |
-| `ANY` | `/api/x402/*` | x402-specific | delegated facilitator response |
 
 ## Shared Types
 
