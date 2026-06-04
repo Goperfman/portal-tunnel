@@ -275,7 +275,7 @@ func (h *paymentHandler) newPaymentPageData(r *http.Request) paymentPageData {
 		PageTitle:        "Portal Sui Wallet Payment",
 		PageDescription:  description,
 		URL:              utils.PublicURLForPath(r, "/"),
-		OGImage:          h.photoURL,
+		OGImage:          h.metadata.Thumbnail,
 		ProtectedPath:    paidPhotoPath,
 		Network:          h.network,
 		NetworkName:      h.networkName,

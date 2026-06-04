@@ -51,6 +51,8 @@
                 <div class="checkout">
                     <label class="wallet-label" for="walletSelect">Wallet</label>
                     <select id="walletSelect" class="wallet-select"></select>
+                    <label class="wallet-label" for="accountSelect">Address</label>
+                    <select id="accountSelect" class="wallet-select" disabled></select>
                     <div class="actions">
                         <button id="unlockButton" class="primary-button" type="button" disabled>Connect and pay</button>
                     </div>
@@ -87,6 +89,7 @@
         const config = JSON.parse(document.getElementById('payment-config').textContent || '{}');
         const walletsApi = getWallets();
         const walletSelect = document.getElementById('walletSelect');
+        const accountSelect = document.getElementById('accountSelect');
         const unlockButton = document.getElementById('unlockButton');
         const statusEl = document.getElementById('status');
         const viewer = document.getElementById('viewer');
@@ -94,6 +97,8 @@
         const paymentFrame = document.getElementById('paymentFrame');
         const resetViewer = document.getElementById('resetViewer');
         const viewerTitle = document.getElementById('viewerTitle');
+        let connectedWallet = null;
+        let connectedAccounts = [];
 
         function setStatus(value) {
             statusEl.textContent = value;
@@ -111,6 +116,14 @@
             return walletsApi.get().filter(supportsPayment);
         }
 
+        function resetAccountSelect() {
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = 'Connect wallet first';
+            accountSelect.replaceChildren(option);
+            accountSelect.disabled = true;
+        }
+
         function refreshWallets() {
             const wallets = currentWallets();
             walletSelect.replaceChildren(...wallets.map((candidate, index) => {
@@ -123,11 +136,99 @@
             walletSelect.disabled = !hasWallets;
             unlockButton.disabled = !hasWallets;
             unlockButton.textContent = 'Connect and pay';
+            connectedWallet = null;
+            connectedAccounts = [];
+            resetAccountSelect();
             setStatus(hasWallets ? 'Select a wallet and continue' : 'Install a Sui wallet extension');
+        }
+
+        function normalizeAccounts(value) {
+            const accounts = Array.isArray(value) ? value : (value ? [value] : []);
+            return accounts.map((account) => {
+                if (typeof account === 'string') {
+                    return { address: account };
+                }
+                return account && typeof account.address === 'string' ? account : null;
+            }).filter(Boolean);
         }
 
         function pickAccount(accounts) {
             return accounts.find((candidate) => Array.isArray(candidate.chains) && candidate.chains.includes(config.network)) || accounts[0] || null;
+        }
+
+        function compatibleAccounts(accounts) {
+            const matching = accounts.filter((account) => !Array.isArray(account.chains) || account.chains.includes(config.network));
+            return matching.length > 0 ? matching : accounts;
+        }
+
+        function accountKey(account) {
+            return String(account?.address || '').trim().toLowerCase();
+        }
+
+        function mergeAccounts(primary, secondary) {
+            const seen = new Set();
+            return [...primary, ...secondary].filter((account) => {
+                const key = accountKey(account);
+                if (!key || seen.has(key)) {
+                    return false;
+                }
+                seen.add(key);
+                return true;
+            });
+        }
+
+        function shortAddress(value) {
+            const address = String(value || '').trim();
+            if (address.length <= 18) {
+                return address;
+            }
+            return `${address.slice(0, 10)}...${address.slice(-6)}`;
+        }
+
+        function setAccountOptions(accounts, preferredAddress) {
+            connectedAccounts = compatibleAccounts(accounts);
+            accountSelect.replaceChildren(...connectedAccounts.map((account) => {
+                const option = document.createElement('option');
+                option.value = account.address;
+                option.textContent = shortAddress(account.address);
+                return option;
+            }));
+            const preferred = String(preferredAddress || '').trim();
+            const preferredAccount = preferred ? accountByAddress(connectedAccounts, preferred) : null;
+            if (preferredAccount) {
+                accountSelect.value = preferredAccount.address;
+            }
+            accountSelect.disabled = connectedAccounts.length === 0;
+        }
+
+        function selectedAccountFrom(response) {
+            return pickAccount(normalizeAccounts(
+                response?.account || response?.selectedAccount || response?.currentAccount || response?.address
+            ));
+        }
+
+        function accountByAddress(accounts, address) {
+            const key = String(address || '').trim().toLowerCase();
+            return accounts.find((account) => account.address === address) ||
+                accounts.find((account) => accountKey(account) === key) ||
+                null;
+        }
+
+        function pickConnectedAccount(response, wallet, hadAccountSelection) {
+            const selectedAccount = selectedAccountFrom(response);
+            const responseAccounts = normalizeAccounts(response?.accounts);
+            const accounts = mergeAccounts(
+                mergeAccounts(selectedAccount ? [selectedAccount] : [], responseAccounts),
+                normalizeAccounts(wallet.accounts || [])
+            );
+            setAccountOptions(accounts, selectedAccount?.address || accountSelect.value);
+            if (!selectedAccount && connectedAccounts.length > 1 && !hadAccountSelection) {
+                return null;
+            }
+            const selectedAddress = accountSelect.value;
+            return accountByAddress(connectedAccounts, selectedAddress) ||
+                selectedAccount ||
+                pickAccount(connectedAccounts);
         }
 
         async function connectWallet() {
@@ -135,8 +236,15 @@
             if (!wallet) {
                 throw new Error('No Sui wallet selected');
             }
+            const hadAccountSelection = connectedWallet === wallet && accountSelect.value !== '';
             const response = await wallet.features['standard:connect'].connect();
-            const connectedAccount = pickAccount(response.accounts || wallet.accounts || []);
+            connectedWallet = wallet;
+            const connectedAccount = pickConnectedAccount(response, wallet, hadAccountSelection);
+            if (connectedAccount === null) {
+                unlockButton.textContent = 'Pay with selected address';
+                setStatus('Select an address and continue');
+                return null;
+            }
             if (!connectedAccount) {
                 throw new Error('Connected wallet did not return an account');
             }
@@ -319,10 +427,15 @@
         async function unlock() {
             unlockButton.disabled = true;
             walletSelect.disabled = true;
+            accountSelect.disabled = true;
             paymentFrame.removeAttribute('srcdoc');
             try {
                 setStatus('Connecting wallet');
-                const { wallet, account } = await connectWallet();
+                const connection = await connectWallet();
+                if (!connection) {
+                    return;
+                }
+                const { wallet, account } = connection;
 
                 viewer.classList.add('is-active');
                 resetViewer.hidden = false;
@@ -373,12 +486,20 @@
             } finally {
                 const hasWallets = currentWallets().length > 0;
                 walletSelect.disabled = !hasWallets;
+                accountSelect.disabled = connectedAccounts.length === 0;
                 unlockButton.disabled = !hasWallets;
-                unlockButton.textContent = 'Connect and pay';
+                unlockButton.textContent = connectedAccounts.length > 0 ? 'Pay with selected address' : 'Connect and pay';
             }
         }
 
         unlockButton.addEventListener('click', unlock);
+        walletSelect.addEventListener('change', () => {
+            connectedWallet = null;
+            connectedAccounts = [];
+            resetAccountSelect();
+            unlockButton.textContent = 'Connect and pay';
+            setStatus('Select a wallet and continue');
+        });
 
         resetViewer.addEventListener('click', () => {
             viewer.classList.remove('is-active');
