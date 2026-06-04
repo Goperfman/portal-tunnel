@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	defaultThumbnailURL = "https://image.s-h.day/generated/1e56ad0f0a1d.png"
-	defaultPhotoURL     = "https://image.s-h.day/generated/905a4835ad50.png"
+	defaultThumbnailURL = "https://image.portal.thumbgo.kr/generated/1e56ad0f0a1d.png"
+	defaultPhotoURL     = "https://image.portal.thumbgo.kr/generated/905a4835ad50.png"
 )
 
 type paymentConfig struct {
@@ -66,7 +66,7 @@ func run(args []string) error {
 	utils.StringFlagEnv(fs, &cfg.identityJSON, "identity-json", "", "identity json payload; overrides --identity-path contents and is persisted there when both are set", "IDENTITY_JSON")
 	utils.IntFlagEnv(fs, &cfg.maxActiveRelays, "max-active-relays", 3, nil, "maximum number of auto-selected relays to keep connected; explicit --relays are always included", "MAX_ACTIVE_RELAYS")
 	utils.StringFlag(fs, &cfg.addr, "addr", "127.0.0.1:8093", "local payment app HTTP listen address (host:port or URL)")
-	utils.StringFlag(fs, &cfg.name, "name", "payment-app3", "public hostname prefix (single DNS label)")
+	utils.StringFlag(fs, &cfg.name, "name", "payment-app", "public hostname prefix (single DNS label)")
 	utils.StringFlag(fs, &cfg.desc, "description", "Portal Sui wallet x402 payment app", "lease description")
 	utils.StringFlag(fs, &cfg.tags, "tags", "payment,x402,sui,usdc,image,photo", "comma-separated lease tags")
 	utils.StringFlag(fs, &cfg.owner, "owner", "PortalApp Developer", "lease owner")
@@ -74,7 +74,7 @@ func run(args []string) error {
 	utils.StringFlag(fs, &cfg.photoURL, "photo-url", defaultPhotoURL, "image URL revealed after payment")
 	utils.BoolFlag(fs, &cfg.hide, "hide", false, "hide this lease from listings")
 	utils.BoolFlag(fs, &cfg.x402Testnet, "x402-testnet", true, "use Sui testnet for x402 payments")
-	utils.StringFlag(fs, &cfg.x402PayTo, "x402-pay-to", "0xea049676e91d29270f5a95042b6da73ff918fbae19377c0a8bf18ad105e88663", "Sui USDC recipient address")
+	utils.StringFlag(fs, &cfg.x402PayTo, "x402-pay-to", "", "Sui USDC recipient address")
 	utils.StringFlag(fs, &cfg.x402Amount, "x402-amount", "10000", "USDC amount in atomic units")
 	utils.RepeatedStringFlag(fs, &cfg.x402RPCs, "x402-rpc", "Sui RPC endpoint; repeat to try multiple endpoints before defaults")
 	fs.IntVar(&cfg.x402MaxTimeoutSeconds, "x402-max-timeout", 0, "x402 max payment timeout seconds advertised to clients")
