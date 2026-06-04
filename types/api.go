@@ -190,15 +190,6 @@ type DomainResponse struct {
 	X402            X402FacilitatorInfo `json:"x402"`
 }
 
-type X402FacilitatorInfo struct {
-	Enabled      bool   `json:"enabled"`
-	URL          string `json:"url,omitempty"`
-	Network      string `json:"network,omitempty"`
-	NetworkName  string `json:"network_name,omitempty"`
-	SupportedURL string `json:"supported_url,omitempty"`
-	PayTo        string `json:"pay_to,omitempty"`
-}
-
 type ENSStatus struct {
 	Enabled     bool   `json:"enabled"`
 	Verified    bool   `json:"verified"`

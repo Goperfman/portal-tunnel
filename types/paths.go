@@ -43,6 +43,8 @@ const (
 )
 
 const (
+	X402PreparePath = "/x402/prepare"
+
 	PathAgentPrefix        = "/agent"
 	PathAgentStatus        = PathAgentPrefix + "/status"
 	PathAgentShutdown      = PathAgentPrefix + "/shutdown"

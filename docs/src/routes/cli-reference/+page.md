@@ -98,7 +98,7 @@ not supported.
 | `--owner` | string | | Service owner metadata |
 | `--hide` | bool | `false` | Hide service from relay listing screens |
 | `--x402-pay-to` | string | | Sui USDC payment recipient address for this tunnel |
-| `--x402-price` | string | | Sui USDC x402 price mapping in `PATH=ATOMIC_AMOUNT` form; repeatable; requires `--http-route` and `--x402-pay-to` |
+| `--x402-amount` | string | | Sui USDC x402 amount mapping in `[METHOD[,METHOD...]:]PATH=ATOMIC_AMOUNT` form; repeatable; requires `--http-route` and `--x402-pay-to` |
 | `--http-route` | string | | HTTP route mapping in `PATH=UPSTREAM` form; repeatable |
 | `--tcp` | bool | `false` | Request a dedicated raw TCP port on the relay |
 | `--udp` | bool | `false` | Enable public UDP relay in addition to the default stream path |
@@ -112,7 +112,7 @@ not supported.
 - Explicit `--multi-hop` cannot be combined with automatic `--multi-hop-depth`.
 - Multi-hop currently supports only the default SNI TLS stream transport.
 - `--tcp` and `--udp` require matching transport support on the relay.
-- `--x402-price` applies only to routed HTTP prefixes and requires a
+- `--x402-amount` applies only to routed HTTP prefixes and requires a
   tunnel-owned `--x402-pay-to`.
 
 ### Examples
@@ -182,7 +182,7 @@ portal expose --name myapp \
   --http-route /api=http://127.0.0.1:3001 \
   --http-route /=http://127.0.0.1:5173 \
   --x402-pay-to 0x... \
-  --x402-price /api=100000
+  --x402-amount /api=100000
 ```
 
 ## `portal list`

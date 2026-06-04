@@ -60,7 +60,7 @@ type exposeFlags struct {
 	thumbnail       string
 	hide            bool
 	x402PayTo       string
-	x402Prices      []string
+	x402Amounts     []string
 	targetAddr      string
 	httpRoutes      []string
 	udp             bool
@@ -90,7 +90,7 @@ func runExposeCommand(args []string) error {
 	utils.StringFlag(fs, &flags.thumbnail, "thumbnail", "", "Service thumbnail URL metadata")
 	utils.BoolFlag(fs, &flags.hide, "hide", false, "Hide service from relay listing screens")
 	utils.StringFlag(fs, &flags.x402PayTo, "x402-pay-to", "", "Sui USDC payment recipient address for this tunnel")
-	utils.RepeatedStringFlag(fs, &flags.x402Prices, "x402-price", "Sui USDC x402 price mapping in PATH=ATOMIC_AMOUNT form; repeat to price multiple HTTP routes")
+	utils.RepeatedStringFlag(fs, &flags.x402Amounts, "x402-amount", "Sui USDC x402 amount mapping in [METHOD[,METHOD...]:]PATH=ATOMIC_AMOUNT form; repeat for multiple HTTP routes")
 	utils.RepeatedStringFlag(fs, &flags.httpRoutes, "http-route", "HTTP route mapping in PATH=UPSTREAM form; repeat to aggregate multiple local HTTP services behind one public URL")
 	utils.BoolFlagEnv(fs, &flags.udp, "udp", false, "Enable public UDP relay in addition to the default TCP relay", "UDP_ENABLED")
 	utils.StringFlagEnv(fs, &flags.udpAddr, "udp-addr", "", "Local UDP target address for relayed datagrams (host:port or port only); defaults to the target when --udp is enabled", "UDP_ADDR")
@@ -123,39 +123,57 @@ func runExposeCommand(args []string) error {
 	case len(httpRouteInputs) > 0 && flags.udp:
 		printExposeUsage(os.Stderr)
 		return errors.New("--udp cannot be combined with --http-route")
-	case len(flags.x402Prices) > 0 && len(httpRouteInputs) == 0:
+	case len(flags.x402Amounts) > 0 && len(httpRouteInputs) == 0:
 		printExposeUsage(os.Stderr)
-		return errors.New("--x402-price requires --http-route")
-	case len(flags.x402Prices) > 0 && strings.TrimSpace(flags.x402PayTo) == "":
+		return errors.New("--x402-amount requires --http-route")
+	case len(flags.x402Amounts) > 0 && strings.TrimSpace(flags.x402PayTo) == "":
 		printExposeUsage(os.Stderr)
-		return errors.New("--x402-price requires --x402-pay-to")
+		return errors.New("--x402-amount requires --x402-pay-to")
 	}
 
-	x402Prices := make(map[string]string, len(flags.x402Prices))
-	for _, raw := range flags.x402Prices {
-		prefix, price, ok := strings.Cut(raw, "=")
+	type x402AmountRule struct {
+		methods []string
+		amount  string
+	}
+	x402Amounts := make(map[string]x402AmountRule, len(flags.x402Amounts))
+	for _, raw := range flags.x402Amounts {
+		prefix, amount, ok := strings.Cut(raw, "=")
 		if !ok {
-			return fmt.Errorf("--x402-price %q: expected PATH=ATOMIC_AMOUNT", raw)
+			return fmt.Errorf("--x402-amount %q: expected [METHOD[,METHOD...]:]PATH=ATOMIC_AMOUNT", raw)
 		}
 		prefix = strings.TrimSpace(prefix)
+		methods := []string(nil)
+		if !strings.HasPrefix(prefix, "/") {
+			methodPart, pathPart, ok := strings.Cut(prefix, ":")
+			if ok {
+				for _, rawMethod := range strings.Split(methodPart, ",") {
+					method := strings.ToUpper(strings.TrimSpace(rawMethod))
+					if method == "" {
+						return fmt.Errorf("--x402-amount %q: method is required", raw)
+					}
+					methods = append(methods, method)
+				}
+				prefix = strings.TrimSpace(pathPart)
+			}
+		}
 		if prefix == "" {
-			return fmt.Errorf("--x402-price %q: path is required", raw)
+			return fmt.Errorf("--x402-amount %q: path is required", raw)
 		}
 		if !strings.HasPrefix(prefix, "/") {
-			return fmt.Errorf("--x402-price %q: path must start with /", raw)
+			return fmt.Errorf("--x402-amount %q: path must start with /", raw)
 		}
 		prefix = utils.NormalizeURLPath(prefix)
-		price = strings.TrimSpace(price)
-		if price == "" {
-			return fmt.Errorf("--x402-price %q: price is required", raw)
+		amount = strings.TrimSpace(amount)
+		if amount == "" {
+			return fmt.Errorf("--x402-amount %q: amount is required", raw)
 		}
-		if _, exists := x402Prices[prefix]; exists {
-			return fmt.Errorf("--x402-price path %q repeated", prefix)
+		if _, exists := x402Amounts[prefix]; exists {
+			return fmt.Errorf("--x402-amount path %q repeated", prefix)
 		}
-		x402Prices[prefix] = price
+		x402Amounts[prefix] = x402AmountRule{methods: methods, amount: amount}
 	}
 
-	httpRoutes := make([]sdk.HTTPRoute, 0, len(httpRouteInputs))
+	httpRoutes := make([]sdk.HTTPRouteConfig, 0, len(httpRouteInputs))
 	for _, raw := range httpRouteInputs {
 		prefix, upstream, ok := strings.Cut(raw, "=")
 		if !ok {
@@ -173,18 +191,19 @@ func runExposeCommand(args []string) error {
 			return fmt.Errorf("--http-route %q: upstream is required", raw)
 		}
 		normalizedPrefix := utils.NormalizeURLPath(prefix)
-		route := sdk.HTTPRoute{
+		route := sdk.HTTPRouteConfig{
 			Prefix:   prefix,
 			Upstream: upstream,
 		}
-		if price, ok := x402Prices[normalizedPrefix]; ok {
-			route.X402Price = price
-			delete(x402Prices, normalizedPrefix)
+		if payment, ok := x402Amounts[normalizedPrefix]; ok {
+			route.Methods = payment.methods
+			route.Amount = payment.amount
+			delete(x402Amounts, normalizedPrefix)
 		}
 		httpRoutes = append(httpRoutes, route)
 	}
-	for prefix := range x402Prices {
-		return fmt.Errorf("--x402-price path %q has no matching --http-route", prefix)
+	for prefix := range x402Amounts {
+		return fmt.Errorf("--x402-amount path %q has no matching --http-route", prefix)
 	}
 
 	ctx, stop := utils.SignalContext()

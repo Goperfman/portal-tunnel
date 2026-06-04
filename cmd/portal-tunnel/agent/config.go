@@ -63,9 +63,10 @@ type TunnelConfig struct {
 }
 
 type HTTPRouteConfig struct {
-	Prefix    string `koanf:"prefix"`
-	Upstream  string `koanf:"upstream"`
-	X402Price string `koanf:"x402_price"`
+	Prefix   string   `koanf:"prefix"`
+	Upstream string   `koanf:"upstream"`
+	Methods  []string `koanf:"methods"`
+	Amount   string   `koanf:"amount"`
 }
 
 func LoadExistingConfig(path string) (Config, error) {
@@ -179,7 +180,8 @@ func tunnelConfigDocumentMap(cfg TunnelConfig) map[string]any {
 			routeMap := make(map[string]any)
 			addStringDocumentField(routeMap, "prefix", route.Prefix)
 			addStringDocumentField(routeMap, "upstream", route.Upstream)
-			addStringDocumentField(routeMap, "x402_price", route.X402Price)
+			addStringSliceDocumentField(routeMap, "methods", route.Methods)
+			addStringDocumentField(routeMap, "amount", route.Amount)
 			routes = append(routes, routeMap)
 		}
 		out["http_routes"] = routes
@@ -359,8 +361,11 @@ func (cfg TunnelConfig) Validate() error {
 		if strings.TrimSpace(route.Prefix) == "" || strings.TrimSpace(route.Upstream) == "" {
 			return fmt.Errorf("tunnel %q http_routes require prefix and upstream", cfg.ID)
 		}
-		if strings.TrimSpace(route.X402Price) != "" && strings.TrimSpace(cfg.X402PayTo) == "" {
-			return fmt.Errorf("tunnel %q http route %q x402_price requires x402_pay_to", cfg.ID, strings.TrimSpace(route.Prefix))
+		if strings.TrimSpace(route.Amount) != "" && strings.TrimSpace(cfg.X402PayTo) == "" {
+			return fmt.Errorf("tunnel %q http route %q amount requires x402_pay_to", cfg.ID, strings.TrimSpace(route.Prefix))
+		}
+		if strings.TrimSpace(route.Amount) == "" && len(route.Methods) > 0 {
+			return fmt.Errorf("tunnel %q http route %q methods require amount", cfg.ID, strings.TrimSpace(route.Prefix))
 		}
 	}
 	return nil

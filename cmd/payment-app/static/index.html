@@ -167,6 +167,100 @@
             return Transaction.from(base64ToBytes(value));
         }
 
+        function suiRpcURL() {
+            const endpoints = Array.isArray(config.endpoints) ? config.endpoints.filter(Boolean) : [];
+            const defaults = {
+                'sui:mainnet': 'https://sui-rpc.publicnode.com',
+                'sui:testnet': 'https://sui-testnet-rpc.publicnode.com',
+            };
+            return endpoints[0] || defaults[String(config.network || '').trim().toLowerCase()] || defaults['sui:testnet'];
+        }
+
+        function transactionDigest(value) {
+            if (!value || typeof value !== 'object') {
+                return '';
+            }
+            const stack = [value];
+            while (stack.length > 0) {
+                const current = stack.pop();
+                if (!current || typeof current !== 'object') {
+                    continue;
+                }
+                for (const [key, nested] of Object.entries(current)) {
+                    if ((key === 'digest' || key === 'transactionDigest') && typeof nested === 'string') {
+                        return nested;
+                    }
+                    if (nested && typeof nested === 'object') {
+                        stack.push(nested);
+                    }
+                }
+            }
+            return '';
+        }
+
+        function sleep(ms) {
+            return new Promise((resolve) => setTimeout(resolve, ms));
+        }
+
+        async function suiRPC(method, params) {
+            const response = await fetch(suiRpcURL(), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    id: 1,
+                    method,
+                    params,
+                }),
+            });
+            if (!response.ok) {
+                throw new Error(`Sui RPC returned ${response.status}`);
+            }
+            const body = await response.json();
+            if (body.error) {
+                throw new Error(body.error.message || 'Sui RPC error');
+            }
+            return body.result;
+        }
+
+        async function waitForTransaction(value) {
+            const digest = transactionDigest(value);
+            if (!digest) {
+                return;
+            }
+
+            const deadline = Date.now() + 20000;
+            let lastError = null;
+            for (;;) {
+                let result = null;
+                try {
+                    result = await suiRPC('sui_getTransactionBlock', [
+                        digest,
+                        { showEffects: true },
+                    ]);
+                } catch (error) {
+                    lastError = error;
+                    if (Date.now() >= deadline) {
+                        throw lastError;
+                    }
+                    await sleep(1000);
+                }
+                if (!result?.digest) {
+                    lastError = new Error('Prepare transaction is not indexed yet');
+                    if (Date.now() >= deadline) {
+                        throw lastError;
+                    }
+                    await sleep(1000);
+                    continue;
+                }
+                const status = result.effects?.status?.status;
+                if (status && status !== 'success') {
+                    throw new Error(result.effects.status.error || 'Prepare transaction failed');
+                }
+                return;
+            }
+        }
+
         async function signTransaction(wallet, account, transactionBytes) {
             const tx = transactionFromBase64(transactionBytes);
             if (wallet.features['sui:signTransaction']) {
@@ -207,10 +301,14 @@
         }
 
         async function preparePayment(sender) {
-            const response = await fetch('/api/payment/prepare', {
+            const response = await fetch(config.preparePath, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sender }),
+                body: JSON.stringify({
+                    sender,
+                    method: 'GET',
+                    path: config.protectedPath,
+                }),
             });
             if (!response.ok) {
                 throw new Error(await response.text());
@@ -236,7 +334,9 @@
                 const prepared = await preparePayment(account.address);
                 if (prepared.prepareTransaction) {
                     setStatus('Preparing object balance in wallet');
-                    await executePrepareTransaction(wallet, account, prepared.prepareTransaction.transaction);
+                    const preparedResult = await executePrepareTransaction(wallet, account, prepared.prepareTransaction.transaction);
+                    setStatus('Waiting for prepared balance');
+                    await waitForTransaction(preparedResult);
                 }
 
                 setStatus('Signing x402 payment');

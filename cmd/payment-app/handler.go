@@ -1,21 +1,15 @@
 package main
 
 import (
-	"context"
 	"embed"
-	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"html/template"
 	"io/fs"
 	"net/http"
 	"strings"
 	"time"
 
-	portalx402 "github.com/gosuda/portal-tunnel/v2/portal/x402"
-	suischeme "github.com/gosuda/x402-facilitator/scheme/sui"
-	facilitatortypes "github.com/gosuda/x402-facilitator/types"
-
+	"github.com/gosuda/portal-tunnel/v2/portal/x402"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
@@ -167,13 +161,14 @@ type paymentHandlerConfig struct {
 }
 
 type paymentHandler struct {
-	gate           *portalx402.Gate
-	requirements   facilitatortypes.PaymentRequirements
-	metadata       types.LeaseMetadata
-	networkName    string
-	requestTimeout time.Duration
-	endpoints      []string
-	photoURL       string
+	metadata    types.LeaseMetadata
+	network     string
+	networkName string
+	asset       string
+	amount      string
+	payTo       string
+	endpoints   []string
+	photoURL    string
 }
 
 type paymentPageData struct {
@@ -192,46 +187,33 @@ type paymentPageData struct {
 	ConfigJSON       template.JS
 }
 
-type preparePaymentRequest struct {
-	Sender string `json:"sender"`
-}
-
-type walletTransaction struct {
-	Transaction string `json:"transaction"`
-}
-
-type preparePaymentResponse struct {
-	X402Version         int                                  `json:"x402Version"`
-	PaymentRequirements facilitatortypes.PaymentRequirements `json:"paymentRequirements"`
-	Resource            *facilitatortypes.ResourceInfo       `json:"resource,omitempty"`
-	PrepareTransaction  *walletTransaction                   `json:"prepareTransaction,omitempty"`
-	PaymentTransaction  walletTransaction                    `json:"paymentTransaction"`
-}
-
 func newHandler(cfg paymentHandlerConfig) (http.Handler, error) {
-	gate, err := portalx402.NewUSDCGate(portalx402.GateConfig{
-		Network:           portalx402.Network(cfg.Testnet),
-		PayTo:             cfg.PayTo,
-		Amount:            cfg.Amount,
-		MaxTimeoutSeconds: cfg.MaxTimeoutSeconds,
-	})
+	handler := &paymentHandler{
+		metadata: cfg.Metadata.Copy(),
+		photoURL: strings.TrimSpace(cfg.PhotoURL),
+	}
+	paidPhotoHandler, err := x402.NewUSDCPaymentHandler(types.X402Payment{
+		Testnet:             cfg.Testnet,
+		PayTo:               cfg.PayTo,
+		Amount:              cfg.Amount,
+		MaxTimeoutSeconds:   cfg.MaxTimeoutSeconds,
+		RequestTimeout:      cfg.RequestTimeout,
+		Endpoints:           cfg.Endpoints,
+		ResourcePath:        paidPhotoPath,
+		ResourceDescription: cfg.Metadata.Description,
+		ResourceMimeType:    "text/html",
+	}, paidPhotoPath, http.MethodGet, handler.renderPaidPhoto)
 	if err != nil {
 		return nil, err
 	}
-	requirements := gate.Requirements()
-	networkName := portalx402.NetworkDisplayName(requirements.Network)
-	if networkName == "" {
-		networkName = requirements.Network
-	}
-	handler := &paymentHandler{
-		gate:           gate,
-		requirements:   requirements,
-		metadata:       cfg.Metadata.Copy(),
-		networkName:    networkName,
-		requestTimeout: cfg.RequestTimeout,
-		endpoints:      append([]string(nil), cfg.Endpoints...),
-		photoURL:       strings.TrimSpace(cfg.PhotoURL),
-	}
+	payment := paidPhotoHandler.Payment()
+	handler.network = payment.Network
+	handler.networkName = payment.NetworkName
+	handler.asset = payment.Asset
+	handler.amount = payment.Amount
+	handler.payTo = payment.PayTo
+	handler.endpoints = append([]string(nil), payment.Endpoints...)
+	handler.photoURL = strings.TrimSpace(cfg.PhotoURL)
 
 	staticFS, err := fs.Sub(staticFiles, "static")
 	if err != nil {
@@ -239,9 +221,9 @@ func newHandler(cfg paymentHandlerConfig) (http.Handler, error) {
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/static/style.css", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
-	mux.HandleFunc("/api/payment/prepare", handler.handlePreparePayment)
+	mux.Handle(types.X402PreparePath, paidPhotoHandler)
 	mux.HandleFunc("/", handler.handleIndex)
-	mux.HandleFunc(paidPhotoPath, handler.handlePaidPhoto)
+	mux.Handle(paidPhotoPath, paidPhotoHandler)
 	return mux, nil
 }
 
@@ -259,133 +241,31 @@ func (h *paymentHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	_ = indexPage.Execute(w, data)
 }
 
-func (h *paymentHandler) handlePreparePayment(w http.ResponseWriter, r *http.Request) {
-	if !utils.RequireMethod(w, r, http.MethodPost) {
-		return
-	}
-	var req preparePaymentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid payment prepare request", http.StatusBadRequest)
-		return
-	}
-	sender := suischeme.NormalizeAddress(req.Sender)
-	if sender == "" {
-		http.Error(w, "sender is required", http.StatusBadRequest)
-		return
-	}
-
-	ctx, cancel := h.requestContext(r)
-	defer cancel()
-
-	requirements := h.requirements
-	coinObjects, err := suischeme.ListOwnedGaslessStablecoinCoinObjects(ctx, requirements.Network, sender, requirements.Asset, h.endpoints)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("list USDC coin objects: %v", err), http.StatusBadGateway)
-		return
-	}
-	nonZeroCoinObjects := make([]suischeme.OwnedCoinObject, 0, len(coinObjects))
-	for _, coinObject := range coinObjects {
-		if coinObject.Balance == 0 {
-			continue
-		}
-		nonZeroCoinObjects = append(nonZeroCoinObjects, coinObject)
-	}
-
-	var prepareTransaction *walletTransaction
-	if len(nonZeroCoinObjects) > 0 {
-		txBytes, err := suischeme.BuildCoinObjectsToAddressBalanceTransferTransaction(ctx, suischeme.CoinObjectsToAddressBalanceTransfer{
-			Sender:      sender,
-			Recipient:   sender,
-			Network:     requirements.Network,
-			Asset:       requirements.Asset,
-			CoinObjects: nonZeroCoinObjects,
-			Endpoints:   h.endpoints,
-		})
-		if err != nil {
-			http.Error(w, fmt.Sprintf("build prepare transaction: %v", err), http.StatusBadGateway)
-			return
-		}
-		prepareTransaction = &walletTransaction{Transaction: base64.StdEncoding.EncodeToString(txBytes)}
-	}
-
-	paymentTxBytes, err := suischeme.BuildGaslessStablecoinTransferTransaction(ctx, suischeme.GaslessStablecoinTransfer{
-		Sender:    sender,
-		Recipient: requirements.PayTo,
-		Network:   requirements.Network,
-		Asset:     requirements.Asset,
-		Amount:    requirements.Amount,
-		Endpoints: h.endpoints,
-	})
-	if err != nil {
-		http.Error(w, fmt.Sprintf("build payment transaction: %v", err), http.StatusBadGateway)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, preparePaymentResponse{
-		X402Version:         int(facilitatortypes.X402VersionV2),
-		PaymentRequirements: requirements,
-		Resource: &facilitatortypes.ResourceInfo{
-			URL:         publicURLForPath(r, paidPhotoPath),
-			Description: h.metadata.Description,
-			MimeType:    "text/html",
-		},
-		PrepareTransaction: prepareTransaction,
-		PaymentTransaction: walletTransaction{Transaction: base64.StdEncoding.EncodeToString(paymentTxBytes)},
-	})
-}
-
-func (h *paymentHandler) handlePaidPhoto(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != paidPhotoPath {
-		http.NotFound(w, r)
-		return
-	}
-	if !utils.RequireMethod(w, r, http.MethodGet) {
-		return
-	}
-
-	ctx, cancel := h.requestContext(r)
-	defer cancel()
-
-	payment, err := h.gate.VerifyRequest(ctx, r)
-	if err != nil {
-		h.gate.WriteRequestError(w, r, err)
-		return
-	}
-	settled, err := h.gate.SettleVerifiedPayment(ctx, payment)
-	if err != nil {
-		h.gate.WritePaymentRequired(w, r, "payment settlement failed")
-		return
-	}
-	portalx402.SetPaymentResponseHeaders(w.Header(), settled)
-
+func (h *paymentHandler) renderPaidPhoto(w http.ResponseWriter, r *http.Request, result types.X402PaymentResult) {
 	data := h.newPaymentPageData(r)
-	data.URL = publicURLForPath(r, paidPhotoPath)
-	data.TransactionID = strings.TrimSpace(settled.Transaction)
+	data.URL = utils.PublicURLForPath(r, paidPhotoPath)
+	data.TransactionID = result.TransactionID
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = photoPage.Execute(w, data)
 }
 
-func (h *paymentHandler) requestContext(r *http.Request) (context.Context, context.CancelFunc) {
-	if h.requestTimeout <= 0 {
-		return r.Context(), func() {}
-	}
-	return context.WithTimeout(r.Context(), h.requestTimeout)
-}
-
 func (h *paymentHandler) newPaymentPageData(r *http.Request) paymentPageData {
-	requirements := h.requirements
 	description := strings.TrimSpace(h.metadata.Description)
 	if description == "" {
 		description = "Connect a Sui wallet, settle USDC with x402, and reveal the protected image."
 	}
-	config := map[string]string{
-		"network":       requirements.Network,
+	config := map[string]any{
+		"network":       h.network,
 		"networkName":   h.networkName,
-		"asset":         requirements.Asset,
-		"amount":        requirements.Amount,
-		"payTo":         requirements.PayTo,
+		"asset":         h.asset,
+		"amount":        h.amount,
+		"payTo":         h.payTo,
+		"preparePath":   types.X402PreparePath,
 		"protectedPath": paidPhotoPath,
+	}
+	if len(h.endpoints) > 0 {
+		config["endpoints"] = append([]string(nil), h.endpoints...)
 	}
 	configJSON, err := json.Marshal(config)
 	if err != nil {
@@ -394,49 +274,15 @@ func (h *paymentHandler) newPaymentPageData(r *http.Request) paymentPageData {
 	return paymentPageData{
 		PageTitle:        "Portal Sui Wallet Payment",
 		PageDescription:  description,
-		URL:              publicURLForPath(r, "/"),
+		URL:              utils.PublicURLForPath(r, "/"),
 		OGImage:          h.photoURL,
 		ProtectedPath:    paidPhotoPath,
-		Network:          requirements.Network,
+		Network:          h.network,
 		NetworkName:      h.networkName,
-		Asset:            requirements.Asset,
-		Amount:           requirements.Amount,
+		Asset:            h.asset,
+		Amount:           h.amount,
 		PhotoURL:         h.photoURL,
-		RecipientAddress: requirements.PayTo,
+		RecipientAddress: h.payTo,
 		ConfigJSON:       template.JS(string(configJSON)),
 	}
-}
-
-func publicURLForPath(r *http.Request, path string) string {
-	if r == nil {
-		return ""
-	}
-	scheme, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Proto"), ",")
-	scheme = strings.ToLower(strings.TrimSpace(scheme))
-	if scheme == "" {
-		if r.TLS != nil {
-			scheme = "https"
-		} else {
-			scheme = "http"
-		}
-	}
-	host, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Host"), ",")
-	host = strings.TrimSpace(host)
-	if host == "" {
-		host = strings.TrimSpace(r.Host)
-	}
-	if host == "" {
-		return path
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	return scheme + "://" + host + path
-}
-
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
 }

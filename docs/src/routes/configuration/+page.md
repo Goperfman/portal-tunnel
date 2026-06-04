@@ -163,7 +163,7 @@ The `portal expose` subcommand accepts the following flags. Flags that read from
 | `--thumbnail` | | string | | Service thumbnail URL metadata |
 | `--hide` | | bool | `false` | Hide service from relay listing screens |
 | `--x402-pay-to` | | string | | Sui USDC payment recipient address for this tunnel |
-| `--x402-price` | | string | | Sui USDC x402 price mapping in `PATH=ATOMIC_AMOUNT` form; repeatable; requires `--http-route` and `--x402-pay-to` |
+| `--x402-amount` | | string | | Sui USDC x402 amount mapping in `[METHOD[,METHOD...]:]PATH=ATOMIC_AMOUNT` form; repeatable; requires `--http-route` and `--x402-pay-to` |
 
 ### Routing
 
@@ -226,7 +226,8 @@ x402_pay_to = "0x..."
 [[tunnels.http_routes]]
 prefix = "/api"
 upstream = "http://127.0.0.1:3001"
-x402_price = "100000"
+methods = ["GET"]
+amount = "100000"
 
 [[tunnels.http_routes]]
 prefix = "/"
@@ -261,8 +262,9 @@ Tunnel fields mirror `portal expose` flags:
 | `identity_json` | string | Identity JSON payload; overrides `identity_path` contents and is persisted there when both are set |
 | `udp`, `udp_addr`, `tcp` | bool/string | UDP and raw TCP relay options |
 | `description`, `tags`, `owner`, `thumbnail`, `hide` | mixed | Lease metadata shown by relays |
-| `x402_pay_to` | string | Tunnel-owned Sui USDC x402 payment recipient for priced HTTP routes |
-| `http_routes[].x402_price` | string | Optional Sui USDC x402 atomic amount for one HTTP route prefix; requires `x402_pay_to` |
+| `x402_pay_to` | string | Tunnel-owned Sui USDC x402 payment recipient for paid HTTP routes |
+| `http_routes[].amount` | string | Optional Sui USDC x402 atomic amount for one HTTP route prefix; requires `x402_pay_to` |
+| `http_routes[].methods` | string array | Optional HTTP methods that require payment on that route; empty means every method |
 For a task-oriented walkthrough, see [Portal Agent](/portal-agent).
 
 ### `identity.json`

@@ -153,7 +153,7 @@ Mode constraints:
 - `--http-route` cannot be combined with `--udp`.
 - Multi-hop currently supports only the default SNI TLS stream transport.
 - `--multi-hop` cannot be combined with automatic `--multi-hop-depth`.
-- `--x402-price` applies only to routed HTTP prefixes and requires a
+- `--x402-amount` applies only to routed HTTP prefixes and requires a
   tunnel-owned `--x402-pay-to`.
 
 Common flags:
@@ -174,7 +174,7 @@ Common flags:
 --owner              Service owner metadata
 --hide               Hide service from relay listing screens
 --x402-pay-to        Sui USDC payment recipient address for this tunnel
---x402-price         Sui USDC x402 price mapping in PATH=ATOMIC_AMOUNT form; repeatable
+--x402-amount        Sui USDC x402 amount mapping in [METHOD[,METHOD...]:]PATH=ATOMIC_AMOUNT form; repeatable
 --http-route         HTTP route mapping in PATH=UPSTREAM form; repeatable
 --tcp                Request a dedicated raw TCP port on the relay
 --udp                Enable public UDP relay in addition to the default stream path
@@ -277,7 +277,7 @@ relays = ["https://portal.example.com"]
 discovery = false
 x402_pay_to = "0x..."
 http_routes = [
-  { prefix = "/api", upstream = "http://127.0.0.1:3001", x402_price = "100000" },
+  { prefix = "/api", upstream = "http://127.0.0.1:3001", methods = ["GET"], amount = "100000" },
   { prefix = "/", upstream = "http://127.0.0.1:5173" },
 ]
 ```

@@ -682,12 +682,13 @@ func (t *managedTunnel) runOnce(ctx context.Context) error {
 	defer exposure.Close()
 
 	if len(cfg.HTTPRoutes) > 0 {
-		routes := make([]sdk.HTTPRoute, 0, len(cfg.HTTPRoutes))
+		routes := make([]sdk.HTTPRouteConfig, 0, len(cfg.HTTPRoutes))
 		for _, route := range cfg.HTTPRoutes {
-			routes = append(routes, sdk.HTTPRoute{
-				Prefix:    route.Prefix,
-				Upstream:  route.Upstream,
-				X402Price: route.X402Price,
+			routes = append(routes, sdk.HTTPRouteConfig{
+				Prefix:   route.Prefix,
+				Upstream: route.Upstream,
+				Methods:  route.Methods,
+				Amount:   route.Amount,
 			})
 		}
 		err = exposure.RunHTTPRoutes(ctx, routes, "")
