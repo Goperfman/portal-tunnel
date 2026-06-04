@@ -5,8 +5,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/gosuda/portal-tunnel/v2/types"
 )
 
 func TestServeCompressedHTTPChoosesAcceptedEncoding(t *testing.T) {
@@ -146,7 +144,7 @@ func TestHTTPRoutesUseLongestPrefix(t *testing.T) {
 	handler, err := newHTTPRouteHandler([]HTTPRoute{
 		{Prefix: "/", Upstream: rootServer.URL},
 		{Prefix: "/api", Upstream: apiServer.URL},
-	}, types.Identity{}, types.LeaseMetadata{}, "")
+	}, "")
 	if err != nil {
 		t.Fatalf("newHTTPRouteHandler() error = %v", err)
 	}
@@ -177,7 +175,7 @@ func TestHTTPRoutesRewriteResponseHeaders(t *testing.T) {
 
 	handler, err := newHTTPRouteHandler([]HTTPRoute{
 		{Prefix: "/app", Upstream: upstreamURL + "/base"},
-	}, types.Identity{}, types.LeaseMetadata{}, "")
+	}, "")
 	if err != nil {
 		t.Fatalf("newHTTPRouteHandler() error = %v", err)
 	}
@@ -201,7 +199,7 @@ func TestHTTPRoutesRejectDuplicateNormalizedPrefixes(t *testing.T) {
 	_, err := newHTTPRouteHandler([]HTTPRoute{
 		{Prefix: "/api", Upstream: "127.0.0.1:3001"},
 		{Prefix: "/api/", Upstream: "127.0.0.1:3002"},
-	}, types.Identity{}, types.LeaseMetadata{}, "")
+	}, "")
 	if err == nil {
 		t.Fatal("newHTTPRouteHandler() error = nil, want duplicate prefix error")
 	}

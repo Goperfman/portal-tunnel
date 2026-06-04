@@ -99,10 +99,10 @@ environment:
 ```
 
 This serves `/api/x402/supported`, `/api/x402/verify`, and `/api/x402/settle`.
-Portal payments intentionally support only Sui mainnet and testnet. Route-level
-payment enforcement is configured separately from the facilitator endpoint. The
-relay `X402_PAY_TO` address is for relay-owned resources; tunnel apps set their
-own recipient with `portal expose --x402-pay-to`.
+Portal payments intentionally support only Sui mainnet/testnet USDC through the
+gasless stablecoin address-balance flow. Route-level payment enforcement is
+configured separately by the tunnel with `portal expose --x402-pay-to`; relay
+`X402_PAY_TO` is reserved for relay-owned resources.
 
 ## Connecting Your Tunnel
 

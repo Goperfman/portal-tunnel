@@ -173,8 +173,8 @@ Common flags:
 --thumbnail          Service thumbnail URL metadata
 --owner              Service owner metadata
 --hide               Hide service from relay listing screens
---x402-pay-to        Sui payment recipient address for this tunnel
---x402-price         Sui x402 price mapping in PATH=PRICE form; repeatable
+--x402-pay-to        Sui USDC payment recipient address for this tunnel
+--x402-price         Sui USDC x402 price mapping in PATH=ATOMIC_AMOUNT form; repeatable
 --http-route         HTTP route mapping in PATH=UPSTREAM form; repeatable
 --tcp                Request a dedicated raw TCP port on the relay
 --udp                Enable public UDP relay in addition to the default stream path

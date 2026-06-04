@@ -19,7 +19,7 @@ import (
 	"github.com/andybalholm/brotli"
 	"github.com/rs/zerolog/log"
 
-	"github.com/gosuda/portal-tunnel/v2/types"
+	"github.com/gosuda/portal-tunnel/v2/portal/x402"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
@@ -132,7 +132,7 @@ type HTTPRoute struct {
 	Prefix string
 	// Upstream is the target HTTP URL, or a loopback host:port shorthand.
 	Upstream string
-	// X402Price enables Sui x402 payment for this public path prefix.
+	// X402Price enables Sui USDC x402 payment for this public path prefix.
 	X402Price string
 }
 
@@ -143,11 +143,11 @@ type httpRoute struct {
 	upstreamPath      string
 	upstreamPathSlash string
 	upstreamDomain    string
-	x402Price         string
+	x402              *x402.Gate
 	handler           http.Handler
 }
 
-func newHTTPRouteHandler(routeConfigs []HTTPRoute, tunnelIdentity types.Identity, metadata types.LeaseMetadata, x402PayTo string) (http.Handler, error) {
+func newHTTPRouteHandler(routeConfigs []HTTPRoute, x402PayTo string) (http.Handler, error) {
 	if len(routeConfigs) == 0 {
 		return nil, errors.New("at least one http route is required")
 	}
@@ -156,18 +156,15 @@ func newHTTPRouteHandler(routeConfigs []HTTPRoute, tunnelIdentity types.Identity
 	routes := make([]*httpRoute, 0, len(routeConfigs))
 	seen := make(map[string]struct{}, len(routeConfigs))
 	for _, routeConfig := range routeConfigs {
-		route, err := newHTTPRoute(routeConfig)
+		route, err := newHTTPRoute(routeConfig, x402PayTo)
 		if err != nil {
 			return nil, err
-		}
-		if route.x402Price != "" && x402PayTo == "" {
-			return nil, fmt.Errorf("http route %q x402 price requires x402 pay-to", route.prefix)
 		}
 		if _, ok := seen[route.prefix]; ok {
 			return nil, fmt.Errorf("duplicate http route prefix %q", route.prefix)
 		}
 		seen[route.prefix] = struct{}{}
-		route.handler = route.newReverseProxy()
+		route.handler = route.newHandler()
 		routes = append(routes, route)
 	}
 
@@ -193,7 +190,7 @@ func newHTTPRouteHandler(routeConfigs []HTTPRoute, tunnelIdentity types.Identity
 	}), nil
 }
 
-func newHTTPRoute(routeConfig HTTPRoute) (*httpRoute, error) {
+func newHTTPRoute(routeConfig HTTPRoute, x402PayTo string) (*httpRoute, error) {
 	prefix := strings.TrimSpace(routeConfig.Prefix)
 	if prefix == "" {
 		return nil, errors.New("http route prefix is required")
@@ -233,7 +230,6 @@ func newHTTPRoute(routeConfig HTTPRoute) (*httpRoute, error) {
 		upstream:       upstream,
 		upstreamPath:   upstream.Path,
 		upstreamDomain: utils.NormalizeHostname(upstream.Hostname()),
-		x402Price:      strings.TrimSpace(routeConfig.X402Price),
 	}
 	if prefix != "/" {
 		route.prefixSlash = prefix + "/"
@@ -241,7 +237,38 @@ func newHTTPRoute(routeConfig HTTPRoute) (*httpRoute, error) {
 	if upstream.Path != "/" {
 		route.upstreamPathSlash = upstream.Path + "/"
 	}
+
+	x402Price := strings.TrimSpace(routeConfig.X402Price)
+	if x402Price != "" {
+		if x402PayTo == "" {
+			return nil, fmt.Errorf("http route %q x402 price requires x402 pay-to", route.prefix)
+		}
+		gate, err := x402.NewUSDCGate(x402.GateConfig{
+			Network: x402.MainnetNetwork,
+			PayTo:   x402PayTo,
+			Amount:  x402Price,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("http route %q x402 payment: %w", route.prefix, err)
+		}
+		route.x402 = gate
+	}
 	return route, nil
+}
+
+func (r *httpRoute) newHandler() http.Handler {
+	proxy := r.newReverseProxy()
+	if r.x402 == nil {
+		return proxy
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		payment, err := r.x402.VerifyRequest(req.Context(), req)
+		if err != nil {
+			r.x402.WriteRequestError(w, req, err)
+			return
+		}
+		proxy.ServeHTTP(w, req.WithContext(x402.ContextWithVerifiedPayment(req.Context(), payment)))
+	})
 }
 
 func (r *httpRoute) newReverseProxy() *httputil.ReverseProxy {
@@ -249,6 +276,14 @@ func (r *httpRoute) newReverseProxy() *httputil.ReverseProxy {
 		Rewrite:        r.rewriteRequest,
 		ModifyResponse: r.rewriteResponse,
 		ErrorHandler: func(w http.ResponseWriter, req *http.Request, err error) {
+			if errors.Is(err, x402.ErrSettlementFailed) {
+				if r.x402 != nil {
+					r.x402.WritePaymentRequired(w, req, "payment settlement failed")
+					return
+				}
+				http.Error(w, "payment settlement failed", http.StatusPaymentRequired)
+				return
+			}
 			log.Error().Err(err).
 				Str("route_prefix", r.prefix).
 				Str("upstream", r.upstream.String()).
@@ -263,6 +298,9 @@ func (r *httpRoute) rewriteRequest(pr *httputil.ProxyRequest) {
 	pr.Out.URL.RawQuery = pr.In.URL.RawQuery
 	pr.SetURL(r.upstream)
 	pr.SetXForwarded()
+	if r.x402 != nil {
+		x402.StripPaymentHeaders(pr.Out.Header)
+	}
 
 	// SetXForwarded checks pr.In.TLS, but behind a TLS-terminating proxy
 	// the inbound X-Forwarded-Proto carries the real client scheme.
@@ -286,6 +324,10 @@ func (r *httpRoute) rewriteResponse(resp *http.Response) error {
 	header := resp.Header
 	publicHost := resp.Request.Header.Get("X-Forwarded-Host")
 	publicScheme := resp.Request.Header.Get("X-Forwarded-Proto")
+
+	if err := r.settleX402Response(resp); err != nil {
+		return err
+	}
 
 	location := header.Get("Location")
 	if location != "" {
@@ -356,6 +398,22 @@ func (r *httpRoute) rewriteResponse(resp *http.Response) error {
 		header.Add("Set-Cookie", value)
 	}
 
+	return nil
+}
+
+func (r *httpRoute) settleX402Response(resp *http.Response) error {
+	if r.x402 == nil || resp == nil || resp.Request == nil || resp.StatusCode >= http.StatusBadRequest {
+		return nil
+	}
+	payment, ok := x402.VerifiedPaymentFromContext(resp.Request.Context())
+	if !ok {
+		return nil
+	}
+	settled, err := r.x402.SettleVerifiedPayment(resp.Request.Context(), payment)
+	if err != nil {
+		return x402.SettlementError(err)
+	}
+	x402.SetPaymentResponseHeaders(resp.Header, settled)
 	return nil
 }
 

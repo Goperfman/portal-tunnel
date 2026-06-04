@@ -525,7 +525,7 @@ func (e *Exposure) WaitDatagramReady(ctx context.Context) ([]string, error) {
 // RunHTTPRoutes serves path-routed HTTP upstreams through the exposure.
 func (e *Exposure) RunHTTPRoutes(ctx context.Context, routes []HTTPRoute, localAddr string) error {
 	cfg := e.Config()
-	handler, err := newHTTPRouteHandler(routes, cfg.Identity, cfg.Metadata, cfg.X402PayTo)
+	handler, err := newHTTPRouteHandler(routes, cfg.X402PayTo)
 	if err != nil {
 		return err
 	}

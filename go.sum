@@ -220,6 +220,8 @@ github.com/gosuda/keyless_tls v0.0.2-0.20260507061030-5128be6b5008 h1:KuP/5VlPJw
 github.com/gosuda/keyless_tls v0.0.2-0.20260507061030-5128be6b5008/go.mod h1:BOhUZgiAAQzxKO3QcC4fCXgd/+lqxgIu1OyIYTqtta8=
 github.com/gosuda/x402-facilitator v0.0.1 h1:Jo4ctVestDMw6B4dkvodZLj6a5rTt6efpoK4VzWoO5k=
 github.com/gosuda/x402-facilitator v0.0.1/go.mod h1:4hLowxzMiNVcLInkoD9BUDuGbzl86Vj3nO++QXh8OYg=
+github.com/gosuda/x402-facilitator v0.0.3-0.20260604031337-6baece37375a h1:AQoH9Wigm4LhKgHLDTP1/4fnuv7WXC9HA7HzvPEHbKY=
+github.com/gosuda/x402-facilitator v0.0.3-0.20260604031337-6baece37375a/go.mod h1:4hLowxzMiNVcLInkoD9BUDuGbzl86Vj3nO++QXh8OYg=
 github.com/grafana/pyroscope-go v1.2.7 h1:VWBBlqxjyR0Cwk2W6UrE8CdcdD80GOFNutj0Kb1T8ac=
 github.com/grafana/pyroscope-go v1.2.7/go.mod h1:o/bpSLiJYYP6HQtvcoVKiE9s5RiNgjYTj1DhiddP2Pc=
 github.com/grafana/pyroscope-go/godeltaprof v0.1.9 h1:c1Us8i6eSmkW+Ez05d3co8kasnuOY813tbMN8i/a3Og=

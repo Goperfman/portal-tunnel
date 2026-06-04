@@ -89,8 +89,8 @@ func runExposeCommand(args []string) error {
 	utils.StringFlag(fs, &flags.owner, "owner", "", "Service owner metadata")
 	utils.StringFlag(fs, &flags.thumbnail, "thumbnail", "", "Service thumbnail URL metadata")
 	utils.BoolFlag(fs, &flags.hide, "hide", false, "Hide service from relay listing screens")
-	utils.StringFlag(fs, &flags.x402PayTo, "x402-pay-to", "", "Sui payment recipient address for this tunnel")
-	utils.RepeatedStringFlag(fs, &flags.x402Prices, "x402-price", "Sui x402 price mapping in PATH=PRICE form; repeat to price multiple HTTP routes")
+	utils.StringFlag(fs, &flags.x402PayTo, "x402-pay-to", "", "Sui USDC payment recipient address for this tunnel")
+	utils.RepeatedStringFlag(fs, &flags.x402Prices, "x402-price", "Sui USDC x402 price mapping in PATH=ATOMIC_AMOUNT form; repeat to price multiple HTTP routes")
 	utils.RepeatedStringFlag(fs, &flags.httpRoutes, "http-route", "HTTP route mapping in PATH=UPSTREAM form; repeat to aggregate multiple local HTTP services behind one public URL")
 	utils.BoolFlagEnv(fs, &flags.udp, "udp", false, "Enable public UDP relay in addition to the default TCP relay", "UDP_ENABLED")
 	utils.StringFlagEnv(fs, &flags.udpAddr, "udp-addr", "", "Local UDP target address for relayed datagrams (host:port or port only); defaults to the target when --udp is enabled", "UDP_ADDR")
@@ -135,7 +135,7 @@ func runExposeCommand(args []string) error {
 	for _, raw := range flags.x402Prices {
 		prefix, price, ok := strings.Cut(raw, "=")
 		if !ok {
-			return fmt.Errorf("--x402-price %q: expected PATH=PRICE", raw)
+			return fmt.Errorf("--x402-price %q: expected PATH=ATOMIC_AMOUNT", raw)
 		}
 		prefix = strings.TrimSpace(prefix)
 		if prefix == "" {

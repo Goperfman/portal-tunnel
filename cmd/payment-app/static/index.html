@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <title>{{.PageTitle}}</title>
+    <meta name="description" content="{{.PageDescription}}">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="{{.PageTitle}}">
+    <meta property="og:description" content="{{.PageDescription}}">
+    <meta property="og:image" content="{{.OGImage}}">
+    <meta property="og:url" content="{{.URL}}">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="{{.PageTitle}}">
+    <meta name="twitter:description" content="{{.PageDescription}}">
+    <meta name="twitter:image" content="{{.OGImage}}">
+    <link rel="stylesheet" href="/static/style.css">
+    <script id="payment-config" type="application/json">{{.ConfigJSON}}</script>
+</head>
+
+<body>
+    <main class="shell">
+        <section class="app-surface" aria-label="Payment app">
+            <div class="summary">
+                <div>
+                    <div class="kicker">
+                        <span>Sui wallet</span>
+                        <span>{{.NetworkName}}</span>
+                        <span>USDC</span>
+                    </div>
+                    <h1>Paid image delivery</h1>
+                    <p class="lede">Connect a Sui wallet, sign the x402 payment transaction, and reveal the protected image in the viewer.</p>
+
+                    <dl class="facts">
+                        <div>
+                            <dt>Amount</dt>
+                            <dd>{{.Amount}} atomic USDC</dd>
+                        </div>
+                        <div>
+                            <dt>Network</dt>
+                            <dd>{{.Network}}</dd>
+                        </div>
+                        <div>
+                            <dt>Recipient</dt>
+                            <dd>{{.RecipientAddress}}</dd>
+                        </div>
+                    </dl>
+                </div>
+
+                <div class="checkout">
+                    <label class="wallet-label" for="walletSelect">Wallet</label>
+                    <select id="walletSelect" class="wallet-select"></select>
+                    <div class="actions">
+                        <button id="unlockButton" class="primary-button" type="button" disabled>Connect and pay</button>
+                    </div>
+                    <p id="status" class="status">Looking for Sui wallets</p>
+                </div>
+            </div>
+
+            <div id="viewer" class="preview" aria-label="Protected image viewer">
+                <div class="preview-topbar">
+                    <div class="window-controls" aria-hidden="true">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </div>
+                    <span id="viewerTitle" class="viewer-title">Protected image</span>
+                    <button id="resetViewer" class="viewer-reset" type="button" hidden>Reset</button>
+                </div>
+                <div id="lockedPreview" class="preview-body">
+                    <div class="lock-mark">402</div>
+                    <div>
+                        <p class="preview-label">Protected image</p>
+                        <p class="preview-title">Wallet payment opens here</p>
+                    </div>
+                </div>
+                <iframe id="paymentFrame" class="payment-frame" title="Unlocked protected image" hidden></iframe>
+            </div>
+        </section>
+    </main>
+
+    <script type="module">
+        import { getWallets } from 'https://esm.sh/@wallet-standard/app';
+        import { Transaction } from 'https://esm.sh/@mysten/sui/transactions';
+
+        const config = JSON.parse(document.getElementById('payment-config').textContent || '{}');
+        const walletsApi = getWallets();
+        const walletSelect = document.getElementById('walletSelect');
+        const unlockButton = document.getElementById('unlockButton');
+        const statusEl = document.getElementById('status');
+        const viewer = document.getElementById('viewer');
+        const lockedPreview = document.getElementById('lockedPreview');
+        const paymentFrame = document.getElementById('paymentFrame');
+        const resetViewer = document.getElementById('resetViewer');
+        const viewerTitle = document.getElementById('viewerTitle');
+
+        function setStatus(value) {
+            statusEl.textContent = value;
+        }
+
+        function supportsPayment(candidate) {
+            const features = candidate?.features || {};
+            return Boolean(
+                features['standard:connect'] &&
+                (features['sui:signTransaction'] || features['sui:signTransactionBlock'])
+            );
+        }
+
+        function currentWallets() {
+            return walletsApi.get().filter(supportsPayment);
+        }
+
+        function refreshWallets() {
+            const wallets = currentWallets();
+            walletSelect.replaceChildren(...wallets.map((candidate, index) => {
+                const option = document.createElement('option');
+                option.value = String(index);
+                option.textContent = candidate.name || `Wallet ${index + 1}`;
+                return option;
+            }));
+            const hasWallets = wallets.length > 0;
+            walletSelect.disabled = !hasWallets;
+            unlockButton.disabled = !hasWallets;
+            unlockButton.textContent = 'Connect and pay';
+            setStatus(hasWallets ? 'Select a wallet and continue' : 'Install a Sui wallet extension');
+        }
+
+        function pickAccount(accounts) {
+            return accounts.find((candidate) => Array.isArray(candidate.chains) && candidate.chains.includes(config.network)) || accounts[0] || null;
+        }
+
+        async function connectWallet() {
+            const wallet = currentWallets()[Number(walletSelect.value)];
+            if (!wallet) {
+                throw new Error('No Sui wallet selected');
+            }
+            const response = await wallet.features['standard:connect'].connect();
+            const connectedAccount = pickAccount(response.accounts || wallet.accounts || []);
+            if (!connectedAccount) {
+                throw new Error('Connected wallet did not return an account');
+            }
+            if (Array.isArray(connectedAccount.chains) && !connectedAccount.chains.includes(config.network)) {
+                throw new Error(`Connected account does not advertise ${config.network}`);
+            }
+            return { wallet, account: connectedAccount };
+        }
+
+        function base64ToBytes(value) {
+            const binary = atob(value);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i += 1) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            return bytes;
+        }
+
+        function bytesToBase64(bytes) {
+            let binary = '';
+            for (let i = 0; i < bytes.length; i += 0x8000) {
+                binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+            }
+            return btoa(binary);
+        }
+
+        function transactionFromBase64(value) {
+            return Transaction.from(base64ToBytes(value));
+        }
+
+        async function signTransaction(wallet, account, transactionBytes) {
+            const tx = transactionFromBase64(transactionBytes);
+            if (wallet.features['sui:signTransaction']) {
+                return wallet.features['sui:signTransaction'].signTransaction({
+                    transaction: tx,
+                    account,
+                    chain: config.network,
+                });
+            }
+            return wallet.features['sui:signTransactionBlock'].signTransactionBlock({
+                transactionBlock: tx,
+                account,
+                chain: config.network,
+            });
+        }
+
+        async function executePrepareTransaction(wallet, account, transactionBytes) {
+            const tx = transactionFromBase64(transactionBytes);
+            if (wallet.features['sui:signAndExecuteTransaction']) {
+                return wallet.features['sui:signAndExecuteTransaction'].signAndExecuteTransaction({
+                    transaction: tx,
+                    account,
+                    chain: config.network,
+                });
+            }
+            if (wallet.features['sui:signAndExecuteTransactionBlock']) {
+                return wallet.features['sui:signAndExecuteTransactionBlock'].signAndExecuteTransactionBlock({
+                    transactionBlock: tx,
+                    account,
+                    chain: config.network,
+                });
+            }
+            throw new Error('This wallet cannot execute the USDC prepare transaction');
+        }
+
+        function encodePaymentPayload(payload) {
+            return bytesToBase64(new TextEncoder().encode(JSON.stringify(payload)));
+        }
+
+        async function preparePayment(sender) {
+            const response = await fetch('/api/payment/prepare', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sender }),
+            });
+            if (!response.ok) {
+                throw new Error(await response.text());
+            }
+            return response.json();
+        }
+
+        async function unlock() {
+            unlockButton.disabled = true;
+            walletSelect.disabled = true;
+            paymentFrame.removeAttribute('srcdoc');
+            try {
+                setStatus('Connecting wallet');
+                const { wallet, account } = await connectWallet();
+
+                viewer.classList.add('is-active');
+                resetViewer.hidden = false;
+                lockedPreview.hidden = true;
+                paymentFrame.hidden = false;
+                viewerTitle.textContent = 'Sui wallet payment';
+
+                setStatus('Preparing USDC transaction');
+                const prepared = await preparePayment(account.address);
+                if (prepared.prepareTransaction) {
+                    setStatus('Preparing object balance in wallet');
+                    await executePrepareTransaction(wallet, account, prepared.prepareTransaction.transaction);
+                }
+
+                setStatus('Signing x402 payment');
+                const signed = await signTransaction(wallet, account, prepared.paymentTransaction.transaction);
+                const paymentPayload = {
+                    x402Version: prepared.x402Version,
+                    payload: {
+                        signature: signed.signature,
+                        transaction: signed.bytes || signed.transactionBlockBytes || prepared.paymentTransaction.transaction,
+                    },
+                    accepted: prepared.paymentRequirements,
+                    resource: prepared.resource,
+                };
+
+                setStatus('Settling payment');
+                const protectedResponse = await fetch(config.protectedPath, {
+                    method: 'GET',
+                    headers: {
+                        'X-PAYMENT': encodePaymentPayload(paymentPayload),
+                    },
+                });
+                if (!protectedResponse.ok) {
+                    throw new Error(await protectedResponse.text());
+                }
+                paymentFrame.srcdoc = await protectedResponse.text();
+                viewerTitle.textContent = 'Image unlocked';
+                setStatus('Payment complete');
+            } catch (error) {
+                lockedPreview.hidden = false;
+                paymentFrame.hidden = true;
+                paymentFrame.removeAttribute('srcdoc');
+                viewerTitle.textContent = 'Protected image';
+                setStatus(error instanceof Error ? error.message.trim() : String(error));
+            } finally {
+                const hasWallets = currentWallets().length > 0;
+                walletSelect.disabled = !hasWallets;
+                unlockButton.disabled = !hasWallets;
+                unlockButton.textContent = 'Connect and pay';
+            }
+        }
+
+        unlockButton.addEventListener('click', unlock);
+
+        resetViewer.addEventListener('click', () => {
+            viewer.classList.remove('is-active');
+            lockedPreview.hidden = false;
+            paymentFrame.hidden = true;
+            paymentFrame.removeAttribute('srcdoc');
+            resetViewer.hidden = true;
+            viewerTitle.textContent = 'Protected image';
+            setStatus('Ready');
+        });
+
+        refreshWallets();
+        if (typeof walletsApi.on === 'function') {
+            walletsApi.on('register', refreshWallets);
+            walletsApi.on('unregister', refreshWallets);
+        }
+    </script>
+</body>
+
+</html>
