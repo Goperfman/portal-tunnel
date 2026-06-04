@@ -346,8 +346,8 @@ func (r *httpRoute) rewriteProxyRequest(pr *httputil.ProxyRequest) {
 	path := utils.NormalizeURLPath(pr.In.URL.Path)
 	rawPath := pr.In.URL.RawPath
 	if r.prefix != "/" {
-		switch {
-		case path == r.prefix:
+		switch path {
+		case r.prefix:
 			path = "/"
 		default:
 			path = strings.TrimPrefix(path, r.prefix)
@@ -357,10 +357,9 @@ func (r *httpRoute) rewriteProxyRequest(pr *httputil.ProxyRequest) {
 		}
 
 		if rawPath != "" {
-			switch {
-			case rawPath == r.prefix:
+			if rawPath == r.prefix {
 				rawPath = "/"
-			case strings.HasPrefix(rawPath, r.prefix+"/"):
+			} else if strings.HasPrefix(rawPath, r.prefix+"/") {
 				rawPath = strings.TrimPrefix(rawPath, r.prefix)
 			}
 		}
