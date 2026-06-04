@@ -15,7 +15,7 @@ require (
 	github.com/go-acme/lego/v4 v4.34.0
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/gosuda/keyless_tls v0.0.2-0.20260507061030-5128be6b5008
-	github.com/gosuda/x402-facilitator v0.0.3-0.20260604031337-6baece37375a
+	github.com/gosuda/x402-facilitator v0.0.3
 	github.com/hashicorp/yamux v0.1.2
 	github.com/hetznercloud/hcloud-go/v2 v2.40.0
 	github.com/knadh/koanf/parsers/toml/v2 v2.2.0
@@ -94,6 +94,7 @@ require (
 	github.com/go-openapi/spec v0.20.4 // indirect
 	github.com/go-openapi/swag v0.19.15 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
+	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/btree v1.1.2 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect

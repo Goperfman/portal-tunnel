@@ -239,23 +239,69 @@ func (p *Payment) WritePrepare(w http.ResponseWriter, r *http.Request, sender, r
 		return
 	}
 
-	coinObjects, err := suischeme.ListOwnedGaslessStablecoinCoinObjects(ctx, p.requirements.Network, sender, p.requirements.Asset, p.payment.Endpoints)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("list USDC coin objects: %v", err), http.StatusBadGateway)
+	amount, err := strconv.ParseUint(p.requirements.Amount, 10, 64)
+	if err != nil || amount == 0 {
+		http.Error(w, "payment amount is invalid", http.StatusInternalServerError)
 		return
 	}
-	nonZeroCoinObjects := make([]suischeme.OwnedCoinObject, 0, len(coinObjects))
-	for _, coinObject := range coinObjects {
-		if coinObject.Balance == 0 {
-			continue
-		}
-		nonZeroCoinObjects = append(nonZeroCoinObjects, coinObject)
+	coinType, ok := suischeme.GetGaslessStablecoinType(p.requirements.Network, p.requirements.Asset)
+	if !ok {
+		http.Error(w, "payment asset is not supported", http.StatusInternalServerError)
+		return
+	}
+	client, err := suischeme.NewClientForNetwork(p.requirements.Network, p.payment.Endpoints)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("create Sui client: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer client.Close()
+	info := suischeme.GetNetworkInfo(p.requirements.Network)
+	if info == nil {
+		http.Error(w, "payment network is not supported", http.StatusInternalServerError)
+		return
+	}
+	expiration, err := client.ResolveGaslessStablecoinExpiration(ctx, info.ChainDigest)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("resolve payment transaction expiration: %v", err), http.StatusBadGateway)
+		return
 	}
 
 	var prepareTransaction *struct {
 		Transaction string `json:"transaction"`
 	}
-	if len(nonZeroCoinObjects) > 0 {
+	balance, err := client.Balance(ctx, sender, coinType)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("get USDC balance: %v", err), http.StatusBadGateway)
+		return
+	}
+	if balance.AddressBalance < amount {
+		needed := amount - balance.AddressBalance
+		if balance.CoinBalance < needed {
+			http.Error(w, fmt.Sprintf("insufficient USDC balance: need %d, address balance %d, coin object balance %d", amount, balance.AddressBalance, balance.CoinBalance), http.StatusBadRequest)
+			return
+		}
+		coinObjects, err := client.ListOwnedCoinObjects(ctx, sender, coinType)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("list USDC coin objects: %v", err), http.StatusBadGateway)
+			return
+		}
+		nonZeroCoinObjects := make([]suischeme.OwnedCoinObject, 0, len(coinObjects))
+		var prepareAmount uint64
+		for _, coinObject := range coinObjects {
+			if coinObject.Balance == 0 {
+				continue
+			}
+			if prepareAmount > ^uint64(0)-coinObject.Balance {
+				http.Error(w, "USDC coin object balance sum overflows uint64", http.StatusBadGateway)
+				return
+			}
+			prepareAmount += coinObject.Balance
+			nonZeroCoinObjects = append(nonZeroCoinObjects, coinObject)
+		}
+		if prepareAmount < needed {
+			http.Error(w, fmt.Sprintf("insufficient USDC balance: need %d, address balance %d, coin object balance %d", amount, balance.AddressBalance, prepareAmount), http.StatusBadRequest)
+			return
+		}
 		txBytes, err := suischeme.BuildCoinObjectsToAddressBalanceTransferTransaction(ctx, suischeme.CoinObjectsToAddressBalanceTransfer{
 			Sender:      sender,
 			Recipient:   sender,
@@ -263,6 +309,7 @@ func (p *Payment) WritePrepare(w http.ResponseWriter, r *http.Request, sender, r
 			Asset:       p.requirements.Asset,
 			CoinObjects: nonZeroCoinObjects,
 			Endpoints:   p.payment.Endpoints,
+			Expiration:  expiration,
 		})
 		if err != nil {
 			http.Error(w, fmt.Sprintf("build prepare transaction: %v", err), http.StatusBadGateway)
@@ -274,12 +321,13 @@ func (p *Payment) WritePrepare(w http.ResponseWriter, r *http.Request, sender, r
 	}
 
 	paymentTxBytes, err := suischeme.BuildGaslessStablecoinTransferTransaction(ctx, suischeme.GaslessStablecoinTransfer{
-		Sender:    sender,
-		Recipient: p.requirements.PayTo,
-		Network:   p.requirements.Network,
-		Asset:     p.requirements.Asset,
-		Amount:    p.requirements.Amount,
-		Endpoints: p.payment.Endpoints,
+		Sender:     sender,
+		Recipient:  p.requirements.PayTo,
+		Network:    p.requirements.Network,
+		Asset:      p.requirements.Asset,
+		Amount:     p.requirements.Amount,
+		Endpoints:  p.payment.Endpoints,
+		Expiration: expiration,
 	})
 	if err != nil {
 		http.Error(w, fmt.Sprintf("build payment transaction: %v", err), http.StatusBadGateway)

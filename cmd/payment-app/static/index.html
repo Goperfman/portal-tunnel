@@ -99,16 +99,127 @@
             statusEl.textContent = value;
         }
 
-        function supportsPayment(candidate) {
+        function pickAccount(accounts) {
+            return accounts.find((candidate) => Array.isArray(candidate.chains) && candidate.chains.includes(config.network)) || accounts[0] || null;
+        }
+
+        function normalizeAccounts(value) {
+            const accounts = Array.isArray(value) ? value : value?.accounts || (value?.account ? [value.account] : []);
+            return accounts.map((account) => {
+                if (typeof account === 'string') {
+                    return { address: account };
+                }
+                return account && typeof account.address === 'string' ? account : null;
+            }).filter(Boolean);
+        }
+
+        function standardPaymentWallet(candidate, index) {
             const features = candidate?.features || {};
-            return Boolean(
-                features['standard:connect'] &&
-                (features['sui:signTransaction'] || features['sui:signTransactionBlock'])
-            );
+            const connectFeature = features['standard:connect'];
+            const signTransactionFeature = features['sui:signTransaction'];
+            const signTransactionBlockFeature = features['sui:signTransactionBlock'];
+            const connect = typeof connectFeature?.connect === 'function' ? connectFeature.connect.bind(connectFeature) : null;
+            const signTransaction = typeof signTransactionFeature?.signTransaction === 'function' ? signTransactionFeature.signTransaction.bind(signTransactionFeature) : null;
+            const signTransactionBlock = typeof signTransactionBlockFeature?.signTransactionBlock === 'function' ? signTransactionBlockFeature.signTransactionBlock.bind(signTransactionBlockFeature) : null;
+            if (!connect || (!signTransaction && !signTransactionBlock)) {
+                return null;
+            }
+
+            const executeTransactionFeature = features['sui:signAndExecuteTransaction'];
+            const executeTransactionBlockFeature = features['sui:signAndExecuteTransactionBlock'];
+            const executeTransaction = typeof executeTransactionFeature?.signAndExecuteTransaction === 'function' ? executeTransactionFeature.signAndExecuteTransaction.bind(executeTransactionFeature) : null;
+            const executeTransactionBlock = typeof executeTransactionBlockFeature?.signAndExecuteTransactionBlock === 'function' ? executeTransactionBlockFeature.signAndExecuteTransactionBlock.bind(executeTransactionBlockFeature) : null;
+            const name = candidate.name || `Wallet ${index + 1}`;
+            return {
+                id: `standard:${name}`,
+                name,
+                async connect() {
+                    const response = await connect();
+                    return pickAccount(normalizeAccounts(response?.accounts || candidate.accounts || []));
+                },
+                async signTransaction(account, transaction) {
+                    if (signTransaction) {
+                        return signTransaction({ transaction, account, chain: config.network });
+                    }
+                    return signTransactionBlock({ transactionBlock: transaction, account, chain: config.network });
+                },
+                executeTransaction: executeTransaction || executeTransactionBlock ? async (account, transaction) => {
+                    if (executeTransaction) {
+                        return executeTransaction({ transaction, account, chain: config.network });
+                    }
+                    return executeTransactionBlock({ transactionBlock: transaction, account, chain: config.network });
+                } : null,
+            };
+        }
+
+        function legacyPaymentWallet(globalName, label) {
+            const candidate = window[globalName];
+            if (!candidate || typeof candidate !== 'object') {
+                return null;
+            }
+            const signTransaction = typeof candidate.signTransaction === 'function' ? candidate.signTransaction.bind(candidate) : null;
+            const signTransactionBlock = typeof candidate.signTransactionBlock === 'function' ? candidate.signTransactionBlock.bind(candidate) : null;
+            if (!signTransaction && !signTransactionBlock) {
+                return null;
+            }
+
+            const connect = typeof candidate.connect === 'function' ? candidate.connect.bind(candidate) : null;
+            const requestAccounts = typeof candidate.requestAccounts === 'function' ? candidate.requestAccounts.bind(candidate) : null;
+            const getAccounts = typeof candidate.getAccounts === 'function' ? candidate.getAccounts.bind(candidate) : null;
+            const executeTransaction = typeof candidate.signAndExecuteTransaction === 'function' ? candidate.signAndExecuteTransaction.bind(candidate) : null;
+            const executeTransactionBlock = typeof candidate.signAndExecuteTransactionBlock === 'function' ? candidate.signAndExecuteTransactionBlock.bind(candidate) : null;
+            const name = candidate.name || candidate.walletName || label;
+            return {
+                id: `legacy:${globalName}`,
+                name,
+                async connect() {
+                    const response = connect ? await connect() : (requestAccounts ? await requestAccounts() : null);
+                    let accounts = normalizeAccounts(response || candidate.accounts || candidate.account);
+                    if (accounts.length === 0 && getAccounts) {
+                        accounts = normalizeAccounts(await getAccounts());
+                    }
+                    return pickAccount(accounts);
+                },
+                async signTransaction(account, transaction) {
+                    if (signTransaction) {
+                        return signTransaction({ transaction, account, chain: config.network });
+                    }
+                    return signTransactionBlock({ transactionBlock: transaction, account, chain: config.network });
+                },
+                executeTransaction: executeTransaction || executeTransactionBlock ? async (account, transaction) => {
+                    if (executeTransaction) {
+                        return executeTransaction({ transaction, account, chain: config.network });
+                    }
+                    return executeTransactionBlock({ transactionBlock: transaction, account, chain: config.network });
+                } : null,
+            };
         }
 
         function currentWallets() {
-            return walletsApi.get().filter(supportsPayment);
+            const wallets = walletsApi.get().map(standardPaymentWallet).filter(Boolean);
+            [
+                ['suiWallet', 'Sui Wallet'],
+                ['suiet', 'Suiet'],
+                ['ethosWallet', 'Ethos'],
+                ['martian', 'Martian'],
+                ['surfWallet', 'Surf Wallet'],
+                ['glassWallet', 'Glass Wallet'],
+            ].forEach(([globalName, label]) => {
+                const wallet = legacyPaymentWallet(globalName, label);
+                if (wallet) {
+                    wallets.push(wallet);
+                }
+            });
+
+            const seen = new Set();
+            return wallets.filter((wallet) => {
+                const key = wallet.name.trim().toLowerCase();
+                if (seen.has(key)) {
+                    return false;
+                }
+                seen.add(key);
+                return true;
+            });
         }
 
         function refreshWallets() {
@@ -116,7 +227,7 @@
             walletSelect.replaceChildren(...wallets.map((candidate, index) => {
                 const option = document.createElement('option');
                 option.value = String(index);
-                option.textContent = candidate.name || `Wallet ${index + 1}`;
+                option.textContent = candidate.name;
                 return option;
             }));
             const hasWallets = wallets.length > 0;
@@ -126,17 +237,12 @@
             setStatus(hasWallets ? 'Select a wallet and continue' : 'Install a Sui wallet extension');
         }
 
-        function pickAccount(accounts) {
-            return accounts.find((candidate) => Array.isArray(candidate.chains) && candidate.chains.includes(config.network)) || accounts[0] || null;
-        }
-
         async function connectWallet() {
             const wallet = currentWallets()[Number(walletSelect.value)];
             if (!wallet) {
                 throw new Error('No Sui wallet selected');
             }
-            const response = await wallet.features['standard:connect'].connect();
-            const connectedAccount = pickAccount(response.accounts || wallet.accounts || []);
+            const connectedAccount = await wallet.connect();
             if (!connectedAccount) {
                 throw new Error('Connected wallet did not return an account');
             }
@@ -262,38 +368,29 @@
         }
 
         async function signTransaction(wallet, account, transactionBytes) {
-            const tx = transactionFromBase64(transactionBytes);
-            if (wallet.features['sui:signTransaction']) {
-                return wallet.features['sui:signTransaction'].signTransaction({
-                    transaction: tx,
-                    account,
-                    chain: config.network,
-                });
+            return wallet.signTransaction(account, transactionFromBase64(transactionBytes));
+        }
+
+        async function executeSignedTransaction(signed, fallbackBytes) {
+            const bytes = signed.bytes || signed.transactionBlockBytes || fallbackBytes;
+            const transactionBytes = bytes instanceof Uint8Array ? bytesToBase64(bytes) : bytes;
+            if (!transactionBytes || !signed.signature) {
+                throw new Error('Wallet did not return a signed transaction');
             }
-            return wallet.features['sui:signTransactionBlock'].signTransactionBlock({
-                transactionBlock: tx,
-                account,
-                chain: config.network,
-            });
+            return suiRPC('sui_executeTransactionBlock', [
+                transactionBytes,
+                [signed.signature],
+                { showEffects: true },
+                'WaitForLocalExecution',
+            ]);
         }
 
         async function executePrepareTransaction(wallet, account, transactionBytes) {
-            const tx = transactionFromBase64(transactionBytes);
-            if (wallet.features['sui:signAndExecuteTransaction']) {
-                return wallet.features['sui:signAndExecuteTransaction'].signAndExecuteTransaction({
-                    transaction: tx,
-                    account,
-                    chain: config.network,
-                });
+            const transaction = transactionFromBase64(transactionBytes);
+            if (wallet.executeTransaction) {
+                return wallet.executeTransaction(account, transaction);
             }
-            if (wallet.features['sui:signAndExecuteTransactionBlock']) {
-                return wallet.features['sui:signAndExecuteTransactionBlock'].signAndExecuteTransactionBlock({
-                    transactionBlock: tx,
-                    account,
-                    chain: config.network,
-                });
-            }
-            throw new Error('This wallet cannot execute the USDC prepare transaction');
+            return executeSignedTransaction(await wallet.signTransaction(account, transaction), transactionBytes);
         }
 
         function encodePaymentPayload(payload) {
