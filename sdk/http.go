@@ -132,6 +132,7 @@ type HTTPRouteConfig struct {
 	// Methods limits payment to these HTTP methods. Empty means every method.
 	Methods []string
 	// Amount enables Sui USDC x402 payment for this public path prefix.
+	// It is a human USDC amount such as "0.01"; x402 converts it to atomic units.
 	Amount string
 }
 
@@ -178,6 +179,10 @@ func (h *HTTPRoutes) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		path = r.URL.Path
 	}
 	path = utils.NormalizeURLPath(path)
+	if path == types.X402ClientPath {
+		x402.ServeClientJS(w, r)
+		return
+	}
 	prepare := path == types.X402PreparePath
 	var paymentSender string
 	paymentMethod := http.MethodGet

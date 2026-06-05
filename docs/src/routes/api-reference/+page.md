@@ -122,6 +122,11 @@ Portal accepts only USDC gasless stablecoin address-balance payments.
 `X402_PAY_TO` is the relay-owned payment recipient. Tunnel payment recipients
 are local tunnel configuration and are not part of the relay lease API.
 
+Paid routed HTTP tunnels additionally expose `/x402/prepare` and
+`/x402/client.js` on the public tunnel origin. Those are tunnel-owned helper
+endpoints for app frontends, not relay API routes, and they do not use the
+`/api` prefix.
+
 | Method | Path | Auth | Body | Response |
 |--------|------|------|------|----------|
 | `GET` | `/api/x402/supported` | None | none | x402 supported kinds |

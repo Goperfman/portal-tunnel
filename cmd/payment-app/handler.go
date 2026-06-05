@@ -14,139 +14,14 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
-//go:embed static/index.html static/style.css
+//go:embed static/index.html static/photo.html static/style.css
 var staticFiles embed.FS
 
 const paidPhotoPath = "/paid/photo"
 
 var (
 	indexPage = template.Must(template.ParseFS(staticFiles, "static/index.html"))
-	photoPage = template.Must(template.New("photo").Parse(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{{.PageTitle}}</title>
-  <meta name="description" content="{{.PageDescription}}">
-  <meta property="og:type" content="website">
-  <meta property="og:title" content="{{.PageTitle}}">
-  <meta property="og:description" content="{{.PageDescription}}">
-  <meta property="og:image" content="{{.OGImage}}">
-  <meta property="og:url" content="{{.URL}}">
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="{{.PageTitle}}">
-  <meta name="twitter:description" content="{{.PageDescription}}">
-  <meta name="twitter:image" content="{{.OGImage}}">
-  <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: flex;
-      padding: 0;
-      background: #f7f8fb;
-      color: #182033;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    }
-    main {
-      display: grid;
-      width: 100%;
-      min-height: 100vh;
-      grid-template-rows: minmax(0, 1fr) auto;
-      overflow: hidden;
-      background: #ffffff;
-    }
-    img {
-      width: 100%;
-      height: 100%;
-      min-height: 0;
-      display: block;
-      object-fit: contain;
-      background: #111827;
-    }
-    section {
-      display: grid;
-      gap: 10px;
-      padding: 18px;
-      border-top: 1px solid #e5eaf0;
-    }
-    .eyebrow {
-      margin: 0;
-      color: #0e7490;
-      font-size: 12px;
-      font-weight: 800;
-      text-transform: uppercase;
-      letter-spacing: 0;
-    }
-    h1 {
-      margin: 0;
-      color: #111827;
-      font-size: 25px;
-      line-height: 1.18;
-    }
-    p {
-      margin: 0;
-      color: #4b5565;
-      font-size: 15px;
-      line-height: 1.55;
-    }
-    dl {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 10px;
-      margin: 4px 0 0;
-    }
-    div { min-width: 0; }
-    dt {
-      color: #667085;
-      font-size: 12px;
-      font-weight: 700;
-    }
-    dd {
-      margin: 4px 0 0;
-      overflow-wrap: anywhere;
-      color: #111827;
-      font-size: 13px;
-      font-weight: 750;
-    }
-    @media (max-width: 640px) {
-      section { padding: 14px; }
-      dl { grid-template-columns: 1fr; }
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <img src="{{.PhotoURL}}" alt="Unlocked protected image">
-    <section>
-      <p class="eyebrow">Payment complete</p>
-      <h1>Image unlocked</h1>
-      <p>The protected image is available after the {{.Amount}} atomic USDC x402 settlement.</p>
-      <dl>
-        <div>
-          <dt>Amount</dt>
-          <dd>{{.Amount}} atomic USDC</dd>
-        </div>
-        <div>
-          <dt>Network</dt>
-          <dd>{{.NetworkName}}</dd>
-        </div>
-        <div>
-          <dt>Recipient</dt>
-          <dd>{{.RecipientAddress}}</dd>
-        </div>
-        {{if .TransactionID}}
-        <div>
-          <dt>Transaction</dt>
-          <dd>{{.TransactionID}}</dd>
-        </div>
-        {{end}}
-      </dl>
-    </section>
-  </main>
-</body>
-</html>
-`))
+	photoPage = template.Must(template.ParseFS(staticFiles, "static/photo.html"))
 )
 
 type paymentHandlerConfig struct {
@@ -167,7 +42,6 @@ type paymentHandler struct {
 	asset       string
 	amount      string
 	payTo       string
-	endpoints   []string
 	photoURL    string
 }
 
@@ -212,7 +86,6 @@ func newHandler(cfg paymentHandlerConfig) (http.Handler, error) {
 	handler.asset = payment.Asset
 	handler.amount = payment.Amount
 	handler.payTo = payment.PayTo
-	handler.endpoints = append([]string(nil), payment.Endpoints...)
 	handler.photoURL = strings.TrimSpace(cfg.PhotoURL)
 
 	staticFS, err := fs.Sub(staticFiles, "static")
@@ -221,6 +94,7 @@ func newHandler(cfg paymentHandlerConfig) (http.Handler, error) {
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/static/style.css", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	mux.HandleFunc(types.X402ClientPath, x402.ServeClientJS)
 	mux.Handle(types.X402PreparePath, paidPhotoHandler)
 	mux.HandleFunc("/", handler.handleIndex)
 	mux.Handle(paidPhotoPath, paidPhotoHandler)
@@ -264,9 +138,6 @@ func (h *paymentHandler) newPaymentPageData(r *http.Request) paymentPageData {
 		"preparePath":   types.X402PreparePath,
 		"protectedPath": paidPhotoPath,
 	}
-	if len(h.endpoints) > 0 {
-		config["endpoints"] = append([]string(nil), h.endpoints...)
-	}
 	configJSON, err := json.Marshal(config)
 	if err != nil {
 		configJSON = []byte("{}")
@@ -280,7 +151,7 @@ func (h *paymentHandler) newPaymentPageData(r *http.Request) paymentPageData {
 		Network:          h.network,
 		NetworkName:      h.networkName,
 		Asset:            h.asset,
-		Amount:           h.amount,
+		Amount:           x402.FormatUSDCAtomicAmount(h.amount),
 		PhotoURL:         h.photoURL,
 		RecipientAddress: h.payTo,
 		ConfigJSON:       template.JS(string(configJSON)),

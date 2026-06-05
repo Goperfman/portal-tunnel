@@ -44,6 +44,7 @@ const (
 
 const (
 	X402PreparePath = "/x402/prepare"
+	X402ClientPath  = "/x402/client.js"
 
 	PathAgentPrefix        = "/agent"
 	PathAgentStatus        = PathAgentPrefix + "/status"

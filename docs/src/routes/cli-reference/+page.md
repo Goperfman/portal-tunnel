@@ -56,8 +56,10 @@ portal expose [flags] <target>
 Or run routed HTTP mode:
 
 ```bash
-portal expose [flags] --http-route PATH=UPSTREAM [--http-route PATH=UPSTREAM]
+portal expose [flags] --http-route "PATH=UPSTREAM [METHOD[,METHOD...]:USDC_AMOUNT]" [...]
 ```
+
+The payment suffix is optional; omit it for free routes.
 
 ### Target Formats
 
@@ -98,8 +100,7 @@ not supported.
 | `--owner` | string | | Service owner metadata |
 | `--hide` | bool | `false` | Hide service from relay listing screens |
 | `--x402-pay-to` | string | | Sui USDC payment recipient address for this tunnel |
-| `--x402-amount` | string | | Sui USDC x402 amount mapping in `[METHOD[,METHOD...]:]PATH=ATOMIC_AMOUNT` form; repeatable; requires `--http-route` and `--x402-pay-to` |
-| `--http-route` | string | | HTTP route mapping in `PATH=UPSTREAM` form; repeatable |
+| `--http-route` | string | | HTTP route mapping in `PATH=UPSTREAM [METHOD[,METHOD...]:USDC_AMOUNT]` form; repeatable; route amounts require `--x402-pay-to` |
 | `--tcp` | bool | `false` | Request a dedicated raw TCP port on the relay |
 | `--udp` | bool | `false` | Enable public UDP relay in addition to the default stream path |
 | `--udp-addr` | string | | Local UDP target; defaults to the primary target when `--udp` is enabled |
@@ -112,8 +113,8 @@ not supported.
 - Explicit `--multi-hop` cannot be combined with automatic `--multi-hop-depth`.
 - Multi-hop currently supports only the default SNI TLS stream transport.
 - `--tcp` and `--udp` require matching transport support on the relay.
-- `--x402-amount` applies only to routed HTTP prefixes and requires a
-  tunnel-owned `--x402-pay-to`.
+- Route payment amounts are part of `--http-route` and require a tunnel-owned
+  `--x402-pay-to`.
 
 ### Examples
 
@@ -178,12 +179,34 @@ portal expose 3000 --ban-mitm
 Publish a paid HTTP route:
 
 ```bash
-portal expose --name myapp \
-  --http-route /api=http://127.0.0.1:3001 \
+portal expose --name paid-app \
+  --http-route "/paid=http://127.0.0.1:3001 GET:0.01" \
   --http-route /=http://127.0.0.1:5173 \
-  --x402-pay-to 0x... \
-  --x402-amount /api=100000
+  --x402-pay-to 0x...
 ```
+
+The optional method list limits which methods require payment; without it, every
+method on that route prefix is paid.
+
+The routed HTTP handler also serves `/x402/client.js` and `/x402/prepare` on the
+public tunnel origin. Frontends served by one of the routes can use the shared
+browser client for an in-page Sui wallet flow:
+
+```js
+import { getSuiWallets, x402Fetch } from '/x402/client.js';
+
+const [wallet] = getSuiWallets({ network: 'sui:testnet' });
+const [account] = await wallet.accounts('sui:testnet');
+
+const response = await x402Fetch('/paid/photo', { method: 'GET' }, {
+  wallet,
+  account,
+  network: 'sui:testnet',
+});
+```
+
+The frontend integration is optional. Requests without a valid `X-PAYMENT`
+header still receive x402 payment-required responses from the tunnel.
 
 ## `portal list`
 

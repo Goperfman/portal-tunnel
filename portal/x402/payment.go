@@ -7,9 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 
+	"github.com/cockroachdb/apd/v3"
 	facilitatorcore "github.com/gosuda/x402-facilitator/facilitator"
 	suischeme "github.com/gosuda/x402-facilitator/scheme/sui"
 	facilitatortypes "github.com/gosuda/x402-facilitator/types"
@@ -17,6 +17,8 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
+
+const usdcDecimals = 6
 
 // Payment owns one Sui USDC x402 payment contract and its facilitator runtime.
 type Payment struct {
@@ -39,10 +41,9 @@ func NewUSDCPayment(payment types.X402Payment) (*Payment, error) {
 	if payTo == "" {
 		return nil, errors.New("x402 USDC payment requires a Sui pay-to address")
 	}
-	amount := strings.TrimSpace(payment.Amount)
-	n, err := strconv.ParseUint(amount, 10, 64)
-	if err != nil || n == 0 {
-		return nil, fmt.Errorf("x402 USDC payment amount must be a positive atomic amount: %s", amount)
+	amount, err := USDCAmountToAtomic(payment.Amount)
+	if err != nil {
+		return nil, err
 	}
 	maxTimeoutSeconds := payment.MaxTimeoutSeconds
 	if maxTimeoutSeconds <= 0 {
@@ -86,6 +87,46 @@ func NewUSDCPayment(payment types.X402Payment) (*Payment, error) {
 		facilitator:  facilitator,
 		requirements: requirements,
 	}, nil
+}
+
+// USDCAmountToAtomic converts a human USDC amount, such as "0.01", to atomic
+// units for the x402 facilitator. USDC has 6 decimals.
+func USDCAmountToAtomic(amount string) (string, error) {
+	amount = strings.TrimSpace(amount)
+	if amount == "" {
+		return "", errors.New("x402 USDC payment amount is required")
+	}
+	d, _, err := new(apd.Decimal).SetString(amount)
+	if err != nil {
+		return "", fmt.Errorf("x402 USDC payment amount must be a decimal USDC amount: %s", amount)
+	}
+	d.Exponent += int32(usdcDecimals)
+	d.Reduce(d)
+	if d.Form != apd.Finite || d.Sign() <= 0 {
+		return "", fmt.Errorf("x402 USDC payment amount must be positive: %s", amount)
+	}
+	if d.Exponent < 0 {
+		return "", fmt.Errorf("x402 USDC payment amount supports up to %d decimals: %s", usdcDecimals, amount)
+	}
+	return fmt.Sprintf("%f", d), nil
+}
+
+// FormatUSDCAtomicAmount renders an atomic USDC amount as a human amount.
+func FormatUSDCAtomicAmount(amount string) string {
+	amount = strings.TrimSpace(amount)
+	if amount == "" {
+		return ""
+	}
+	d, _, err := new(apd.Decimal).SetString(amount)
+	if err != nil {
+		return amount + " atomic USDC"
+	}
+	d.Exponent -= int32(usdcDecimals)
+	d.Reduce(d)
+	if d.Form != apd.Finite || d.Sign() < 0 {
+		return amount + " atomic USDC"
+	}
+	return fmt.Sprintf("%f USDC", d)
 }
 
 func (p *Payment) Verify(ctx context.Context, w http.ResponseWriter, r *http.Request) (*facilitatortypes.PaymentPayload, bool) {

@@ -85,6 +85,22 @@ Because HTTP is parsed in the tunnel process, this is the right place for
 cooperative HTTP policy such as response headers. It is not a relay-enforced
 policy boundary.
 
+Paid routes are also owned by routed HTTP mode. Add `--x402-pay-to` and attach
+the amount to the HTTP route:
+
+```bash
+portal expose --name paid-app \
+  --http-route "/paid=http://127.0.0.1:3001 GET:0.01" \
+  --http-route /=http://127.0.0.1:5173 \
+  --x402-pay-to 0x...
+```
+
+The tunnel serves `/x402/client.js` and `/x402/prepare` on the same public
+origin. A frontend mounted through the tunnel can import `/x402/client.js` and
+call `x402Fetch()` from its own UI, so the Sui wallet flow stays in the app
+instead of requiring a separate payment redirect. The tunnel still verifies and
+settles the payment before proxying the protected request.
+
 ## Dedicated Raw TCP
 
 Use raw TCP when clients need a public TCP port instead of a public HTTPS

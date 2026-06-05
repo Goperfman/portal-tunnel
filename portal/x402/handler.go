@@ -2,6 +2,7 @@ package x402
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,22 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
+
+//go:embed client.js
+var clientJS []byte
+
+// ServeClientJS serves the shared browser x402 wallet/payment client.
+func ServeClientJS(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodHead && !utils.RequireMethod(w, r, http.MethodGet) {
+		return
+	}
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = w.Write(clientJS)
+}
 
 // USDCPaymentHandler serves both the wallet prepare endpoint and one protected resource.
 type USDCPaymentHandler struct {

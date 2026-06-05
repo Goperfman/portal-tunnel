@@ -60,7 +60,6 @@ type exposeFlags struct {
 	thumbnail       string
 	hide            bool
 	x402PayTo       string
-	x402Amounts     []string
 	targetAddr      string
 	httpRoutes      []string
 	udp             bool
@@ -90,8 +89,7 @@ func runExposeCommand(args []string) error {
 	utils.StringFlag(fs, &flags.thumbnail, "thumbnail", "", "Service thumbnail URL metadata")
 	utils.BoolFlag(fs, &flags.hide, "hide", false, "Hide service from relay listing screens")
 	utils.StringFlag(fs, &flags.x402PayTo, "x402-pay-to", "", "Sui USDC payment recipient address for this tunnel")
-	utils.RepeatedStringFlag(fs, &flags.x402Amounts, "x402-amount", "Sui USDC x402 amount mapping in [METHOD[,METHOD...]:]PATH=ATOMIC_AMOUNT form; repeat for multiple HTTP routes")
-	utils.RepeatedStringFlag(fs, &flags.httpRoutes, "http-route", "HTTP route mapping in PATH=UPSTREAM form; repeat to aggregate multiple local HTTP services behind one public URL")
+	utils.RepeatedStringFlag(fs, &flags.httpRoutes, "http-route", "HTTP route mapping in PATH=UPSTREAM [METHOD[,METHOD...]:USDC_AMOUNT] form; repeat to aggregate multiple local HTTP services behind one public URL")
 	utils.BoolFlagEnv(fs, &flags.udp, "udp", false, "Enable public UDP relay in addition to the default TCP relay", "UDP_ENABLED")
 	utils.StringFlagEnv(fs, &flags.udpAddr, "udp-addr", "", "Local UDP target address for relayed datagrams (host:port or port only); defaults to the target when --udp is enabled", "UDP_ADDR")
 	utils.BoolFlagEnv(fs, &flags.tcp, "tcp", false, "Request a dedicated TCP port on the relay for raw TCP services (no TLS; e.g., Minecraft, game servers)", "TCP_ENABLED")
@@ -123,61 +121,17 @@ func runExposeCommand(args []string) error {
 	case len(httpRouteInputs) > 0 && flags.udp:
 		printExposeUsage(os.Stderr)
 		return errors.New("--udp cannot be combined with --http-route")
-	case len(flags.x402Amounts) > 0 && len(httpRouteInputs) == 0:
-		printExposeUsage(os.Stderr)
-		return errors.New("--x402-amount requires --http-route")
-	case len(flags.x402Amounts) > 0 && strings.TrimSpace(flags.x402PayTo) == "":
-		printExposeUsage(os.Stderr)
-		return errors.New("--x402-amount requires --x402-pay-to")
-	}
-
-	type x402AmountRule struct {
-		methods []string
-		amount  string
-	}
-	x402Amounts := make(map[string]x402AmountRule, len(flags.x402Amounts))
-	for _, raw := range flags.x402Amounts {
-		prefix, amount, ok := strings.Cut(raw, "=")
-		if !ok {
-			return fmt.Errorf("--x402-amount %q: expected [METHOD[,METHOD...]:]PATH=ATOMIC_AMOUNT", raw)
-		}
-		prefix = strings.TrimSpace(prefix)
-		methods := []string(nil)
-		if !strings.HasPrefix(prefix, "/") {
-			methodPart, pathPart, ok := strings.Cut(prefix, ":")
-			if ok {
-				for _, rawMethod := range strings.Split(methodPart, ",") {
-					method := strings.ToUpper(strings.TrimSpace(rawMethod))
-					if method == "" {
-						return fmt.Errorf("--x402-amount %q: method is required", raw)
-					}
-					methods = append(methods, method)
-				}
-				prefix = strings.TrimSpace(pathPart)
-			}
-		}
-		if prefix == "" {
-			return fmt.Errorf("--x402-amount %q: path is required", raw)
-		}
-		if !strings.HasPrefix(prefix, "/") {
-			return fmt.Errorf("--x402-amount %q: path must start with /", raw)
-		}
-		prefix = utils.NormalizeURLPath(prefix)
-		amount = strings.TrimSpace(amount)
-		if amount == "" {
-			return fmt.Errorf("--x402-amount %q: amount is required", raw)
-		}
-		if _, exists := x402Amounts[prefix]; exists {
-			return fmt.Errorf("--x402-amount path %q repeated", prefix)
-		}
-		x402Amounts[prefix] = x402AmountRule{methods: methods, amount: amount}
 	}
 
 	httpRoutes := make([]sdk.HTTPRouteConfig, 0, len(httpRouteInputs))
 	for _, raw := range httpRouteInputs {
-		prefix, upstream, ok := strings.Cut(raw, "=")
+		fields := strings.Fields(raw)
+		if len(fields) == 0 || len(fields) > 2 {
+			return fmt.Errorf("--http-route %q: expected PATH=UPSTREAM [METHOD[,METHOD...]:USDC_AMOUNT]", raw)
+		}
+		prefix, upstream, ok := strings.Cut(fields[0], "=")
 		if !ok {
-			return fmt.Errorf("--http-route %q: expected PATH=UPSTREAM", raw)
+			return fmt.Errorf("--http-route %q: expected PATH=UPSTREAM [METHOD[,METHOD...]:USDC_AMOUNT]", raw)
 		}
 		prefix = strings.TrimSpace(prefix)
 		if prefix == "" {
@@ -190,20 +144,22 @@ func runExposeCommand(args []string) error {
 		if upstream == "" {
 			return fmt.Errorf("--http-route %q: upstream is required", raw)
 		}
-		normalizedPrefix := utils.NormalizeURLPath(prefix)
 		route := sdk.HTTPRouteConfig{
 			Prefix:   prefix,
 			Upstream: upstream,
 		}
-		if payment, ok := x402Amounts[normalizedPrefix]; ok {
-			route.Methods = payment.methods
-			route.Amount = payment.amount
-			delete(x402Amounts, normalizedPrefix)
+		if len(fields) == 2 {
+			methods, amount, err := parseHTTPRoutePayment(fields[1])
+			if err != nil {
+				return fmt.Errorf("--http-route %q: %w", raw, err)
+			}
+			if strings.TrimSpace(flags.x402PayTo) == "" {
+				return fmt.Errorf("--http-route %q: payment amount requires --x402-pay-to", raw)
+			}
+			route.Methods = methods
+			route.Amount = amount
 		}
 		httpRoutes = append(httpRoutes, route)
-	}
-	for prefix := range x402Amounts {
-		return fmt.Errorf("--x402-amount path %q has no matching --http-route", prefix)
 	}
 
 	ctx, stop := utils.SignalContext()
@@ -256,6 +212,45 @@ func runExposeCommand(args []string) error {
 		return exposure.RunHTTPRoutes(ctx, httpRoutes, "")
 	}
 	return sdk.ProxyExposure(ctx, exposure)
+}
+
+func parseHTTPRoutePayment(value string) ([]string, string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, "", errors.New("payment amount is required")
+	}
+	methodPart, amount, hasMethods := strings.Cut(value, ":")
+	if !hasMethods {
+		amount = value
+		methodPart = ""
+	}
+	amount = strings.TrimSpace(amount)
+	if amount == "" {
+		return nil, "", errors.New("payment amount is required")
+	}
+	methods := []string(nil)
+	if hasMethods {
+		for _, rawMethod := range strings.Split(methodPart, ",") {
+			method := strings.ToUpper(strings.TrimSpace(rawMethod))
+			if method == "" {
+				return nil, "", errors.New("payment method is required")
+			}
+			exists := false
+			for _, existing := range methods {
+				if existing == method {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				methods = append(methods, method)
+			}
+		}
+		if len(methods) == 0 {
+			return nil, "", errors.New("payment methods are required before ':'")
+		}
+	}
+	return methods, amount, nil
 }
 
 func runUpdateCommand(args []string) error {
@@ -347,7 +342,7 @@ func printRootUsage(w io.Writer) {
 	utils.WriteCommandUsage(w,
 		[]string{
 			"portal expose [flags] <target>",
-			"portal expose [flags] --http-route PATH=UPSTREAM [--http-route PATH=UPSTREAM]",
+			"portal expose [flags] --http-route \"PATH=UPSTREAM [METHOD[,METHOD...]:USDC_AMOUNT]\" [...]",
 			"portal agent run [flags]",
 			"portal agent dashboard [flags]",
 			"portal agent stop [flags]",
@@ -360,6 +355,7 @@ func printRootUsage(w io.Writer) {
 			"portal expose 3000",
 			"portal expose localhost:8080 --name my-app",
 			"portal expose --http-route /api=http://127.0.0.1:3001 --http-route /=http://127.0.0.1:5173 --name my-app",
+			"portal expose --http-route \"/paid=http://127.0.0.1:3001 GET:0.01\" --http-route /=http://127.0.0.1:5173 --x402-pay-to 0x...",
 			"portal agent run",
 			"portal agent dashboard",
 			"portal agent stop",
@@ -377,12 +373,13 @@ func printExposeUsage(w io.Writer) {
 	utils.WriteCommandUsage(w,
 		[]string{
 			"portal expose [flags] <target>",
-			"portal expose [flags] --http-route PATH=UPSTREAM [--http-route PATH=UPSTREAM]",
+			"portal expose [flags] --http-route \"PATH=UPSTREAM [METHOD[,METHOD...]:USDC_AMOUNT]\" [...]",
 		},
 		[]string{
 			"portal expose 3000",
 			"portal expose localhost:8080 --name my-app",
 			"portal expose --http-route /api=http://127.0.0.1:3001 --http-route /=http://127.0.0.1:5173 --name my-app",
+			"portal expose --http-route \"/paid=http://127.0.0.1:3001 GET:0.01\" --http-route /=http://127.0.0.1:5173 --x402-pay-to 0x...",
 			"portal expose 3000 --udp --udp-addr 127.0.0.1:5353",
 			"portal expose 3000 --ban-mitm",
 			"portal expose 3000 --relays https://portal.example.com --discovery=false",

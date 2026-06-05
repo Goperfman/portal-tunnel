@@ -11,6 +11,7 @@ require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/cockroachdb/apd/v3 v3.2.3
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
 	github.com/go-acme/lego/v4 v4.34.0
 	github.com/go-jose/go-jose/v4 v4.1.4

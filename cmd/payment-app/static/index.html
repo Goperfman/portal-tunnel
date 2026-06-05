@@ -35,7 +35,7 @@
                     <dl class="facts">
                         <div>
                             <dt>Amount</dt>
-                            <dd>{{.Amount}} atomic USDC</dd>
+                            <dd>{{.Amount}}</dd>
                         </div>
                         <div>
                             <dt>Network</dt>
@@ -83,11 +83,9 @@
     </main>
 
     <script type="module">
-        import { getWallets } from 'https://esm.sh/@wallet-standard/app';
-        import { Transaction } from 'https://esm.sh/@mysten/sui/transactions';
+        import { getSuiWallets, onSuiWalletChange, x402Fetch } from '/x402/client.js';
 
         const config = JSON.parse(document.getElementById('payment-config').textContent || '{}');
-        const walletsApi = getWallets();
         const walletSelect = document.getElementById('walletSelect');
         const accountSelect = document.getElementById('accountSelect');
         const unlockButton = document.getElementById('unlockButton');
@@ -97,23 +95,17 @@
         const paymentFrame = document.getElementById('paymentFrame');
         const resetViewer = document.getElementById('resetViewer');
         const viewerTitle = document.getElementById('viewerTitle');
-        let connectedWallet = null;
+        let wallets = [];
+        let connectedWalletIndex = '';
         let connectedAccounts = [];
 
         function setStatus(value) {
             statusEl.textContent = value;
         }
 
-        function supportsPayment(candidate) {
-            const features = candidate?.features || {};
-            return Boolean(
-                features['standard:connect'] &&
-                (features['sui:signTransaction'] || features['sui:signTransactionBlock'])
-            );
-        }
-
         function currentWallets() {
-            return walletsApi.get().filter(supportsPayment);
+            wallets = getSuiWallets({ network: config.network });
+            return wallets;
         }
 
         function resetAccountSelect() {
@@ -125,56 +117,29 @@
         }
 
         function refreshWallets() {
-            const wallets = currentWallets();
-            walletSelect.replaceChildren(...wallets.map((candidate, index) => {
+            const selectedWalletIndex = walletSelect.value;
+            const nextWallets = currentWallets();
+            walletSelect.replaceChildren(...nextWallets.map((wallet, index) => {
                 const option = document.createElement('option');
                 option.value = String(index);
-                option.textContent = candidate.name || `Wallet ${index + 1}`;
+                option.textContent = wallet.name;
                 return option;
             }));
-            const hasWallets = wallets.length > 0;
+            if (selectedWalletIndex && Number(selectedWalletIndex) < nextWallets.length) {
+                walletSelect.value = selectedWalletIndex;
+            }
+            const hasWallets = nextWallets.length > 0;
             walletSelect.disabled = !hasWallets;
             unlockButton.disabled = !hasWallets;
             unlockButton.textContent = 'Connect and pay';
-            connectedWallet = null;
+            connectedWalletIndex = '';
             connectedAccounts = [];
             resetAccountSelect();
             setStatus(hasWallets ? 'Select a wallet and continue' : 'Install a Sui wallet extension');
         }
 
-        function normalizeAccounts(value) {
-            const accounts = Array.isArray(value) ? value : (value ? [value] : []);
-            return accounts.map((account) => {
-                if (typeof account === 'string') {
-                    return { address: account };
-                }
-                return account && typeof account.address === 'string' ? account : null;
-            }).filter(Boolean);
-        }
-
-        function pickAccount(accounts) {
-            return accounts.find((candidate) => Array.isArray(candidate.chains) && candidate.chains.includes(config.network)) || accounts[0] || null;
-        }
-
-        function compatibleAccounts(accounts) {
-            const matching = accounts.filter((account) => !Array.isArray(account.chains) || account.chains.includes(config.network));
-            return matching.length > 0 ? matching : accounts;
-        }
-
         function accountKey(account) {
             return String(account?.address || '').trim().toLowerCase();
-        }
-
-        function mergeAccounts(primary, secondary) {
-            const seen = new Set();
-            return [...primary, ...secondary].filter((account) => {
-                const key = accountKey(account);
-                if (!key || seen.has(key)) {
-                    return false;
-                }
-                seen.add(key);
-                return true;
-            });
         }
 
         function shortAddress(value) {
@@ -185,28 +150,6 @@
             return `${address.slice(0, 10)}...${address.slice(-6)}`;
         }
 
-        function setAccountOptions(accounts, preferredAddress) {
-            connectedAccounts = compatibleAccounts(accounts);
-            accountSelect.replaceChildren(...connectedAccounts.map((account) => {
-                const option = document.createElement('option');
-                option.value = account.address;
-                option.textContent = shortAddress(account.address);
-                return option;
-            }));
-            const preferred = String(preferredAddress || '').trim();
-            const preferredAccount = preferred ? accountByAddress(connectedAccounts, preferred) : null;
-            if (preferredAccount) {
-                accountSelect.value = preferredAccount.address;
-            }
-            accountSelect.disabled = connectedAccounts.length === 0;
-        }
-
-        function selectedAccountFrom(response) {
-            return pickAccount(normalizeAccounts(
-                response?.account || response?.selectedAccount || response?.currentAccount || response?.address
-            ));
-        }
-
         function accountByAddress(accounts, address) {
             const key = String(address || '').trim().toLowerCase();
             return accounts.find((account) => account.address === address) ||
@@ -214,214 +157,56 @@
                 null;
         }
 
-        function pickConnectedAccount(response, wallet, hadAccountSelection) {
-            const selectedAccount = selectedAccountFrom(response);
-            const responseAccounts = normalizeAccounts(response?.accounts);
-            const accounts = mergeAccounts(
-                mergeAccounts(selectedAccount ? [selectedAccount] : [], responseAccounts),
-                normalizeAccounts(wallet.accounts || [])
-            );
-            setAccountOptions(accounts, selectedAccount?.address || accountSelect.value);
-            if (!selectedAccount && connectedAccounts.length > 1 && !hadAccountSelection) {
-                return null;
+        function setAccountOptions(accounts, preferredAddress) {
+            const seen = new Set();
+            connectedAccounts = accounts.filter((account) => {
+                const key = accountKey(account);
+                if (!key || seen.has(key)) {
+                    return false;
+                }
+                seen.add(key);
+                return true;
+            });
+            accountSelect.replaceChildren(...connectedAccounts.map((account) => {
+                const option = document.createElement('option');
+                option.value = account.address;
+                option.textContent = shortAddress(account.address);
+                return option;
+            }));
+            const preferred = accountByAddress(connectedAccounts, preferredAddress);
+            if (preferred) {
+                accountSelect.value = preferred.address;
             }
-            const selectedAddress = accountSelect.value;
-            return accountByAddress(connectedAccounts, selectedAddress) ||
-                selectedAccount ||
-                pickAccount(connectedAccounts);
+            accountSelect.disabled = connectedAccounts.length === 0;
         }
 
         async function connectWallet() {
-            const wallet = currentWallets()[Number(walletSelect.value)];
+            const selectedWalletIndex = walletSelect.value;
+            const wallet = wallets[Number(selectedWalletIndex)] || currentWallets()[Number(selectedWalletIndex)];
             if (!wallet) {
                 throw new Error('No Sui wallet selected');
             }
-            const hadAccountSelection = connectedWallet === wallet && accountSelect.value !== '';
-            const response = await wallet.features['standard:connect'].connect();
-            connectedWallet = wallet;
-            const connectedAccount = pickConnectedAccount(response, wallet, hadAccountSelection);
-            if (connectedAccount === null) {
+
+            const hadAccountSelection = connectedWalletIndex === selectedWalletIndex && accountSelect.value !== '';
+            const accounts = await wallet.accounts(config.network);
+            connectedWalletIndex = selectedWalletIndex;
+            setAccountOptions(accounts, accountSelect.value);
+
+            if (connectedAccounts.length > 1 && !hadAccountSelection) {
                 unlockButton.textContent = 'Pay with selected address';
                 setStatus('Select an address and continue');
                 return null;
             }
-            if (!connectedAccount) {
+
+            const account = accountByAddress(connectedAccounts, accountSelect.value) ||
+                (connectedAccounts.length === 1 ? connectedAccounts[0] : null);
+            if (!account) {
                 throw new Error('Connected wallet did not return an account');
             }
-            if (Array.isArray(connectedAccount.chains) && !connectedAccount.chains.includes(config.network)) {
+            if (Array.isArray(account.chains) && !account.chains.includes(config.network)) {
                 throw new Error(`Connected account does not advertise ${config.network}`);
             }
-            return { wallet, account: connectedAccount };
-        }
-
-        function base64ToBytes(value) {
-            const binary = atob(value);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i += 1) {
-                bytes[i] = binary.charCodeAt(i);
-            }
-            return bytes;
-        }
-
-        function bytesToBase64(bytes) {
-            let binary = '';
-            for (let i = 0; i < bytes.length; i += 0x8000) {
-                binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-            }
-            return btoa(binary);
-        }
-
-        function transactionFromBase64(value) {
-            return Transaction.from(base64ToBytes(value));
-        }
-
-        function suiRpcURL() {
-            const endpoints = Array.isArray(config.endpoints) ? config.endpoints.filter(Boolean) : [];
-            const defaults = {
-                'sui:mainnet': 'https://sui-rpc.publicnode.com',
-                'sui:testnet': 'https://sui-testnet-rpc.publicnode.com',
-            };
-            return endpoints[0] || defaults[String(config.network || '').trim().toLowerCase()] || defaults['sui:testnet'];
-        }
-
-        function transactionDigest(value) {
-            if (!value || typeof value !== 'object') {
-                return '';
-            }
-            const stack = [value];
-            while (stack.length > 0) {
-                const current = stack.pop();
-                if (!current || typeof current !== 'object') {
-                    continue;
-                }
-                for (const [key, nested] of Object.entries(current)) {
-                    if ((key === 'digest' || key === 'transactionDigest') && typeof nested === 'string') {
-                        return nested;
-                    }
-                    if (nested && typeof nested === 'object') {
-                        stack.push(nested);
-                    }
-                }
-            }
-            return '';
-        }
-
-        function sleep(ms) {
-            return new Promise((resolve) => setTimeout(resolve, ms));
-        }
-
-        async function suiRPC(method, params) {
-            const response = await fetch(suiRpcURL(), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    jsonrpc: '2.0',
-                    id: 1,
-                    method,
-                    params,
-                }),
-            });
-            if (!response.ok) {
-                throw new Error(`Sui RPC returned ${response.status}`);
-            }
-            const body = await response.json();
-            if (body.error) {
-                throw new Error(body.error.message || 'Sui RPC error');
-            }
-            return body.result;
-        }
-
-        async function waitForTransaction(value) {
-            const digest = transactionDigest(value);
-            if (!digest) {
-                return;
-            }
-
-            const deadline = Date.now() + 20000;
-            let lastError = null;
-            for (;;) {
-                let result = null;
-                try {
-                    result = await suiRPC('sui_getTransactionBlock', [
-                        digest,
-                        { showEffects: true },
-                    ]);
-                } catch (error) {
-                    lastError = error;
-                    if (Date.now() >= deadline) {
-                        throw lastError;
-                    }
-                    await sleep(1000);
-                }
-                if (!result?.digest) {
-                    lastError = new Error('Prepare transaction is not indexed yet');
-                    if (Date.now() >= deadline) {
-                        throw lastError;
-                    }
-                    await sleep(1000);
-                    continue;
-                }
-                const status = result.effects?.status?.status;
-                if (status && status !== 'success') {
-                    throw new Error(result.effects.status.error || 'Prepare transaction failed');
-                }
-                return;
-            }
-        }
-
-        async function signTransaction(wallet, account, transactionBytes) {
-            const tx = transactionFromBase64(transactionBytes);
-            if (wallet.features['sui:signTransaction']) {
-                return wallet.features['sui:signTransaction'].signTransaction({
-                    transaction: tx,
-                    account,
-                    chain: config.network,
-                });
-            }
-            return wallet.features['sui:signTransactionBlock'].signTransactionBlock({
-                transactionBlock: tx,
-                account,
-                chain: config.network,
-            });
-        }
-
-        async function executePrepareTransaction(wallet, account, transactionBytes) {
-            const tx = transactionFromBase64(transactionBytes);
-            if (wallet.features['sui:signAndExecuteTransaction']) {
-                return wallet.features['sui:signAndExecuteTransaction'].signAndExecuteTransaction({
-                    transaction: tx,
-                    account,
-                    chain: config.network,
-                });
-            }
-            if (wallet.features['sui:signAndExecuteTransactionBlock']) {
-                return wallet.features['sui:signAndExecuteTransactionBlock'].signAndExecuteTransactionBlock({
-                    transactionBlock: tx,
-                    account,
-                    chain: config.network,
-                });
-            }
-            throw new Error('This wallet cannot execute the USDC prepare transaction');
-        }
-
-        function encodePaymentPayload(payload) {
-            return bytesToBase64(new TextEncoder().encode(JSON.stringify(payload)));
-        }
-
-        async function preparePayment(sender) {
-            const response = await fetch(config.preparePath, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    sender,
-                    method: 'GET',
-                    path: config.protectedPath,
-                }),
-            });
-            if (!response.ok) {
-                throw new Error(await response.text());
-            }
-            return response.json();
+            return { wallet, account };
         }
 
         async function unlock() {
@@ -443,33 +228,12 @@
                 paymentFrame.hidden = false;
                 viewerTitle.textContent = 'Sui wallet payment';
 
-                setStatus('Preparing USDC transaction');
-                const prepared = await preparePayment(account.address);
-                if (prepared.prepareTransaction) {
-                    setStatus('Preparing object balance in wallet');
-                    const preparedResult = await executePrepareTransaction(wallet, account, prepared.prepareTransaction.transaction);
-                    setStatus('Waiting for prepared balance');
-                    await waitForTransaction(preparedResult);
-                }
-
-                setStatus('Signing x402 payment');
-                const signed = await signTransaction(wallet, account, prepared.paymentTransaction.transaction);
-                const paymentPayload = {
-                    x402Version: prepared.x402Version,
-                    payload: {
-                        signature: signed.signature,
-                        transaction: signed.bytes || signed.transactionBlockBytes || prepared.paymentTransaction.transaction,
-                    },
-                    accepted: prepared.paymentRequirements,
-                    resource: prepared.resource,
-                };
-
-                setStatus('Settling payment');
-                const protectedResponse = await fetch(config.protectedPath, {
-                    method: 'GET',
-                    headers: {
-                        'X-PAYMENT': encodePaymentPayload(paymentPayload),
-                    },
+                const protectedResponse = await x402Fetch(config.protectedPath, { method: 'GET' }, {
+                    wallet,
+                    account,
+                    network: config.network,
+                    preparePath: config.preparePath,
+                    onStatus: setStatus,
                 });
                 if (!protectedResponse.ok) {
                     throw new Error(await protectedResponse.text());
@@ -494,7 +258,7 @@
 
         unlockButton.addEventListener('click', unlock);
         walletSelect.addEventListener('change', () => {
-            connectedWallet = null;
+            connectedWalletIndex = '';
             connectedAccounts = [];
             resetAccountSelect();
             unlockButton.textContent = 'Connect and pay';
@@ -512,10 +276,7 @@
         });
 
         refreshWallets();
-        if (typeof walletsApi.on === 'function') {
-            walletsApi.on('register', refreshWallets);
-            walletsApi.on('unregister', refreshWallets);
-        }
+        onSuiWalletChange(refreshWallets);
     </script>
 </body>
 

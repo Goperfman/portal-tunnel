@@ -81,8 +81,8 @@ services:
       context: .
       dockerfile: Dockerfile
     stop_grace_period: 30s
-    ports:
-      - "${WIREGUARD_PORT:-51820}:${WIREGUARD_PORT:-51820}/udp"
+    # ports:
+      # - "${WIREGUARD_PORT:-51820}:${WIREGUARD_PORT:-51820}/udp"
       # Uncomment for UDP backhaul, public UDP lease ports, and raw TCP lease ports as needed.
       # - "443:443/udp"
       # - "${MIN_PORT:-40000}-${MAX_PORT:-40009}:${MIN_PORT:-40000}-${MAX_PORT:-40009}/udp"
@@ -93,7 +93,7 @@ services:
       # Public routing, discovery, and relay identity persistence
       PORTAL_URL: ${PORTAL_URL:-https://localhost}
       BOOTSTRAPS: ${BOOTSTRAPS:-}
-      DISCOVERY: ${DISCOVERY:-true}
+      DISCOVERY: ${DISCOVERY:-false}
       IDENTITY_PATH: ${IDENTITY_PATH:-/portal-certs}
 
       API_PORT: 4017
