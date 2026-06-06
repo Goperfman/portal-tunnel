@@ -93,9 +93,9 @@ func runServeCommand(args []string) error {
 	utils.StringFlagEnv(fs, &cfg.AdminToken, "admin-token", "", "admin bearer token for relay admin and policy APIs", "ADMIN_TOKEN")
 	utils.BoolFlagEnv(fs, &cfg.PProfEnabled, "pprof-enabled", false, "enable pprof diagnostics HTTP server", "PPROF_ENABLED")
 	utils.StringFlagEnv(fs, &cfg.PProfAddr, "pprof-addr", portal.DefaultPProfListenAddr, "pprof diagnostics listen address when enabled", "PPROF_ADDR")
-	utils.BoolFlagEnv(fs, &cfg.X402Enabled, "x402-enabled", false, "enable embedded Sui x402 facilitator endpoints under /api/x402", "X402_ENABLED")
-	utils.BoolFlagEnv(fs, &cfg.X402Testnet, "x402-testnet", false, "use Sui testnet for embedded x402 facilitator payments", "X402_TESTNET")
-	utils.StringFlagEnv(fs, &cfg.X402PayTo, "x402-pay-to", "", "Sui payment recipient address for relay-owned x402 resources", "X402_PAY_TO")
+	utils.BoolFlagEnv(fs, &cfg.X402Enabled, "x402-enabled", false, "enable relay-owned Sui x402 facilitator endpoints under /api/x402 for future control-plane payments", "X402_ENABLED")
+	utils.BoolFlagEnv(fs, &cfg.X402Testnet, "x402-testnet", false, "use Sui testnet for relay-owned x402 facilitator payments", "X402_TESTNET")
+	utils.StringFlagEnv(fs, &cfg.X402PayTo, "x402-pay-to", "", "Sui payment recipient address for relay-owned control-plane x402 resources", "X402_PAY_TO")
 
 	utils.StringFlagEnv(fs, &cfg.ACMEDNSProvider, "acme-dns-provider", "", "DNS provider for managed DNS-01/A-record sync, ECH HTTPS records, and ENS gasless DNSSEC/TXT automation (cloudflare|gcloud|hetzner|njalla|route53|vultr); leave empty to use manual fullchain.pem/privatekey.pem from IDENTITY_PATH", "ACME_DNS_PROVIDER")
 	utils.BoolFlagEnv(fs, &cfg.ENSGaslessEnabled, "ens-gasless-enabled", false, "enable ENS gasless DNS import automation for the managed DNS zone and lease hostnames", "ENS_GASLESS_ENABLED")
@@ -213,7 +213,7 @@ func runServer(ctx context.Context, cfg relayServerConfig) error {
 		log.Info().
 			Str("path", types.PathX402Facilitator).
 			Str("network", x402Network).
-			Msg("embedded x402 facilitator enabled")
+			Msg("relay-owned x402 facilitator enabled")
 	}
 
 	if err := server.Start(ctx, apiMux); err != nil {

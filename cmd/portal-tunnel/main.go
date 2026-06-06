@@ -60,6 +60,7 @@ type exposeFlags struct {
 	thumbnail       string
 	hide            bool
 	x402PayTo       string
+	x402Testnet     bool
 	targetAddr      string
 	httpRoutes      []string
 	udp             bool
@@ -89,6 +90,7 @@ func runExposeCommand(args []string) error {
 	utils.StringFlag(fs, &flags.thumbnail, "thumbnail", "", "Service thumbnail URL metadata")
 	utils.BoolFlag(fs, &flags.hide, "hide", false, "Hide service from relay listing screens")
 	utils.StringFlag(fs, &flags.x402PayTo, "x402-pay-to", "", "Sui USDC payment recipient address for this tunnel")
+	utils.BoolFlag(fs, &flags.x402Testnet, "x402-testnet", false, "Use Sui testnet for tunnel x402 payments; default is Sui mainnet")
 	utils.RepeatedStringFlag(fs, &flags.httpRoutes, "http-route", "HTTP route mapping in PATH=UPSTREAM [METHOD[,METHOD...]:USDC_AMOUNT] form; repeat to aggregate multiple local HTTP services behind one public URL")
 	utils.BoolFlagEnv(fs, &flags.udp, "udp", false, "Enable public UDP relay in addition to the default TCP relay", "UDP_ENABLED")
 	utils.StringFlagEnv(fs, &flags.udpAddr, "udp-addr", "", "Local UDP target address for relayed datagrams (host:port or port only); defaults to the target when --udp is enabled", "UDP_ADDR")
@@ -202,7 +204,8 @@ func runExposeCommand(args []string) error {
 			Thumbnail:   flags.thumbnail,
 			Hide:        flags.hide,
 		},
-		X402PayTo: flags.x402PayTo,
+		X402PayTo:   flags.x402PayTo,
+		X402Testnet: flags.x402Testnet,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to start relays: %w", err)

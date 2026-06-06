@@ -7,7 +7,7 @@ import (
 	facilitatortypes "github.com/gosuda/x402-facilitator/types"
 )
 
-// X402FacilitatorInfo describes relay-level x402 facilitator settings exposed by the API.
+// X402FacilitatorInfo describes relay-owned x402 control-plane facilitator settings exposed by the API.
 type X402FacilitatorInfo struct {
 	Enabled      bool   `json:"enabled"`
 	URL          string `json:"url,omitempty"`

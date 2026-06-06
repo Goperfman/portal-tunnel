@@ -132,7 +132,7 @@ export function Header({
               )}
               {x402 && (
                 <span className="inline-flex h-6 items-center rounded-full bg-secondary px-2.5 text-xs font-semibold text-text-muted ring-1 ring-border/70">
-                  x402 {x402NetworkLabel(x402)}
+                  relay x402 {x402NetworkLabel(x402)}
                 </span>
               )}
             </div>

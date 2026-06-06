@@ -71,6 +71,7 @@ name = "myapp"
 relays = ["https://portal.example.com"]
 discovery = false
 x402_pay_to = "0x..."
+x402_testnet = true
 
 [[tunnels.http_routes]]
 prefix = "/api"
@@ -88,7 +89,8 @@ If a route has `amount`, the tunnel serves `/x402/client.js` and
 `/` route can import the helper and call `x402Fetch()` from its own UI. Native
 clients use `/x402/prepare` directly and send the signed payload as
 `X-PAYMENT`. The tunnel still verifies and settles payment before proxying the
-paid route.
+paid route. Paid routes use Sui mainnet by default; set `x402_testnet = true`
+to use Sui testnet.
 
 Relative paths in the config are resolved from the config file directory.
 
@@ -163,15 +165,17 @@ tunnel or `Routes` for routed HTTP. Routes use this syntax:
 /paid=3001 GET:0.01; /=5173
 ```
 
-Each entry is `PATH=UPSTREAM [METHOD[,METHOD...]:USDC_AMOUNT]`. Fill `X402 Pay To`
-when any route has an amount. The form also accepts explicit `Relays`,
+Each entry is `PATH=UPSTREAM [METHOD[,METHOD...]:USDC_AMOUNT]`. Fill `X402 Pay
+To` when any route has an amount, and set `X402 Testnet` to `true` for Sui
+testnet. The form also accepts explicit `Relays`,
 `Discovery`, and `Max Relays`; max relays caps auto-selected discovery relays
 while explicit relays are still included.
 
-After creation, routed HTTP paths, x402 payment amounts, and discovery mode are
-read-only in the Settings pane. To change routes, payment amounts, or discovery
-mode, edit `http_routes`, `x402_pay_to`, and `discovery` in `config.toml`, then
-restart the agent or tunnel. Other advanced options such as UDP, TCP, custom
+After creation, routed HTTP paths, x402 payment amounts, payment network, and
+discovery mode are read-only in the Settings pane. To change routes, payment
+amounts, payment network, or discovery mode, edit `http_routes`,
+`x402_pay_to`, `x402_testnet`, and `discovery` in `config.toml`, then restart
+the agent or tunnel. Other advanced options such as UDP, TCP, custom
 identity JSON, or explicit multi-hop defaults are also configured in
 `config.toml`.
 
@@ -197,6 +201,7 @@ Common fields:
 | `ban_mitm` | Ban relays when the TLS self-probe detects termination; defaults to warning-only |
 | `description`, `tags`, `owner`, `thumbnail`, `hide` | Public relay metadata |
 | `x402_pay_to` | Tunnel-owned Sui USDC x402 recipient for paid HTTP routes |
+| `x402_testnet` | Use Sui testnet for tunnel-owned x402 paid routes; omitted or `false` uses Sui mainnet |
 | `http_routes[].amount` | Optional Sui USDC x402 amount, such as `0.01`, for one HTTP route prefix |
 | `http_routes[].methods` | Optional HTTP methods that require payment on that route; empty means every method |
 

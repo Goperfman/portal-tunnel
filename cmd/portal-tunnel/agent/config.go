@@ -60,6 +60,7 @@ type TunnelConfig struct {
 	Thumbnail       string            `koanf:"thumbnail"`
 	Hide            bool              `koanf:"hide"`
 	X402PayTo       string            `koanf:"x402_pay_to"`
+	X402Testnet     bool              `koanf:"x402_testnet"`
 }
 
 type HTTPRouteConfig struct {
@@ -217,6 +218,9 @@ func tunnelConfigDocumentMap(cfg TunnelConfig) map[string]any {
 		out["hide"] = cfg.Hide
 	}
 	addStringDocumentField(out, "x402_pay_to", cfg.X402PayTo)
+	if cfg.X402Testnet {
+		out["x402_testnet"] = cfg.X402Testnet
+	}
 	return out
 }
 

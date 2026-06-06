@@ -61,6 +61,7 @@ const (
 	agentDashboardAddFieldTarget
 	agentDashboardAddFieldHTTPRoutes
 	agentDashboardAddFieldX402PayTo
+	agentDashboardAddFieldX402Testnet
 	agentDashboardAddFieldRelays
 	agentDashboardAddFieldDiscovery
 	agentDashboardAddFieldMaxRelays
@@ -99,15 +100,16 @@ type agentDashboardModel struct {
 	routeDraft    []string
 	draftTunnelID string
 
-	addingTunnel  bool
-	addFocus      int
-	addName       textinput.Model
-	addTarget     textinput.Model
-	addHTTPRoutes textinput.Model
-	addX402PayTo  textinput.Model
-	addRelays     textinput.Model
-	addDiscovery  textinput.Model
-	addMaxRelays  textinput.Model
+	addingTunnel   bool
+	addFocus       int
+	addName        textinput.Model
+	addTarget      textinput.Model
+	addHTTPRoutes  textinput.Model
+	addX402PayTo   textinput.Model
+	addX402Testnet textinput.Model
+	addRelays      textinput.Model
+	addDiscovery   textinput.Model
+	addMaxRelays   textinput.Model
 
 	settingsEditTunnelID string
 	settingsFocus        int
@@ -176,6 +178,7 @@ func RunDashboard(configPath, stateDir string) error {
 		addTarget:           newAgentDashboardInlineInput("3000"),
 		addHTTPRoutes:       newAgentDashboardInlineInput("/paid=3001 GET:0.01; /=5173"),
 		addX402PayTo:        newAgentDashboardInlineInput("0x..."),
+		addX402Testnet:      newAgentDashboardInlineInput("false"),
 		addRelays:           newAgentDashboardInlineInput("https://portal.example.com"),
 		addDiscovery:        newAgentDashboardInlineInput("true"),
 		addMaxRelays:        newAgentDashboardInlineInput("3"),
@@ -743,6 +746,8 @@ func (m *agentDashboardModel) focusedAddTunnelInput() *textinput.Model {
 		return &m.addHTTPRoutes
 	case agentDashboardAddFieldX402PayTo:
 		return &m.addX402PayTo
+	case agentDashboardAddFieldX402Testnet:
+		return &m.addX402Testnet
 	case agentDashboardAddFieldRelays:
 		return &m.addRelays
 	case agentDashboardAddFieldDiscovery:
@@ -760,6 +765,7 @@ func (m *agentDashboardModel) blurAddTunnelInputs() {
 		&m.addTarget,
 		&m.addHTTPRoutes,
 		&m.addX402PayTo,
+		&m.addX402Testnet,
 		&m.addRelays,
 		&m.addDiscovery,
 		&m.addMaxRelays,
@@ -774,12 +780,15 @@ func (m *agentDashboardModel) resetAddTunnelForm() {
 		&m.addTarget,
 		&m.addHTTPRoutes,
 		&m.addX402PayTo,
+		&m.addX402Testnet,
 		&m.addRelays,
 	} {
 		input.Reset()
 	}
+	m.addX402Testnet.SetValue("false")
 	m.addDiscovery.SetValue("true")
 	m.addMaxRelays.SetValue("3")
+	m.addX402Testnet.CursorEnd()
 	m.addDiscovery.CursorEnd()
 	m.addMaxRelays.CursorEnd()
 	m.addFocus = agentDashboardAddFieldName
@@ -893,6 +902,7 @@ func (m *agentDashboardModel) resizeInputs(width int) {
 		&m.addTarget,
 		&m.addHTTPRoutes,
 		&m.addX402PayTo,
+		&m.addX402Testnet,
 		&m.addRelays,
 		&m.addDiscovery,
 		&m.addMaxRelays,
@@ -996,6 +1006,17 @@ func (m agentDashboardModel) addTunnelRequest() (types.AgentTunnelRequest, error
 	if len(routes) == 0 && payTo != "" {
 		return types.AgentTunnelRequest{}, fmt.Errorf("X402 Pay To requires routes")
 	}
+	x402TestnetRaw := strings.TrimSpace(m.addX402Testnet.Value())
+	if x402TestnetRaw == "" {
+		x402TestnetRaw = "false"
+	}
+	x402Testnet, err := strconv.ParseBool(x402TestnetRaw)
+	if err != nil {
+		return types.AgentTunnelRequest{}, fmt.Errorf("X402 Testnet must be true or false")
+	}
+	if x402Testnet && !hasPaidRoute {
+		return types.AgentTunnelRequest{}, fmt.Errorf("X402 Testnet requires paid routes")
+	}
 
 	discoveryRaw := strings.TrimSpace(m.addDiscovery.Value())
 	if discoveryRaw == "" {
@@ -1023,6 +1044,7 @@ func (m agentDashboardModel) addTunnelRequest() (types.AgentTunnelRequest, error
 		Discovery:       &discovery,
 		MaxActiveRelays: maxRelays,
 		X402PayTo:       payTo,
+		X402Testnet:     x402Testnet,
 	}, nil
 }
 
@@ -1469,6 +1491,7 @@ func (m agentDashboardModel) renderAddTunnelForm(pane *agentDashboardView, width
 		{label: "Target", input: m.addTarget, field: agentDashboardAddFieldTarget},
 		{label: "Routes", input: m.addHTTPRoutes, field: agentDashboardAddFieldHTTPRoutes},
 		{label: "X402 Pay To", input: m.addX402PayTo, field: agentDashboardAddFieldX402PayTo},
+		{label: "X402 Testnet", input: m.addX402Testnet, field: agentDashboardAddFieldX402Testnet},
 		{label: "Relays", input: m.addRelays, field: agentDashboardAddFieldRelays},
 		{label: "Discovery", input: m.addDiscovery, field: agentDashboardAddFieldDiscovery},
 		{label: "Max Relays", input: m.addMaxRelays, field: agentDashboardAddFieldMaxRelays},
@@ -1615,6 +1638,12 @@ func (m agentDashboardModel) renderSettingsInputRows(pane *agentDashboardView, w
 			return
 		}
 		pane.addMeta(width, 0, "Pay To", payTo)
+	}
+	if payTo != "" || paidRouteCount > 0 {
+		if len(pane.lines)-startLine >= height {
+			return
+		}
+		pane.addMeta(width, 0, "Network", agentDashboardX402Network(tunnel.X402Testnet))
 	}
 	if len(tunnel.HTTPRoutes) == 0 {
 		if len(pane.lines)-startLine >= height {
@@ -2023,6 +2052,13 @@ func agentDashboardHTTPRouteSummary(route types.AgentHTTPRoute) string {
 		return fmt.Sprintf("%s -> %s (%s %s)", prefix, upstream, methods, amount)
 	}
 	return prefix + " -> " + upstream
+}
+
+func agentDashboardX402Network(testnet bool) string {
+	if testnet {
+		return "sui:testnet"
+	}
+	return "sui:mainnet"
 }
 
 func (m agentDashboardModel) settingsChanged(tunnel types.AgentTunnelStatus) bool {

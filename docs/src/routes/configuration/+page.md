@@ -41,9 +41,9 @@ The relay server (`relay-server`) reads configuration from environment variables
 
 | Variable | Default | Type | Description |
 |----------|---------|------|-------------|
-| `X402_ENABLED` | `false` | bool | Enable embedded Sui x402 facilitator endpoints under `/api/x402` |
-| `X402_TESTNET` | `false` | bool | Use Sui testnet for payments; `false` uses Sui mainnet |
-| `X402_PAY_TO` | `""` | string | Sui payment recipient address for relay-owned x402 resources |
+| `X402_ENABLED` | `false` | bool | Enable relay-owned Sui x402 facilitator endpoints under `/api/x402` for future control-plane payments |
+| `X402_TESTNET` | `false` | bool | Use Sui testnet for relay-owned x402 facilitator payments; `false` uses Sui mainnet |
+| `X402_PAY_TO` | `""` | string | Sui payment recipient address for relay-owned control-plane x402 resources |
 
 ### Proxy
 
@@ -163,6 +163,7 @@ The `portal expose` subcommand accepts the following flags. Flags that read from
 | `--thumbnail` | | string | | Service thumbnail URL metadata |
 | `--hide` | | bool | `false` | Hide service from relay listing screens |
 | `--x402-pay-to` | | string | | Sui USDC payment recipient address for this tunnel |
+| `--x402-testnet` | | bool | `false` | Use Sui testnet for tunnel x402 payments; default is Sui mainnet |
 
 ### Routing
 
@@ -221,6 +222,7 @@ tags = ["web"]
 id = "api"
 name = "myapp"
 x402_pay_to = "0x..."
+x402_testnet = true
 
 [[tunnels.http_routes]]
 prefix = "/api"
@@ -262,6 +264,7 @@ Tunnel fields mirror `portal expose` flags:
 | `udp`, `udp_addr`, `tcp` | bool/string | UDP and raw TCP relay options |
 | `description`, `tags`, `owner`, `thumbnail`, `hide` | mixed | Lease metadata shown by relays |
 | `x402_pay_to` | string | Tunnel-owned Sui USDC x402 payment recipient for paid HTTP routes |
+| `x402_testnet` | bool | Use Sui testnet for tunnel-owned x402 paid routes; omitted or `false` uses Sui mainnet |
 | `http_routes[].amount` | string | Optional Sui USDC x402 amount, such as `0.01`, for one HTTP route prefix; requires `x402_pay_to` |
 | `http_routes[].methods` | string array | Optional HTTP methods that require payment on that route; empty means every method |
 
@@ -271,7 +274,8 @@ frontends served by another route in the same tunnel can import
 `/x402/client.js` and use `x402Fetch()` to run the same Sui wallet payment flow
 as the standalone payment app. Native clients use `/x402/prepare` directly and
 send the signed payload as `X-PAYMENT`. Payment is still enforced by the tunnel
-on the paid route prefix.
+on the paid route prefix. Tunnel paid routes default to Sui mainnet and use Sui
+testnet when `x402_testnet = true`.
 
 For a task-oriented walkthrough, see [Portal Agent](/portal-agent).
 

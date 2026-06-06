@@ -57,6 +57,7 @@ type ExposeConfig struct {
 	MaxActiveRelays int
 	Metadata        types.LeaseMetadata
 	X402PayTo       string
+	X402Testnet     bool
 }
 
 func (cfg ExposeConfig) snapshot() ExposeConfig {
@@ -153,6 +154,7 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 	runtimeCfg.MultiHop = append([]string(nil), multiHop...)
 	runtimeCfg.Metadata = cfg.Metadata.Copy()
 	runtimeCfg.X402PayTo = x402PayTo
+	runtimeCfg.X402Testnet = cfg.X402Testnet
 
 	exposureCtx, cancel := context.WithCancel(ctx)
 	exposure := &Exposure{
@@ -525,7 +527,7 @@ func (e *Exposure) WaitDatagramReady(ctx context.Context) ([]string, error) {
 // RunHTTPRoutes serves path-routed HTTP upstreams through the exposure.
 func (e *Exposure) RunHTTPRoutes(ctx context.Context, routes []HTTPRouteConfig, localAddr string) error {
 	cfg := e.Config()
-	handler, err := NewHTTPRoutes(routes, cfg.X402PayTo)
+	handler, err := NewHTTPRoutes(routes, cfg.X402PayTo, cfg.X402Testnet)
 	if err != nil {
 		return err
 	}
