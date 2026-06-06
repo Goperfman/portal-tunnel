@@ -191,10 +191,6 @@ func (p *Payment) Settle(ctx context.Context, w http.ResponseWriter, r *http.Req
 	if !ok {
 		return nil, false
 	}
-	if payment == nil {
-		http.Error(w, "x402 payment is missing", http.StatusInternalServerError)
-		return nil, false
-	}
 	settled, err := p.facilitator.Settle(ctx, payment, &p.requirements)
 	if err != nil {
 		log.Warn().
