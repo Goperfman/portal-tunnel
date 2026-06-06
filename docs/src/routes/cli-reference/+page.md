@@ -190,19 +190,51 @@ method on that route prefix is paid.
 
 The routed HTTP handler also serves `/x402/client.js` and `/x402/prepare` on the
 public tunnel origin. Frontends served by one of the routes can use the shared
-browser client for an in-page Sui wallet flow:
+browser-only Sui wallet client for an in-page payment flow:
 
 ```js
 import { getSuiWallets, x402Fetch } from '/x402/client.js';
 
-const [wallet] = getSuiWallets({ network: 'sui:testnet' });
-const [account] = await wallet.accounts('sui:testnet');
+const [wallet] = getSuiWallets();
+if (!wallet) {
+  throw new Error('Install a Sui wallet');
+}
+
+const [account] = await wallet.accounts();
+if (!account) {
+  throw new Error('Connect a Sui account');
+}
 
 const response = await x402Fetch('/paid/photo', { method: 'GET' }, {
   wallet,
   account,
-  network: 'sui:testnet',
+  onEvent: (event) => console.log(event.type, event.message),
 });
+```
+
+`x402Fetch()` is a convenience wrapper: it asks `/x402/prepare` for the payment
+transaction, asks the wallet to sign it, then retries the protected request with
+an `X-PAYMENT` header. `onEvent` receives structured progress events; the older
+`onStatus(message)` callback is still accepted for simple UIs. Routed HTTP
+payments currently use Sui mainnet, so omit `network` or pass `sui:mainnet`.
+
+Native clients should not load `/x402/client.js`. Call `POST /x402/prepare` with
+`{ "sender": "...", "method": "GET", "path": "/paid/photo" }`, execute
+`prepareTransaction.transaction` first when present, sign
+`paymentTransaction.transaction`, and send the resulting x402 payload as the
+`X-PAYMENT` header on the protected request:
+
+```js
+const payload = {
+  x402Version: prepared.x402Version,
+  payload: {
+    signature,
+    transaction: prepared.paymentTransaction.transaction,
+  },
+  accepted: prepared.paymentRequirements,
+  resource: prepared.resource,
+};
+const header = base64(JSON.stringify(payload));
 ```
 
 The frontend integration is optional. Requests without a valid `X-PAYMENT`

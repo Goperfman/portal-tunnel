@@ -96,10 +96,12 @@ portal expose --name paid-app \
 ```
 
 The tunnel serves `/x402/client.js` and `/x402/prepare` on the same public
-origin. A frontend mounted through the tunnel can import `/x402/client.js` and
-call `x402Fetch()` from its own UI, so the Sui wallet flow stays in the app
-instead of requiring a separate payment redirect. The tunnel still verifies and
-settles the payment before proxying the protected request.
+origin. A browser frontend mounted through the tunnel can import
+`/x402/client.js` and call `x402Fetch()` from its own UI, so the Sui wallet flow
+stays in the app instead of requiring a separate payment redirect. Native
+clients use `/x402/prepare` directly and send the signed payload as
+`X-PAYMENT`. The tunnel still verifies and settles the payment before proxying
+the protected request.
 
 ## Dedicated Raw TCP
 

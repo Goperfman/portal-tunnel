@@ -84,9 +84,11 @@ upstream = "http://127.0.0.1:5173"
 ```
 
 If a route has `amount`, the tunnel serves `/x402/client.js` and
-`/x402/prepare` on the public tunnel origin. A frontend served by the `/` route
-can import the helper and call `x402Fetch()` from its own UI; the tunnel still
-verifies and settles payment before proxying the paid route.
+`/x402/prepare` on the public tunnel origin. A browser frontend served by the
+`/` route can import the helper and call `x402Fetch()` from its own UI. Native
+clients use `/x402/prepare` directly and send the signed payload as
+`X-PAYMENT`. The tunnel still verifies and settles payment before proxying the
+paid route.
 
 Relative paths in the config are resolved from the config file directory.
 

@@ -1,5 +1,8 @@
-import { getWallets } from 'https://esm.sh/@wallet-standard/app';
-import { Transaction } from 'https://esm.sh/@mysten/sui/transactions';
+// Browser-only Sui wallet helper for Portal x402 routes.
+// Native clients should call /x402/prepare, sign the returned transaction with
+// their own Sui runtime, then send the resulting payload as X-PAYMENT.
+import { getWallets } from 'https://esm.sh/@wallet-standard/app@1.1.0';
+import { Transaction } from 'https://esm.sh/@mysten/sui@1.32.0/transactions';
 
 const walletAPI = getWallets();
 
@@ -76,6 +79,7 @@ export function onSuiWalletChange(callback) {
 
 export async function prepareX402Payment(options = {}) {
     const fetcher = options.fetch || fetch.bind(globalThis);
+    const signal = options.signal;
     const method = String(options.method || 'GET').trim().toUpperCase();
     const path = String(options.path || '').trim();
     if (!path || !path.startsWith('/')) {
@@ -87,7 +91,7 @@ export async function prepareX402Payment(options = {}) {
         throw new Error('No Sui wallet selected');
     }
 
-    options.onStatus?.('Connecting wallet');
+    emitPaymentEvent(options, 'wallet.connect', 'Connecting wallet');
     const network = String(options.network || '').trim();
     const account = options.account || await wallet.connect(network, options.address);
     if (!account?.address) {
@@ -97,10 +101,10 @@ export async function prepareX402Payment(options = {}) {
         throw new Error(`Connected account does not advertise ${network}`);
     }
 
-    options.onStatus?.('Preparing USDC transaction');
+    emitPaymentEvent(options, 'payment.prepare', 'Preparing USDC transaction', { method, path });
     const prepareURL = options.preparePath || '/x402/prepare';
     const prepareBody = { sender: account.address, method, path };
-    let prepared = await requestPrepare(fetcher, prepareURL, prepareBody);
+    let prepared = await requestPrepare(fetcher, prepareURL, prepareBody, signal);
     let paymentNetwork = String(prepared.paymentRequirements?.network || network).trim();
     if (paymentNetwork && Array.isArray(account.chains) && !account.chains.includes(paymentNetwork)) {
         throw new Error(`Connected account does not advertise ${paymentNetwork}`);
@@ -110,18 +114,27 @@ export async function prepareX402Payment(options = {}) {
         if (!wallet.executeTransaction) {
             throw new Error('Selected wallet cannot execute the USDC prepare transaction');
         }
-        options.onStatus?.('Preparing object balance in wallet');
+        emitPaymentEvent(options, 'balance.prepare', 'Preparing object balance in wallet', { network: paymentNetwork });
         const prepareResult = await wallet.executeTransaction(account, Transaction.from(fromBase64(prepared.prepareTransaction.transaction)), paymentNetwork);
         const prepareStatus = prepareResult?.effects?.status?.status || prepareResult?.effects?.status;
         if (prepareStatus && prepareStatus !== 'success') {
             throw new Error(prepareResult.effects?.status?.error || 'USDC prepare transaction failed');
         }
 
-        options.onStatus?.('Waiting for prepared balance');
-        for (let attempt = 0; attempt < 20 && prepared.prepareTransaction?.transaction; attempt += 1) {
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-            prepared = await requestPrepare(fetcher, prepareURL, prepareBody);
+        const pollAttempts = nonNegativeIntegerOption(options.preparePollAttempts, 20);
+        const pollIntervalMs = positiveIntegerOption(options.preparePollIntervalMs, 1000);
+        emitPaymentEvent(options, 'balance.wait', 'Waiting for prepared balance', {
+            attempts: pollAttempts,
+            intervalMs: pollIntervalMs,
+        });
+        for (let attempt = 0; attempt < pollAttempts && prepared.prepareTransaction?.transaction; attempt += 1) {
+            await delay(pollIntervalMs, signal);
+            prepared = await requestPrepare(fetcher, prepareURL, prepareBody, signal);
             paymentNetwork = String(prepared.paymentRequirements?.network || paymentNetwork).trim();
+            emitPaymentEvent(options, 'balance.poll', 'Checking prepared balance', {
+                attempt: attempt + 1,
+                attempts: pollAttempts,
+            });
         }
         if (prepared.prepareTransaction?.transaction) {
             throw new Error('Prepared USDC balance is not indexed yet');
@@ -131,7 +144,7 @@ export async function prepareX402Payment(options = {}) {
     if (!prepared.paymentTransaction?.transaction) {
         throw new Error('Payment prepare response is missing a payment transaction');
     }
-    options.onStatus?.('Signing x402 payment');
+    emitPaymentEvent(options, 'payment.sign', 'Signing x402 payment', { network: paymentNetwork });
     const signed = await wallet.signTransaction(account, Transaction.from(fromBase64(prepared.paymentTransaction.transaction)), paymentNetwork);
     const signature = typeof signed?.signature === 'string' ? signed.signature : (Array.isArray(signed?.signatures) ? signed.signatures[0] : '');
     const transaction = signed?.bytes || signed?.transactionBlockBytes || prepared.paymentTransaction.transaction;
@@ -162,28 +175,74 @@ export async function prepareX402Payment(options = {}) {
 
 export async function x402Fetch(input, init = {}, options = {}) {
     const request = input instanceof Request ? new Request(input, init) : new Request(new URL(String(input), globalThis.location.href).href, init);
+    const signal = options.signal || request.signal;
     const paid = await prepareX402Payment({
         ...options,
+        signal,
         method: request.method,
         path: options.path || new URL(request.url).pathname,
     });
 
-    options.onStatus?.('Settling payment');
+    emitPaymentEvent(options, 'payment.settle', 'Settling payment');
     const headers = new Headers(request.headers);
     headers.set('X-PAYMENT', paid.paymentHeader);
-    return (options.fetch || fetch.bind(globalThis))(new Request(request, { headers }));
+    return (options.fetch || fetch.bind(globalThis))(new Request(request, { headers, signal }));
 }
 
-async function requestPrepare(fetcher, prepareURL, prepareBody) {
+async function requestPrepare(fetcher, prepareURL, prepareBody, signal) {
     const response = await fetcher(prepareURL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal,
         body: JSON.stringify(prepareBody),
     });
     if (!response.ok) {
         throw new Error(await response.text());
     }
     return response.json();
+}
+
+function emitPaymentEvent(options, type, message, data = {}) {
+    options.onEvent?.({ type, message, data });
+    options.onStatus?.(message);
+}
+
+function nonNegativeIntegerOption(value, fallback) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number < 0) {
+        return fallback;
+    }
+    return Math.floor(number);
+}
+
+function positiveIntegerOption(value, fallback) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number <= 0) {
+        return fallback;
+    }
+    return Math.floor(number);
+}
+
+function delay(ms, signal) {
+    if (signal?.aborted) {
+        return Promise.reject(abortError());
+    }
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(resolve, ms);
+        signal?.addEventListener('abort', () => {
+            clearTimeout(timeout);
+            reject(abortError());
+        }, { once: true });
+    });
+}
+
+function abortError() {
+    if (typeof DOMException === 'function') {
+        return new DOMException('Aborted', 'AbortError');
+    }
+    const error = new Error('Aborted');
+    error.name = 'AbortError';
+    return error;
 }
 
 function normalizeAccounts(value) {

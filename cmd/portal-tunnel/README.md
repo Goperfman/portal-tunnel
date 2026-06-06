@@ -56,9 +56,10 @@ portal expose --name paid-app \
 ```
 
 Routed HTTP serves `/x402/client.js` and `/x402/prepare` on the tunnel origin so
-an upstream frontend can run the same in-page Sui wallet payment flow as the
-standalone payment app. The tunnel still verifies and settles payment before
-proxying the paid route.
+an upstream browser frontend can run the same in-page Sui wallet payment flow as
+the standalone payment app. Native clients should use `/x402/prepare` directly
+and send the signed payload as `X-PAYMENT`. The tunnel still verifies and
+settles payment before proxying the paid route.
 
 Raw TCP and UDP:
 

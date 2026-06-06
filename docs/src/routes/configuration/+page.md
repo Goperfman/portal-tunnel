@@ -266,10 +266,12 @@ Tunnel fields mirror `portal expose` flags:
 | `http_routes[].methods` | string array | Optional HTTP methods that require payment on that route; empty means every method |
 
 When any routed HTTP entry has `amount`, the tunnel also serves
-`/x402/client.js` and `/x402/prepare` on the public tunnel origin. Frontends
-served by another route in the same tunnel can import `/x402/client.js` and use
-`x402Fetch()` to run the same Sui wallet payment flow as the standalone payment
-app. Payment is still enforced by the tunnel on the paid route prefix.
+`/x402/client.js` and `/x402/prepare` on the public tunnel origin. Browser
+frontends served by another route in the same tunnel can import
+`/x402/client.js` and use `x402Fetch()` to run the same Sui wallet payment flow
+as the standalone payment app. Native clients use `/x402/prepare` directly and
+send the signed payload as `X-PAYMENT`. Payment is still enforced by the tunnel
+on the paid route prefix.
 
 For a task-oriented walkthrough, see [Portal Agent](/portal-agent).
 

@@ -74,7 +74,7 @@ func run(args []string) error {
 	utils.StringFlag(fs, &cfg.photoURL, "photo-url", defaultPhotoURL, "image URL revealed after payment")
 	utils.BoolFlag(fs, &cfg.hide, "hide", false, "hide this lease from listings")
 	utils.BoolFlag(fs, &cfg.x402Testnet, "x402-testnet", true, "use Sui testnet for x402 payments")
-	utils.StringFlag(fs, &cfg.x402PayTo, "x402-pay-to", "0xbf3cc34e9b676d5f0588b035b9fdb8972306430b19d8239cfee121b60e723ab6", "Sui USDC recipient address")
+	utils.StringFlag(fs, &cfg.x402PayTo, "x402-pay-to", "", "Sui USDC recipient address")
 	utils.StringFlag(fs, &cfg.x402Amount, "x402-amount", "0.01", "USDC amount")
 	utils.RepeatedStringFlag(fs, &cfg.x402RPCs, "x402-rpc", "Sui RPC endpoint; repeat to try multiple endpoints before defaults")
 	fs.IntVar(&cfg.x402MaxTimeoutSeconds, "x402-max-timeout", 0, "x402 max payment timeout seconds advertised to clients")

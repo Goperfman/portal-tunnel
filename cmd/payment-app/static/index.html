@@ -103,6 +103,10 @@
             statusEl.textContent = value;
         }
 
+        function setPaymentEvent(event) {
+            setStatus(event.message);
+        }
+
         function currentWallets() {
             wallets = getSuiWallets({ network: config.network });
             return wallets;
@@ -233,7 +237,7 @@
                     account,
                     network: config.network,
                     preparePath: config.preparePath,
-                    onStatus: setStatus,
+                    onEvent: setPaymentEvent,
                 });
                 if (!protectedResponse.ok) {
                     throw new Error(await protectedResponse.text());
