@@ -86,7 +86,6 @@ func newHandler(cfg paymentHandlerConfig) (http.Handler, error) {
 	handler.asset = payment.Asset
 	handler.amount = payment.Amount
 	handler.payTo = payment.PayTo
-	handler.photoURL = strings.TrimSpace(cfg.PhotoURL)
 
 	staticFS, err := fs.Sub(staticFiles, "static")
 	if err != nil {
