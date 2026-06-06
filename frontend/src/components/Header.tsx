@@ -5,7 +5,7 @@ import { ThemeToggleButton } from "@/components/ThemeToggleButton";
 import { useAuth } from "@/hooks/useAuth";
 import { apiClient } from "@/lib/apiClient";
 import { BROWSER_API_PATHS } from "@/lib/apiPaths";
-import type { DomainResponse, X402FacilitatorInfo } from "@/types/api";
+import type { DomainResponse } from "@/types/api";
 import {
   Tooltip,
   TooltipContent,
@@ -22,14 +22,6 @@ interface HeaderProps {
 
 const repoURL = "https://github.com/gosuda/portal-tunnel";
 
-function x402NetworkLabel(x402: X402FacilitatorInfo): string {
-  const name =
-    typeof x402.network_name === "string" ? x402.network_name.trim() : "";
-  const network =
-    typeof x402.network === "string" ? x402.network.trim() : "";
-  return name || network || "enabled";
-}
-
 export function Header({
   title = "PORTAL",
   isAdmin,
@@ -38,7 +30,6 @@ export function Header({
 }: HeaderProps) {
   const [releaseVersion, setReleaseVersion] = useState("");
   const [ensVerified, setENSVerified] = useState(false);
-  const [x402, setX402] = useState<X402FacilitatorInfo | null>(null);
   const {
     isAuthenticated,
     isLoading,
@@ -80,13 +71,11 @@ export function Header({
               : ""
           );
           setENSVerified(status?.ens?.verified === true);
-          setX402(status?.x402?.enabled === true ? status.x402 : null);
         }
       } catch {
         if (!cancelled) {
           setReleaseVersion("");
           setENSVerified(false);
-          setX402(null);
         }
       }
     })();
@@ -128,11 +117,6 @@ export function Header({
               {ensVerified && (
                 <span className="inline-flex h-6 items-center rounded-full bg-primary/12 px-2.5 text-xs font-semibold text-primary ring-1 ring-primary/20">
                   ENS verified
-                </span>
-              )}
-              {x402 && (
-                <span className="inline-flex h-6 items-center rounded-full bg-secondary px-2.5 text-xs font-semibold text-text-muted ring-1 ring-border/70">
-                  relay x402 {x402NetworkLabel(x402)}
                 </span>
               )}
             </div>

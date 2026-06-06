@@ -1,8 +1,8 @@
 // Browser-only Sui wallet helper for Portal x402 routes.
 // Native clients should call /x402/prepare, sign the returned transaction with
 // their own Sui runtime, then send the resulting payload as X-PAYMENT.
-import { getWallets } from 'https://esm.sh/@wallet-standard/app@1.1.0';
-import { Transaction } from 'https://esm.sh/@mysten/sui@1.32.0/transactions';
+import { getWallets } from 'https://esm.sh/@wallet-standard/app@1.1.1';
+import { Transaction } from 'https://esm.sh/@mysten/sui@2.17.0/transactions';
 
 const walletAPI = getWallets();
 

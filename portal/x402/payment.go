@@ -13,6 +13,7 @@ import (
 	facilitatorcore "github.com/gosuda/x402-facilitator/facilitator"
 	suischeme "github.com/gosuda/x402-facilitator/scheme/sui"
 	facilitatortypes "github.com/gosuda/x402-facilitator/types"
+	"github.com/rs/zerolog/log"
 
 	"github.com/gosuda/portal-tunnel/v2/types"
 	"github.com/gosuda/portal-tunnel/v2/utils"
@@ -129,13 +130,9 @@ func FormatUSDCAtomicAmount(amount string) string {
 	return fmt.Sprintf("%f USDC", d)
 }
 
-func (p *Payment) Verify(ctx context.Context, w http.ResponseWriter, r *http.Request) (*facilitatortypes.PaymentPayload, bool) {
+func (p *Payment) paymentPayloadFromRequest(w http.ResponseWriter, r *http.Request) (*facilitatortypes.PaymentPayload, bool) {
 	if p == nil {
 		http.Error(w, "payment is not configured", http.StatusInternalServerError)
-		return nil, false
-	}
-	if p.facilitator == nil {
-		http.Error(w, "x402 facilitator is not configured", http.StatusInternalServerError)
 		return nil, false
 	}
 
@@ -178,29 +175,10 @@ func (p *Payment) Verify(ctx context.Context, w http.ResponseWriter, r *http.Req
 		p.writePaymentRequired(w, r, "invalid payment payload")
 		return nil, false
 	}
-	verified, err := p.facilitator.Verify(ctx, payload, &p.requirements)
-	if err != nil {
-		http.Error(w, "verify x402 payment", http.StatusBadGateway)
-		return nil, false
-	}
-	if verified == nil || !verified.IsValid {
-		reason := "invalid payment"
-		if verified != nil {
-			reason = strings.TrimSpace(verified.InvalidReason)
-			if reason == "" {
-				reason = strings.TrimSpace(verified.InvalidMessage)
-			}
-		}
-		if reason == "" {
-			reason = "invalid payment"
-		}
-		p.writePaymentRequired(w, r, reason)
-		return nil, false
-	}
 	return payload, true
 }
 
-func (p *Payment) Settle(ctx context.Context, w http.ResponseWriter, r *http.Request, payment *facilitatortypes.PaymentPayload) (*facilitatortypes.PaymentSettleResponse, bool) {
+func (p *Payment) Settle(ctx context.Context, w http.ResponseWriter, r *http.Request) (*facilitatortypes.PaymentSettleResponse, bool) {
 	if p == nil {
 		http.Error(w, "payment is not configured", http.StatusInternalServerError)
 		return nil, false
@@ -209,16 +187,40 @@ func (p *Payment) Settle(ctx context.Context, w http.ResponseWriter, r *http.Req
 		http.Error(w, "x402 facilitator is not configured", http.StatusInternalServerError)
 		return nil, false
 	}
+	payment, ok := p.paymentPayloadFromRequest(w, r)
+	if !ok {
+		return nil, false
+	}
 	if payment == nil {
 		http.Error(w, "x402 payment is missing", http.StatusInternalServerError)
 		return nil, false
 	}
 	settled, err := p.facilitator.Settle(ctx, payment, &p.requirements)
 	if err != nil {
+		log.Warn().
+			Err(err).
+			Str("network", p.requirements.Network).
+			Str("asset", p.requirements.Asset).
+			Msg("settle x402 payment")
 		p.writePaymentRequired(w, r, "payment settlement failed")
 		return nil, false
 	}
 	if settled == nil || !settled.Success {
+		event := log.Warn().
+			Str("network", p.requirements.Network).
+			Str("asset", p.requirements.Asset)
+		if settled != nil {
+			errorMessage := strings.TrimSpace(settled.ErrorMessage)
+			if errorMessage == "" {
+				errorMessage = "<empty>"
+			}
+			event = event.
+				Str("reason", strings.TrimSpace(settled.ErrorReason)).
+				Str("error_message", errorMessage).
+				Str("payer", strings.TrimSpace(settled.Payer)).
+				Str("transaction", strings.TrimSpace(settled.Transaction))
+		}
+		event.Msg("x402 payment settlement rejected")
 		p.writePaymentRequired(w, r, "payment settlement failed")
 		return nil, false
 	}
