@@ -119,7 +119,9 @@
   body {
     min-height: 100vh;
     background:
-      linear-gradient(180deg, oklch(100% 0 0) 0%, oklch(97% 0.005 250) 62%, oklch(95% 0.005 250) 100%);
+      radial-gradient(circle at top center, oklch(75% 0.14 195 / 0.16), transparent 36%),
+      radial-gradient(circle at 12% 18%, oklch(60% 0.2 35 / 0.08), transparent 22%),
+      linear-gradient(180deg, oklch(100% 0 0) 0%, oklch(97% 0.005 250) 54%, oklch(95% 0.005 250) 100%);
     color: var(--foreground);
     font-family: var(--font-family-sans);
   }
@@ -136,6 +138,8 @@
 
   .dark body {
     background:
+      radial-gradient(circle at top center, oklch(80% 0.14 195 / 0.16), transparent 32%),
+      radial-gradient(circle at 82% 10%, oklch(55% 0.25 350 / 0.12), transparent 20%),
       linear-gradient(180deg, oklch(16% 0 0) 0%, oklch(13% 0.01 250) 54%, oklch(11% 0.01 250) 100%);
   }
 
