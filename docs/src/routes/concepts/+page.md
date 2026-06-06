@@ -85,6 +85,24 @@ Because HTTP is parsed in the tunnel process, this is the right place for
 cooperative HTTP policy such as response headers. It is not a relay-enforced
 policy boundary.
 
+Paid routes are also owned by routed HTTP mode. Add `--x402-pay-to` and attach
+the amount to the HTTP route:
+
+```bash
+portal expose --name paid-app \
+  --http-route "/paid=http://127.0.0.1:3001 GET:0.01" \
+  --http-route /=http://127.0.0.1:5173 \
+  --x402-pay-to 0x...
+```
+
+The tunnel serves `/x402/client.js` and `/x402/prepare` on the same public
+origin. A browser frontend mounted through the tunnel can import
+`/x402/client.js` and call `x402Fetch()` from its own UI, so the Sui wallet flow
+stays in the app instead of requiring a separate payment redirect. Native
+clients use `/x402/prepare` directly and send the signed payload as
+`X-PAYMENT`. The tunnel still verifies and settles the payment before proxying
+the protected request.
+
 ## Dedicated Raw TCP
 
 Use raw TCP when clients need a public TCP port instead of a public HTTPS
@@ -160,8 +178,8 @@ datagram authentication.
 
 Reusing the same identity path keeps the same tunnel identity across runs.
 
-Browser wallet login is separate from tunnel registration. It is used for relay
-admin access and optional local agent status access. See
+Relay admin token login and optional browser wallet login for local agent status
+are both separate from tunnel registration. See
 [Wallet and ENS](/wallet-and-ens) for the distinction.
 
 ## Domain Boundary

@@ -56,6 +56,7 @@ type ExposeConfig struct {
 	BanMITM         bool
 	MaxActiveRelays int
 	Metadata        types.LeaseMetadata
+	X402PayTo       string
 }
 
 func (cfg ExposeConfig) snapshot() ExposeConfig {
@@ -63,6 +64,7 @@ func (cfg ExposeConfig) snapshot() ExposeConfig {
 	cfg.Identity = cfg.Identity.Copy()
 	cfg.MultiHop = utils.CloneSlice(cfg.MultiHop)
 	cfg.Metadata = cfg.Metadata.Copy()
+	cfg.X402PayTo = strings.TrimSpace(cfg.X402PayTo)
 	return cfg
 }
 
@@ -96,6 +98,7 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 	if (len(multiHop) > 0 || cfg.MultiHopDepth > 1) && (cfg.UDPEnabled || cfg.TCPEnabled) {
 		return nil, errors.New("multi-hop currently supports only the default SNI TLS stream transport")
 	}
+	x402PayTo := strings.TrimSpace(cfg.X402PayTo)
 
 	var initialRouteCount int
 	var relaySetURLs []string
@@ -149,6 +152,7 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 	runtimeCfg.UDPAddr = udpAddr
 	runtimeCfg.MultiHop = append([]string(nil), multiHop...)
 	runtimeCfg.Metadata = cfg.Metadata.Copy()
+	runtimeCfg.X402PayTo = x402PayTo
 
 	exposureCtx, cancel := context.WithCancel(ctx)
 	exposure := &Exposure{
@@ -519,9 +523,9 @@ func (e *Exposure) WaitDatagramReady(ctx context.Context) ([]string, error) {
 }
 
 // RunHTTPRoutes serves path-routed HTTP upstreams through the exposure.
-func (e *Exposure) RunHTTPRoutes(ctx context.Context, routes []HTTPRoute, localAddr string) error {
+func (e *Exposure) RunHTTPRoutes(ctx context.Context, routes []HTTPRouteConfig, localAddr string) error {
 	cfg := e.Config()
-	handler, err := newHTTPRouteHandler(routes, cfg.Identity, cfg.Metadata)
+	handler, err := NewHTTPRoutes(routes, cfg.X402PayTo)
 	if err != nil {
 		return err
 	}

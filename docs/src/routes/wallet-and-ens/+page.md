@@ -1,6 +1,6 @@
 ---
 title: Wallet and ENS
-description: How Portal uses local identities, wallet login, SIWE, and ENS gasless DNS import.
+description: How Portal uses local identities, admin tokens, SIWE, and ENS gasless DNS import.
 ---
 
 # Wallet and ENS
@@ -13,8 +13,8 @@ related, but they do not all mean "connect a browser wallet".
 | Surface | Key material | Purpose |
 |---------|--------------|---------|
 | Tunnel identity | Local `identity.json` secp256k1 private key, or BIP-39 mnemonic plus derivation path | Signs SIWE lease registration challenges |
-| Relay identity | Relay `IDENTITY_PATH/identity.json` secp256k1 private key, or BIP-39 mnemonic plus derivation path | Signs relay descriptors, admin default wallet, lease access tokens, and ENS base-domain address |
-| Relay admin wallet | Browser wallet address allowlist | Signs in to `/admin` and receives an admin bearer token |
+| Relay identity | Relay `IDENTITY_PATH/identity.json` secp256k1 private key, or BIP-39 mnemonic plus derivation path | Signs relay descriptors, lease access tokens, and ENS base-domain address |
+| Relay admin token | `ADMIN_TOKEN` | Signs in to `/admin` and authorizes relay policy changes |
 | Agent wallet | Optional browser wallet allowlist | Reads loopback agent status through `/agent/status` |
 | ENS gasless DNS | DNSSEC plus `ENS1 ...` TXT records | Lets ENS-aware clients resolve the relay domain and lease hostnames to Portal identities |
 
@@ -54,39 +54,25 @@ portal expose 3000 \
 The public lease name is a single DNS label such as `myapp`. It is not an ENS
 name such as `alice.eth`.
 
-## Relay Admin Wallet Login
+## Relay Admin Token Login
 
-The relay admin API uses browser wallet login. The relay creates a SIWE
-challenge for the connected wallet and returns an admin bearer token after the
-signature verifies.
-
-Allowed admin wallets:
-
-- the relay identity address is always allowed
-- additional wallets come from `ADMIN_WALLETS`
+The relay admin API uses a configured token. Set `ADMIN_TOKEN` to a long random
+value before exposing the admin UI or policy API.
 
 Example:
 
 ```bash
-ADMIN_WALLETS=0x1234567890abcdef1234567890abcdef12345678,0xabcdefabcdefabcdefabcdefabcdefabcdefabcd
+ADMIN_TOKEN=$(openssl rand -hex 32)
 ```
 
-To find the relay identity address:
+Admin token flow:
 
-```bash
-jq -r .address .portal-certs/identity.json
-```
+1. `POST /api/admin/auth/login` with `{ "token": "<admin-token>" }`.
+2. The relay returns an `access_token`.
+3. Admin endpoints require `Authorization: Bearer <access_token>`.
 
-Admin wallet flow:
-
-1. `POST /api/admin/auth/challenge` with `{ "address": "0x..." }`.
-2. Sign the returned `siwe_message` in the browser wallet.
-3. `POST /api/admin/auth/login` with the challenge id, exact SIWE message, and
-   signature.
-4. The relay returns an `access_token`.
-5. Admin endpoints require `Authorization: Bearer <access_token>`.
-
-Challenges expire after two minutes. Admin bearer tokens expire after 24 hours.
+The token returned by login is the configured admin token; browser logout clears
+the local stored token.
 
 ## Agent Wallet Login
 
@@ -120,7 +106,7 @@ See [Portal Agent](/portal-agent) for the control API details.
 ## ENS Gasless DNS Import
 
 ENS gasless DNS import is optional relay-side DNS automation. It is separate
-from tunnel registration and admin wallet login.
+from tunnel registration and admin token login.
 
 When enabled, Portal uses the configured DNS provider to:
 

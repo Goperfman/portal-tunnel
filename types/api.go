@@ -205,6 +205,18 @@ type PublicStateResponse struct {
 	Leases []Lease `json:"leases,omitempty"`
 }
 
+type AdminAuthLoginRequest struct {
+	Token string `json:"token"`
+}
+
+type AdminAuthLoginResponse struct {
+	AccessToken string `json:"access_token,omitempty"`
+}
+
+type AdminAuthStatusResponse struct {
+	Authenticated bool `json:"authenticated"`
+}
+
 type WalletAuthChallengeRequest struct {
 	Address string `json:"address"`
 }

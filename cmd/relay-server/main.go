@@ -47,12 +47,12 @@ type relayServerConfig struct {
 	TCPEnabled        bool
 	MinPort           int
 	MaxPort           int
-	AdminWallets      string
+	AdminToken        string
 	PProfEnabled      bool
 	PProfAddr         string
 	X402Enabled       bool
-	X402Network       string
-	X402RPCURL        string
+	X402Testnet       bool
+	X402PayTo         string
 
 	ACMEDNSProvider    string
 	ENSGaslessEnabled  bool
@@ -90,12 +90,12 @@ func runServeCommand(args []string) error {
 	utils.IntFlagEnv(fs, &cfg.MinPort, "min-port", 0, utils.ParseOptionalPortNumber, "inclusive minimum lease port shared by UDP and raw TCP transports (0=disabled)", "MIN_PORT")
 	utils.IntFlagEnv(fs, &cfg.MaxPort, "max-port", 0, utils.ParseOptionalPortNumber, "inclusive maximum lease port shared by UDP and raw TCP transports (0=disabled)", "MAX_PORT")
 
-	utils.StringFlagEnv(fs, &cfg.AdminWallets, "admin-wallets", "", "admin wallet address allowlist, comma-separated; relay identity address is always allowed", "ADMIN_WALLETS")
+	utils.StringFlagEnv(fs, &cfg.AdminToken, "admin-token", "", "admin bearer token for relay admin and policy APIs", "ADMIN_TOKEN")
 	utils.BoolFlagEnv(fs, &cfg.PProfEnabled, "pprof-enabled", false, "enable pprof diagnostics HTTP server", "PPROF_ENABLED")
 	utils.StringFlagEnv(fs, &cfg.PProfAddr, "pprof-addr", portal.DefaultPProfListenAddr, "pprof diagnostics listen address when enabled", "PPROF_ADDR")
-	utils.BoolFlagEnv(fs, &cfg.X402Enabled, "x402-facilitator-enabled", false, "enable relay-local x402 facilitator endpoints under /api/x402", "X402_FACILITATOR_ENABLED")
-	utils.StringFlagEnv(fs, &cfg.X402Network, "x402-network", "", "x402 facilitator CAIP-2 network, such as eip155:8453", "X402_NETWORK")
-	utils.StringFlagEnv(fs, &cfg.X402RPCURL, "x402-rpc-url", "", "x402 facilitator RPC URL; empty uses the PublicNode default for supported networks", "X402_RPC_URL")
+	utils.BoolFlagEnv(fs, &cfg.X402Enabled, "x402-enabled", false, "enable embedded Sui x402 facilitator endpoints under /api/x402", "X402_ENABLED")
+	utils.BoolFlagEnv(fs, &cfg.X402Testnet, "x402-testnet", false, "use Sui testnet for embedded x402 facilitator payments", "X402_TESTNET")
+	utils.StringFlagEnv(fs, &cfg.X402PayTo, "x402-pay-to", "", "Sui payment recipient address for relay-owned x402 resources", "X402_PAY_TO")
 
 	utils.StringFlagEnv(fs, &cfg.ACMEDNSProvider, "acme-dns-provider", "", "DNS provider for managed DNS-01/A-record sync, ECH HTTPS records, and ENS gasless DNSSEC/TXT automation (cloudflare|gcloud|hetzner|njalla|route53|vultr); leave empty to use manual fullchain.pem/privatekey.pem from IDENTITY_PATH", "ACME_DNS_PROVIDER")
 	utils.BoolFlagEnv(fs, &cfg.ENSGaslessEnabled, "ens-gasless-enabled", false, "enable ENS gasless DNS import automation for the managed DNS zone and lease hostnames", "ENS_GASLESS_ENABLED")
@@ -139,11 +139,12 @@ func runServeCommand(args []string) error {
 		Bool("tcp_enabled", cfg.TCPEnabled).
 		Int("min_port", cfg.MinPort).
 		Int("max_port", cfg.MaxPort).
-		Bool("admin_wallets_configured", len(utils.SplitCSV(cfg.AdminWallets)) > 0).
+		Bool("admin_token_configured", strings.TrimSpace(cfg.AdminToken) != "").
 		Bool("pprof_enabled", cfg.PProfEnabled).
 		Str("pprof_addr", cfg.PProfAddr).
 		Bool("x402_facilitator_enabled", cfg.X402Enabled).
-		Str("x402_network", strings.TrimSpace(cfg.X402Network)).
+		Bool("x402_testnet", cfg.X402Testnet).
+		Bool("x402_pay_to_configured", strings.TrimSpace(cfg.X402PayTo) != "").
 		Str("acme_dns_provider", cfg.ACMEDNSProvider).
 		Bool("ens_gasless_enabled", cfg.ENSGaslessEnabled).
 		Msg("configured relay server")
@@ -172,7 +173,8 @@ func runServer(ctx context.Context, cfg relayServerConfig) error {
 		PProfEnabled:      cfg.PProfEnabled,
 		PProfListenAddr:   cfg.PProfAddr,
 		X402Enabled:       cfg.X402Enabled,
-		X402Network:       cfg.X402Network,
+		X402Testnet:       cfg.X402Testnet,
+		X402PayTo:         cfg.X402PayTo,
 		ACME: acme.Config{
 			KeyDir:             cfg.IdentityPath,
 			DNSProvider:        cfg.ACMEDNSProvider,
@@ -195,25 +197,23 @@ func runServer(ctx context.Context, cfg relayServerConfig) error {
 		return fmt.Errorf("create relay server: %w", err)
 	}
 
-	relayAPI, err := NewRelayAPI(server, cfg.IdentityPath, utils.SplitCSV(cfg.AdminWallets))
+	relayAPI, err := NewRelayAPI(server, cfg.IdentityPath, cfg.AdminToken)
 	if err != nil {
 		return fmt.Errorf("create relay api: %w", err)
 	}
 
 	apiMux := relayAPI.Handler()
 	if cfg.X402Enabled {
-		relayIdentity := server.RelayIdentity()
+		x402Network := portalx402.Network(cfg.X402Testnet)
 		if err := portalx402.MountFacilitator(apiMux, portalx402.FacilitatorConfig{
-			Network:  cfg.X402Network,
-			RPCURL:   cfg.X402RPCURL,
-			Identity: relayIdentity.Identity,
+			Testnet: cfg.X402Testnet,
 		}); err != nil {
-			return err
+			return fmt.Errorf("mount x402 facilitator: %w", err)
 		}
 		log.Info().
 			Str("path", types.PathX402Facilitator).
-			Str("network", strings.TrimSpace(cfg.X402Network)).
-			Msg("x402 facilitator enabled")
+			Str("network", x402Network).
+			Msg("embedded x402 facilitator enabled")
 	}
 
 	if err := server.Start(ctx, apiMux); err != nil {

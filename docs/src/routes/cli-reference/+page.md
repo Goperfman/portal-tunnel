@@ -56,8 +56,10 @@ portal expose [flags] <target>
 Or run routed HTTP mode:
 
 ```bash
-portal expose [flags] --http-route PATH=UPSTREAM [--http-route PATH=UPSTREAM]
+portal expose [flags] --http-route "PATH=UPSTREAM [METHOD[,METHOD...]:USDC_AMOUNT]" [...]
 ```
+
+The payment suffix is optional; omit it for free routes.
 
 ### Target Formats
 
@@ -76,7 +78,6 @@ not supported.
 |------|---------|-------|
 | Default HTTPS stream | `portal expose 3000` | Relay routes by SNI; tunnel process terminates tenant TLS |
 | Routed HTTP | `portal expose --http-route /api=3001 --http-route /=5173` | Tunnel process runs the HTTP reverse proxy |
-| Routed HTTP with x402 | `portal expose 3000 --x402-facilitator-url https://portal.example.com/api/x402 --x402-network eip155:8453 --x402-price "$0.001"` | Tunnel process enforces payment before proxying to the upstream |
 | Dedicated raw TCP | `portal expose localhost:25565 --tcp` | Relay allocates a public TCP port |
 | UDP relay | `portal expose 8080 --udp --udp-addr 19132` | Relay allocates a public UDP port |
 
@@ -98,15 +99,8 @@ not supported.
 | `--thumbnail` | string | | Service thumbnail URL metadata |
 | `--owner` | string | | Service owner metadata |
 | `--hide` | bool | `false` | Hide service from relay listing screens |
-| `--http-route` | string | | HTTP route mapping in `PATH=UPSTREAM` form; repeatable |
-| `--x402-network` | string | | x402 payment network, such as `eip155:8453` |
-| `--x402-price` | string | | x402 route price, such as `$0.001` |
-| `--x402-pay-to` | string | identity | x402 recipient address; empty uses the tunnel identity address |
-| `--x402-facilitator-url` | string | | x402 facilitator URL |
-| `--x402-resource` | string | requested URL | x402 protected resource URL |
-| `--x402-mime-type` | string | | x402 protected resource MIME type |
-| `--x402-max-timeout` | int | `0` | x402 max payment timeout seconds advertised to clients |
-| `--x402-payment-timeout` | int | `0` | x402 middleware verify/settle timeout seconds |
+| `--x402-pay-to` | string | | Sui USDC payment recipient address for this tunnel |
+| `--http-route` | string | | HTTP route mapping in `PATH=UPSTREAM [METHOD[,METHOD...]:USDC_AMOUNT]` form; repeatable; route amounts require `--x402-pay-to` |
 | `--tcp` | bool | `false` | Request a dedicated raw TCP port on the relay |
 | `--udp` | bool | `false` | Enable public UDP relay in addition to the default stream path |
 | `--udp-addr` | string | | Local UDP target; defaults to the primary target when `--udp` is enabled |
@@ -119,6 +113,8 @@ not supported.
 - Explicit `--multi-hop` cannot be combined with automatic `--multi-hop-depth`.
 - Multi-hop currently supports only the default SNI TLS stream transport.
 - `--tcp` and `--udp` require matching transport support on the relay.
+- Route payment amounts are part of `--http-route` and require a tunnel-owned
+  `--x402-pay-to`.
 
 ### Examples
 
@@ -150,79 +146,6 @@ portal expose --name myapp \
 Route matching is longest-prefix-first. `/api` matches `/api/*` and strips the
 `/api` prefix before proxying to the upstream.
 
-Require x402 payment before a local upstream receives traffic:
-
-```bash
-portal expose 3000 --name paid-api \
-  --relays https://portal.example.com \
-  --discovery=false \
-  --x402-facilitator-url https://portal.example.com/api/x402 \
-  --x402-network eip155:8453 \
-  --x402-price "$0.001"
-```
-
-With `portal expose`, the `--x402-*` flags apply one shared price to the routed
-HTTP handler created by that command. For route-specific prices, use agent
-config and attach x402 to each paid route:
-
-```toml
-[[tunnels]]
-id = "paid-site"
-name = "paid-site"
-relays = ["https://portal.example.com"]
-discovery = false
-
-[[tunnels.http_routes]]
-prefix = "/"
-upstream = "http://127.0.0.1:5173"
-
-[[tunnels.http_routes]]
-prefix = "/api/report"
-upstream = "http://127.0.0.1:3001"
-
-[tunnels.http_routes.x402]
-network = "eip155:8453"
-price = "$0.010"
-pay_to = "identity"
-facilitator_url = "https://portal.example.com/api/x402"
-resource = "/api/report"
-mime_type = "application/json"
-
-[[tunnels.http_routes]]
-prefix = "/api/dataset"
-upstream = "http://127.0.0.1:3001"
-
-[tunnels.http_routes.x402]
-network = "eip155:8453"
-price = "$0.050"
-pay_to = "identity"
-facilitator_url = "https://portal.example.com/api/x402"
-resource = "/api/dataset"
-mime_type = "application/json"
-```
-
-Native Go apps can keep pricing inside the application instead. Wrap the paid
-handler with `portal/x402` and provide a resolver:
-
-```go
-protected, err := portalx402.NewHTTPRouteHandler(portalx402.HTTPRouteHandlerConfig{
-	Prefix:         "/api/premium",
-	Next:           premiumHandler,
-	X402:           x402Config,
-	TunnelIdentity: appIdentity,
-	Metadata:       metadata,
-	PriceResolver: func(ctx context.Context, req portalx402.HTTPRequestContext) (string, error) {
-		return catalog.PriceForPath(req.Path)
-	},
-})
-```
-
-The payment app exposes the same pattern:
-
-```bash
-go run ./cmd/payment-app --x402-facilitator-url https://portal.example.com/api/x402 --x402-network eip155:8453 --x402-price "$0.01"
-```
-
 Expose a Minecraft server:
 
 ```bash
@@ -252,6 +175,70 @@ Ban relays on MITM probe detection:
 ```bash
 portal expose 3000 --ban-mitm
 ```
+
+Publish a paid HTTP route:
+
+```bash
+portal expose --name paid-app \
+  --http-route "/paid=http://127.0.0.1:3001 GET:0.01" \
+  --http-route /=http://127.0.0.1:5173 \
+  --x402-pay-to 0x...
+```
+
+The optional method list limits which methods require payment; without it, every
+method on that route prefix is paid.
+
+The routed HTTP handler also serves `/x402/client.js` and `/x402/prepare` on the
+public tunnel origin. Frontends served by one of the routes can use the shared
+browser-only Sui wallet client for an in-page payment flow:
+
+```js
+import { getSuiWallets, x402Fetch } from '/x402/client.js';
+
+const [wallet] = getSuiWallets();
+if (!wallet) {
+  throw new Error('Install a Sui wallet');
+}
+
+const [account] = await wallet.accounts();
+if (!account) {
+  throw new Error('Connect a Sui account');
+}
+
+const response = await x402Fetch('/paid/photo', { method: 'GET' }, {
+  wallet,
+  account,
+  onEvent: (event) => console.log(event.type, event.message),
+});
+```
+
+`x402Fetch()` is a convenience wrapper: it asks `/x402/prepare` for the payment
+transaction, asks the wallet to sign it, then retries the protected request with
+an `X-PAYMENT` header. `onEvent` receives structured progress events; the older
+`onStatus(message)` callback is still accepted for simple UIs. Routed HTTP
+payments currently use Sui mainnet, so omit `network` or pass `sui:mainnet`.
+
+Native clients should not load `/x402/client.js`. Call `POST /x402/prepare` with
+`{ "sender": "...", "method": "GET", "path": "/paid/photo" }`, execute
+`prepareTransaction.transaction` first when present, sign
+`paymentTransaction.transaction`, and send the resulting x402 payload as the
+`X-PAYMENT` header on the protected request:
+
+```js
+const payload = {
+  x402Version: prepared.x402Version,
+  payload: {
+    signature,
+    transaction: prepared.paymentTransaction.transaction,
+  },
+  accepted: prepared.paymentRequirements,
+  resource: prepared.resource,
+};
+const header = base64(JSON.stringify(payload));
+```
+
+The frontend integration is optional. Requests without a valid `X-PAYMENT`
+header still receive x402 payment-required responses from the tunnel.
 
 ## `portal list`
 
@@ -284,7 +271,7 @@ portal agent restart
 |---------|-------------|
 | `portal agent run` | Install or update and start the managed agent service |
 | `portal agent run --config config.toml --foreground` | Run the agent in the current terminal |
-| `portal agent dashboard` | Open the local TUI for tunnels, relays, multi-hop routes, settings, and x402 facilitator URLs |
+| `portal agent dashboard` | Open the local TUI for tunnels, relays, multi-hop routes, and settings |
 | `portal agent stop` | Gracefully stop the agent and disable or stop the OS service |
 | `portal agent restart` | Stop the current agent if present, install or update the service, and start it again |
 
@@ -353,7 +340,7 @@ Prints the installed version string and exits.
 
 - [Getting Started](/getting-started): run your first tunnel
 - [Portal Agent](/portal-agent): run durable multi-tunnel services
-- [Wallet and ENS](/wallet-and-ens): understand wallet auth and ENS gasless DNS
+- [Wallet and ENS](/wallet-and-ens): understand admin tokens, wallet auth, and ENS gasless DNS
 - [Concepts](/concepts): understand the relay and transport model
 - [TCP and UDP Tunneling](/tcp-udp-tunneling): raw TCP and UDP setup
 - [Deployment](/deployment): run your own relay server

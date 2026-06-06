@@ -9,16 +9,15 @@ Operator endpoints are the control surface for a relay. They all return
 the standard JSON envelope described in [API Reference](/api-reference), except
 for internal operational endpoints that are not part of the stable API.
 
-`/admin` is reserved for the frontend route. Relay wallet auth endpoints live
+`/admin` is reserved for the frontend route. Relay admin auth endpoints live
 under `/api/admin`, and enforcement settings live under `/api/policy`.
 
 ## Auth Flow
 
-1. `POST /api/admin/auth/challenge` with the wallet address.
-2. Sign the returned `siwe_message`.
-3. `POST /api/admin/auth/login` with the challenge id, message, and signature.
-4. Send the returned `access_token` as `Authorization: Bearer <token>`.
-5. `POST /api/admin/auth/logout` to invalidate the current token.
+1. Set `ADMIN_TOKEN` on the relay.
+2. `POST /api/admin/auth/login` with `{ "token": "<admin-token>" }`.
+3. Send the returned `access_token` as `Authorization: Bearer <token>`.
+4. `POST /api/admin/auth/logout` to clear the browser-stored token.
 
 Admin bearer tokens are separate from SDK lease tokens.
 
@@ -26,9 +25,8 @@ Admin bearer tokens are separate from SDK lease tokens.
 
 | Method | Path | Auth | Body | Data |
 |--------|------|------|------|------|
-| `POST` | `/api/admin/auth/challenge` | None | `WalletAuthChallengeRequest` | `WalletAuthChallengeResponse` |
-| `POST` | `/api/admin/auth/login` | SIWE signature body | `WalletAuthLoginRequest` | `WalletAuthLoginResponse` |
-| `GET` | `/api/admin/auth/status` | Optional bearer | none | `WalletAuthStatusResponse` |
+| `POST` | `/api/admin/auth/login` | None | `AdminAuthLoginRequest` | `AdminAuthLoginResponse` |
+| `GET` | `/api/admin/auth/status` | Optional bearer | none | `AdminAuthStatusResponse` |
 | `POST` | `/api/admin/auth/logout` | Bearer | none | `{}` |
 | `GET` | `/api/policy` | Bearer | none | `PolicySettings` |
 | `POST` | `/api/policy` | Bearer | `PolicySettings` | `PolicySettings` |
@@ -38,41 +36,23 @@ Admin bearer tokens are separate from SDK lease tokens.
 
 ## Auth Payloads
 
-`WalletAuthChallengeRequest`:
+`AdminAuthLoginRequest`:
 
 | Field | Type | Required |
 |-------|------|----------|
-| `address` | `string` | yes |
+| `token` | `string` | yes |
 
-`WalletAuthChallengeResponse`:
-
-| Field | Type |
-|-------|------|
-| `challenge_id` | `string` |
-| `expires_at` | `string` |
-| `siwe_message` | `string` |
-
-`WalletAuthLoginRequest`:
-
-| Field | Type | Required |
-|-------|------|----------|
-| `challenge_id` | `string` | yes |
-| `siwe_message` | `string` | yes |
-| `siwe_signature` | `string` | yes |
-
-`WalletAuthLoginResponse`:
+`AdminAuthLoginResponse`:
 
 | Field | Type |
 |-------|------|
 | `access_token` | `string` |
-| `wallet_address` | `string` |
 
-`WalletAuthStatusResponse`:
+`AdminAuthStatusResponse`:
 
 | Field | Type | Notes |
 |-------|------|-------|
 | `authenticated` | `boolean` | true only when a valid bearer token was sent |
-| `wallet_address` | `string` | omitted when unauthenticated |
 
 ## State
 
