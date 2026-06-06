@@ -100,6 +100,7 @@ not supported.
 | `--owner` | string | | Service owner metadata |
 | `--hide` | bool | `false` | Hide service from relay listing screens |
 | `--x402-pay-to` | string | | Sui USDC payment recipient address for this tunnel |
+| `--x402-testnet` | bool | `false` | Use Sui testnet for tunnel x402 payments; default is Sui mainnet |
 | `--http-route` | string | | HTTP route mapping in `PATH=UPSTREAM [METHOD[,METHOD...]:USDC_AMOUNT]` form; repeatable; route amounts require `--x402-pay-to` |
 | `--tcp` | bool | `false` | Request a dedicated raw TCP port on the relay |
 | `--udp` | bool | `false` | Enable public UDP relay in addition to the default stream path |
@@ -115,6 +116,8 @@ not supported.
 - `--tcp` and `--udp` require matching transport support on the relay.
 - Route payment amounts are part of `--http-route` and require a tunnel-owned
   `--x402-pay-to`.
+- Tunnel paid routes use Sui mainnet by default; add `--x402-testnet` for Sui
+  testnet. This is independent of relay-owned x402 facilitator settings.
 
 ### Examples
 
@@ -216,7 +219,9 @@ const response = await x402Fetch('/paid/photo', { method: 'GET' }, {
 transaction, asks the wallet to sign it, then retries the protected request with
 an `X-PAYMENT` header. `onEvent` receives structured progress events; the older
 `onStatus(message)` callback is still accepted for simple UIs. Routed HTTP
-payments currently use Sui mainnet, so omit `network` or pass `sui:mainnet`.
+payments use Sui mainnet by default; pass `--x402-testnet` when exposing the
+tunnel and use `network: 'sui:testnet'` in wallet clients that need an explicit
+network. For mainnet, omit `network` or pass `sui:mainnet`.
 
 Native clients should not load `/x402/client.js`. Call `POST /x402/prepare` with
 `{ "sender": "...", "method": "GET", "path": "/paid/photo" }`, execute

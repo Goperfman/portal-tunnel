@@ -142,7 +142,7 @@ type HTTPRoutes struct {
 }
 
 // NewHTTPRoutes creates a handler for path-routed upstreams and the shared x402 prepare endpoint.
-func NewHTTPRoutes(routeConfigs []HTTPRouteConfig, x402PayTo string) (*HTTPRoutes, error) {
+func NewHTTPRoutes(routeConfigs []HTTPRouteConfig, x402PayTo string, x402Testnet bool) (*HTTPRoutes, error) {
 	if len(routeConfigs) == 0 {
 		return nil, errors.New("at least one http route is required")
 	}
@@ -151,7 +151,7 @@ func NewHTTPRoutes(routeConfigs []HTTPRouteConfig, x402PayTo string) (*HTTPRoute
 	routes := make([]*httpRoute, 0, len(routeConfigs))
 	seen := make(map[string]struct{}, len(routeConfigs))
 	for _, routeConfig := range routeConfigs {
-		route, err := newHTTPRoute(routeConfig, x402PayTo)
+		route, err := newHTTPRoute(routeConfig, x402PayTo, x402Testnet)
 		if err != nil {
 			return nil, err
 		}
@@ -240,7 +240,7 @@ type httpRoute struct {
 	handler        http.Handler
 }
 
-func newHTTPRoute(routeConfig HTTPRouteConfig, x402PayTo string) (*httpRoute, error) {
+func newHTTPRoute(routeConfig HTTPRouteConfig, x402PayTo string, x402Testnet bool) (*httpRoute, error) {
 	prefix := strings.TrimSpace(routeConfig.Prefix)
 	if prefix == "" {
 		return nil, errors.New("http route prefix is required")
@@ -298,8 +298,9 @@ func newHTTPRoute(routeConfig HTTPRouteConfig, x402PayTo string) (*httpRoute, er
 			methods[method] = struct{}{}
 		}
 		payment, err := x402.NewUSDCPayment(types.X402Payment{
-			PayTo:  x402PayTo,
-			Amount: amount,
+			Testnet: x402Testnet,
+			PayTo:   x402PayTo,
+			Amount:  amount,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("http route %q x402 payment: %w", route.prefix, err)

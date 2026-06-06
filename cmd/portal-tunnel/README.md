@@ -59,7 +59,8 @@ Routed HTTP serves `/x402/client.js` and `/x402/prepare` on the tunnel origin so
 an upstream browser frontend can run the same in-page Sui wallet payment flow as
 the standalone payment app. Native clients should use `/x402/prepare` directly
 and send the signed payload as `X-PAYMENT`. The tunnel still verifies and
-settles payment before proxying the paid route.
+settles payment before proxying the paid route. Paid routes use Sui mainnet by
+default; add `--x402-testnet` to use Sui testnet.
 
 Raw TCP and UDP:
 
@@ -101,6 +102,7 @@ Common `portal expose` flags:
 --hide               Hide service from relay listing screens
 --http-route         HTTP route mapping in PATH=UPSTREAM [METHOD[,METHOD...]:USDC_AMOUNT] form
 --x402-pay-to        Sui USDC payment recipient address for this tunnel
+--x402-testnet       Use Sui testnet for tunnel x402 payments
 --tcp                Request a dedicated raw TCP port on the relay
 --udp                Enable public UDP relay
 --udp-addr           Local UDP target
@@ -119,18 +121,19 @@ portal agent restart
 ```
 
 The dashboard can edit basic tunnel settings, relays, and multi-hop routes. Add
-Tunnel opens a small form for name, target or HTTP routes, relays, discovery,
-and max active relays. After creation, routed HTTP paths, route-level x402
-amounts, and discovery mode are read-only in the Settings pane. Edit
-`http_routes`, `x402_pay_to`, or `discovery` in TOML, then restart the agent or
-tunnel to change them.
+Tunnel opens a small form for name, target or HTTP routes, x402 pay-to/testnet,
+relays, discovery, and max active relays. After creation, routed HTTP paths,
+route-level x402 amounts, payment network, and discovery mode are read-only in
+the Settings pane. Edit `http_routes`, `x402_pay_to`, `x402_testnet`, or
+`discovery` in TOML, then restart the agent or tunnel to change them.
 
 ## Constraints
 
 - A positional `<target>` cannot be combined with `--http-route`.
 - `--http-route` cannot be combined with `--udp`.
 - Route payment amounts are USDC values such as `0.01`, are part of
-  `--http-route`, and require `--x402-pay-to`.
+  `--http-route`, and require `--x402-pay-to`; add `--x402-testnet` for Sui
+  testnet, otherwise payments use Sui mainnet.
 - `--multi-hop` cannot be combined with `--multi-hop-depth`.
 - Multi-hop currently supports only the default SNI TLS stream transport.
 - `--tcp` and `--udp` require matching relay transport support.

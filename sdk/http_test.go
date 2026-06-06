@@ -25,7 +25,7 @@ func TestHTTPRoutesUseLongestPrefix(t *testing.T) {
 	handler, err := NewHTTPRoutes([]HTTPRouteConfig{
 		{Prefix: "/", Upstream: rootServer.URL},
 		{Prefix: "/api", Upstream: apiServer.URL},
-	}, "")
+	}, "", false)
 	if err != nil {
 		t.Fatalf("NewHTTPRoutes() error = %v", err)
 	}
@@ -56,7 +56,7 @@ func TestHTTPRoutesRewriteResponseHeaders(t *testing.T) {
 
 	handler, err := NewHTTPRoutes([]HTTPRouteConfig{
 		{Prefix: "/app", Upstream: upstreamURL + "/base"},
-	}, "")
+	}, "", false)
 	if err != nil {
 		t.Fatalf("NewHTTPRoutes() error = %v", err)
 	}
@@ -80,7 +80,7 @@ func TestHTTPRoutesRejectDuplicateNormalizedPrefixes(t *testing.T) {
 	_, err := NewHTTPRoutes([]HTTPRouteConfig{
 		{Prefix: "/api", Upstream: "127.0.0.1:3001"},
 		{Prefix: "/api/", Upstream: "127.0.0.1:3002"},
-	}, "")
+	}, "", false)
 	if err == nil {
 		t.Fatal("NewHTTPRoutes() error = nil, want duplicate prefix error")
 	}

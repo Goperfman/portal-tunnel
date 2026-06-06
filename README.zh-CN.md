@@ -83,7 +83,7 @@ portal expose localhost:25565 --name minecraft --tcp
 portal expose 3000 --multi-hop-depth 3
 ```
 
-对于付费路由，支付策略运行在隧道进程内，而不是中继上。隧道会在同一个公共 origin 上提供 `/x402/client.js` 和 `/x402/prepare`。浏览器前端可以导入 `/x402/client.js` 并调用 `x402Fetch()`；原生客户端可以直接调用 `/x402/prepare`，用自己的 Sui 运行时签名返回的交易，并发送签名后的 `X-PAYMENT`。
+对于付费路由，支付策略运行在隧道进程内，而不是中继上。默认使用 Sui mainnet；加上 `--x402-testnet` 可切换到 Sui testnet，这个选择与中继自身的支付设置无关。隧道会在同一个公共 origin 上提供 `/x402/client.js` 和 `/x402/prepare`。浏览器前端可以导入 `/x402/client.js` 并调用 `x402Fetch()`；原生客户端可以直接调用 `/x402/prepare`，用自己的 Sui 运行时签名返回的交易，并发送签名后的 `X-PAYMENT`。
 
 完整路由语法请参阅 [CLI Reference](cmd/portal-tunnel/README.md)，x402 helper endpoint 请参阅 [API Reference](docs/src/routes/api-reference/+page.md#payments)。
 

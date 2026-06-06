@@ -101,7 +101,8 @@ origin. A browser frontend mounted through the tunnel can import
 stays in the app instead of requiring a separate payment redirect. Native
 clients use `/x402/prepare` directly and send the signed payload as
 `X-PAYMENT`. The tunnel still verifies and settles the payment before proxying
-the protected request.
+the protected request. Paid routes use Sui mainnet by default; add
+`--x402-testnet` for Sui testnet.
 
 ## Dedicated Raw TCP
 

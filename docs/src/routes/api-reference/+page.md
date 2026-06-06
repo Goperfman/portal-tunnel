@@ -40,7 +40,7 @@ The envelope does not apply to streaming or delegated endpoints:
 |------|--------|
 | `/sdk/connect` | HTTP/1.1 connection hijack |
 | `/v1/sign` | keyless TLS signer protocol |
-| `/api/x402/*` | embedded x402 facilitator response |
+| `/api/x402/*` | relay-owned x402 facilitator response |
 | `/api/install.sh`, `/api/install.ps1`, `/api/install/bin/*` | script or binary bytes |
 
 Unknown routes may be handled by the frontend/proxy layer or return a normal
@@ -114,18 +114,26 @@ SDK clients.
 
 ### Payments
 
-These Sui-only endpoints are available only when
-`X402_ENABLED=true`. They are served by the embedded
-`gosuda/x402-facilitator` handler and do not use the Portal JSON envelope.
-Portal selects Sui mainnet by default and Sui testnet when `X402_TESTNET=true`.
-Portal accepts only USDC gasless stablecoin address-balance payments.
-`X402_PAY_TO` is the relay-owned payment recipient. Tunnel payment recipients
-are local tunnel configuration and are not part of the relay lease API.
+Relay `/api/x402/*` endpoints are optional relay-owned control-plane
+facilitator endpoints. Enable them with `X402_ENABLED=true` when a relay
+operator wants to reserve support for relay resources such as future tunnel
+registration fees, lease renewal fees, raw TCP/UDP port allocation, or premium
+capacity. They are served by the embedded `gosuda/x402-facilitator` handler and
+do not use the Portal JSON envelope. Portal selects Sui mainnet by default and
+Sui testnet when `X402_TESTNET=true`. Portal accepts only USDC gasless
+stablecoin address-balance payments. `X402_PAY_TO` is the relay-owned payment
+recipient.
+
+Relay x402 settings do not affect tunnel paid routes. Tunnel payment recipients
+and payment networks are local tunnel configuration and are not part of the
+relay lease API.
 
 Paid routed HTTP tunnels additionally expose `/x402/prepare` and
 `/x402/client.js` on the public tunnel origin. Those are tunnel-owned helper
 endpoints for app frontends, not relay API routes, and they do not use the
-`/api` prefix. `/x402/client.js` is browser-only; native clients call
+`/api` prefix. Tunnel paid routes use Sui mainnet by default and Sui testnet
+when the tunnel is exposed with `--x402-testnet` or configured with
+`x402_testnet = true`. `/x402/client.js` is browser-only; native clients call
 `/x402/prepare` directly and send `X-PAYMENT` on the protected request.
 
 | Method | Path | Auth | Body | Response |

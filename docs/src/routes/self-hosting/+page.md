@@ -85,11 +85,13 @@ docker compose up -d
 | `IDENTITY_PATH` | `./.portal-certs` | Relay state directory containing `identity.json`, `policy.json`, and TLS materials. |
 | `ADMIN_TOKEN` | | Bearer token source for relay admin and policy APIs. |
 
-## Optional: Enable Embedded Sui x402 Facilitator
+## Optional: Enable Relay-Owned Sui x402 Facilitator
 
-To expose Sui x402 facilitator endpoints from the relay process itself, enable
-the embedded handler. Payments use Sui mainnet by default; set
-`X402_TESTNET=true` for Sui testnet.
+To reserve relay-side x402 support for future control-plane resources, enable
+the relay-owned facilitator. This is intended for relay-owned charges such as
+tunnel registration, lease renewal, raw TCP/UDP port allocation, or premium
+capacity if an operator decides to require them. Payments use Sui mainnet by
+default; set `X402_TESTNET=true` for Sui testnet.
 
 ```yaml
 environment:
@@ -100,9 +102,13 @@ environment:
 
 This serves `/api/x402/supported`, `/api/x402/verify`, and `/api/x402/settle`.
 Portal payments intentionally support only Sui mainnet/testnet USDC through the
-gasless stablecoin address-balance flow. Route-level payment enforcement is
-configured separately by the tunnel with `portal expose --x402-pay-to`; relay
-`X402_PAY_TO` is reserved for relay-owned resources.
+gasless stablecoin address-balance flow.
+
+Tunnel paid routes do not use these relay settings. Route-level payment
+enforcement is configured separately by the tunnel with
+`portal expose --x402-pay-to` and optional `--x402-testnet`; relay
+`X402_PAY_TO` and `X402_TESTNET` are reserved for relay-owned control-plane
+resources.
 
 ## Connecting Your Tunnel
 

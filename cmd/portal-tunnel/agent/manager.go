@@ -258,6 +258,7 @@ func (m *manager) AddTunnel(req types.AgentTunnelRequest) error {
 		Discovery:       &discovery,
 		MaxActiveRelays: req.MaxActiveRelays,
 		X402PayTo:       strings.TrimSpace(req.X402PayTo),
+		X402Testnet:     req.X402Testnet,
 	}
 	if slices.ContainsFunc(cfg.Tunnels, func(tunnel TunnelConfig) bool { return tunnel.ID == tunnelCfg.ID }) {
 		return fmt.Errorf("tunnel %q already exists", tunnelCfg.ID)
@@ -613,6 +614,7 @@ func (t *managedTunnel) Snapshot() types.AgentTunnelStatus {
 		Metadata:        metadataFromTunnelConfig(cfg),
 		MultiHop:        append([]string(nil), cfg.MultiHop...),
 		X402PayTo:       strings.TrimSpace(cfg.X402PayTo),
+		X402Testnet:     cfg.X402Testnet,
 	}
 	if len(cfg.HTTPRoutes) > 0 {
 		status.HTTPRoutes = make([]types.AgentHTTPRoute, 0, len(cfg.HTTPRoutes))
@@ -711,6 +713,7 @@ func (t *managedTunnel) runOnce(ctx context.Context) error {
 		MaxActiveRelays: cfg.MaxActiveRelays,
 		Metadata:        metadataFromTunnelConfig(cfg),
 		X402PayTo:       cfg.X402PayTo,
+		X402Testnet:     cfg.X402Testnet,
 	})
 	if err != nil {
 		return err
