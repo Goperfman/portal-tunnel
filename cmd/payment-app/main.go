@@ -42,7 +42,7 @@ type paymentConfig struct {
 	x402Testnet           bool
 	x402PayTo             string
 	x402Amount            string
-	x402RPCs              []string
+	x402Endpoints         []string
 	x402MaxTimeoutSeconds int
 	x402RequestTimeout    int
 }
@@ -76,9 +76,9 @@ func run(args []string) error {
 	utils.BoolFlag(fs, &cfg.x402Testnet, "x402-testnet", true, "use Sui testnet for x402 payments")
 	utils.StringFlag(fs, &cfg.x402PayTo, "x402-pay-to", "", "Sui USDC recipient address")
 	utils.StringFlag(fs, &cfg.x402Amount, "x402-amount", "0.01", "USDC amount")
-	utils.RepeatedStringFlag(fs, &cfg.x402RPCs, "x402-rpc", "Sui RPC endpoint; repeat to try multiple endpoints before defaults")
+	utils.RepeatedStringFlag(fs, &cfg.x402Endpoints, "x402-rpc", "Sui gRPC endpoint; repeat to try multiple endpoints before defaults")
 	fs.IntVar(&cfg.x402MaxTimeoutSeconds, "x402-max-timeout", 0, "x402 max payment timeout seconds advertised to clients")
-	fs.IntVar(&cfg.x402RequestTimeout, "x402-request-timeout", 30, "Sui RPC and x402 verify/settle timeout seconds")
+	fs.IntVar(&cfg.x402RequestTimeout, "x402-request-timeout", 30, "Sui gRPC and x402 verify/settle timeout seconds")
 
 	if err := utils.ParseFlagSet(fs, args, printUsage); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -143,7 +143,7 @@ func runPaymentApp(ctx context.Context, cfg paymentConfig) error {
 		Amount:            cfg.x402Amount,
 		MaxTimeoutSeconds: cfg.x402MaxTimeoutSeconds,
 		RequestTimeout:    time.Duration(cfg.x402RequestTimeout) * time.Second,
-		Endpoints:         cfg.x402RPCs,
+		Endpoints:         cfg.x402Endpoints,
 		PhotoURL:          cfg.photoURL,
 	})
 	if err != nil {

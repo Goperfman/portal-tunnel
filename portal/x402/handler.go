@@ -118,11 +118,7 @@ func (h *USDCPaymentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		defer cancel()
 
-		paymentPayload, ok := h.payment.Verify(ctx, w, r)
-		if !ok {
-			return
-		}
-		settled, ok := h.payment.Settle(ctx, w, r, paymentPayload)
+		settled, ok := h.payment.Settle(ctx, w, r)
 		if !ok {
 			return
 		}

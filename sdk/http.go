@@ -334,12 +334,7 @@ func (r *httpRoute) newHandler() http.Handler {
 			}
 		}
 
-		paymentPayload, ok := r.payment.Verify(req.Context(), w, req)
-		if !ok {
-			return
-		}
-
-		settled, ok := r.payment.Settle(req.Context(), w, req, paymentPayload)
+		settled, ok := r.payment.Settle(req.Context(), w, req)
 		if !ok {
 			return
 		}
