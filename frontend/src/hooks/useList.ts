@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SortOption, StatusFilter } from "@/types/filters";
 
 export interface BaseServer {
@@ -13,6 +13,8 @@ export interface BaseServer {
   link: string;
   lastUpdated?: string;
   firstSeen?: string;
+  paymentEnabled?: boolean;
+  paymentLabel?: string;
 }
 
 export interface UseListOptions<T extends BaseServer> {
@@ -95,7 +97,7 @@ export function useList<T extends BaseServer>({
   const [favorites, setFavorites] = useState<string[]>(() =>
     readStoredFavorites(storageKey)
   );
-  const [dataLoaded, setDataLoaded] = useState(false);
+  const hasLoadedServersRef = useRef(false);
 
   useEffect(() => {
     setFavorites(readStoredFavorites(storageKey));
@@ -128,9 +130,9 @@ export function useList<T extends BaseServer>({
 
   useEffect(() => {
     if (servers.length > 0) {
-      setDataLoaded(true);
+      hasLoadedServersRef.current = true;
     }
-    if (!dataLoaded && servers.length === 0) {
+    if (!hasLoadedServersRef.current && servers.length === 0) {
       return;
     }
     const validIDs = new Set(servers.map((server) => server.id));
@@ -138,7 +140,7 @@ export function useList<T extends BaseServer>({
       const next = prev.filter((id) => validIDs.has(id));
       return next.length === prev.length ? prev : next;
     });
-  }, [servers, dataLoaded]);
+  }, [servers]);
 
   useEffect(() => {
     const availableTagSet = new Set(availableTags);
@@ -170,6 +172,7 @@ export function useList<T extends BaseServer>({
       return (
         server.name.toLowerCase().includes(query) ||
         server.description.toLowerCase().includes(query) ||
+        (server.paymentLabel || "").toLowerCase().includes(query) ||
         server.tags.some((tag) => tag.toLowerCase().includes(query))
       );
     };

@@ -106,16 +106,16 @@ export function Header({
             </div>
 
             <div className="flex min-w-0 flex-wrap items-center gap-2.5">
-              <h2 className="min-w-0 wrap-break-word text-xl leading-none font-extrabold tracking-tight text-foreground sm:text-2xl">
+              <h2 className="min-w-0 wrap-break-word text-xl leading-none font-extrabold tracking-normal text-foreground sm:text-2xl">
                 {title}
               </h2>
               {releaseVersion && (
-                <span className="inline-flex h-6 items-center rounded-full bg-secondary px-2.5 text-xs font-semibold text-text-muted">
+                <span className="inline-flex h-6 items-center rounded-md bg-secondary px-2.5 text-xs font-semibold text-text-muted">
                   {releaseVersion}
                 </span>
               )}
               {ensVerified && (
-                <span className="inline-flex h-6 items-center rounded-full bg-primary/12 px-2.5 text-xs font-semibold text-primary ring-1 ring-primary/20">
+                <span className="inline-flex h-6 items-center rounded-md bg-primary/12 px-2.5 text-xs font-semibold text-primary ring-1 ring-primary/20">
                   ENS verified
                 </span>
               )}
@@ -154,7 +154,7 @@ export function Header({
             href={repoURL}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-border/70 bg-background/90 text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:text-primary"
+            className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background/90 text-foreground shadow-sm transition-colors hover:border-primary/40 hover:text-primary"
             aria-label="View source on GitHub"
           >
             <svg
@@ -193,14 +193,14 @@ export function Header({
                   onChange={(event) => setAdminToken(event.target.value)}
                   placeholder="Admin token"
                   autoComplete="current-password"
-                  className="h-12 w-44 rounded-full border border-border/70 bg-background/90 px-4 text-sm text-foreground shadow-sm outline-none transition focus:border-primary/50 sm:w-56"
+                  className="h-12 w-44 rounded-md border border-border/70 bg-background/90 px-4 text-sm text-foreground shadow-sm outline-none transition focus:border-primary/50 sm:w-56"
                   disabled={isLoading}
                 />
                 <Button
                   type="submit"
                   variant="outline"
                   disabled={isLoading}
-                  className="h-12 rounded-full border-border/70 bg-background/90 px-4 text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed"
+                  className="h-12 rounded-md border-border/70 bg-background/90 px-4 text-foreground shadow-sm transition-colors hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed"
                 >
                   {isLoading ? (
                     <Loader2 className="h-5 w-5 animate-spin" />
@@ -218,7 +218,7 @@ export function Header({
                       variant="outline"
                       size="icon"
                       onClick={handleLogout}
-                      className="h-12 w-12 cursor-pointer rounded-full border-border/70 bg-background/90 text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-destructive/40 hover:bg-background hover:text-destructive"
+                      className="h-12 w-12 cursor-pointer rounded-md border-border/70 bg-background/90 text-foreground shadow-sm transition-colors hover:border-destructive/40 hover:bg-background hover:text-destructive"
                       aria-label="Logout"
                     >
                       <LogOut className="h-5 w-5" />
