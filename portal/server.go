@@ -588,6 +588,7 @@ func (s *Server) runPublicIngress(ctx context.Context) error {
 }
 
 func (s *Server) handlePublicIngressConn(ctx context.Context, conn net.Conn) {
+	utils.SetTCPQuickACK(conn)
 	clientHello, wrappedConn, err := l4.InspectClientHello(conn, defaultClientHelloWait)
 	if err != nil {
 		if wrappedConn != nil {
@@ -596,6 +597,9 @@ func (s *Server) handlePublicIngressConn(ctx context.Context, conn net.Conn) {
 			_ = conn.Close()
 		}
 		return
+	}
+	if wrappedConn != nil {
+		utils.SetTCPQuickACK(wrappedConn)
 	}
 
 	serverName := utils.NormalizeHostname(clientHello.ServerName)
@@ -615,6 +619,7 @@ func (s *Server) handlePublicIngressConn(ctx context.Context, conn net.Conn) {
 			_ = wrappedConn.Close()
 			return
 		}
+		utils.SetTCPQuickACK(upstream)
 		s.proxy.bridge(wrappedConn, upstream, "", nil)
 		return
 	}
@@ -632,6 +637,7 @@ func (s *Server) handlePublicIngressConn(ctx context.Context, conn net.Conn) {
 }
 
 func (s *Server) bridgeLeaseConn(ctx context.Context, conn net.Conn, record *leaseRecord) error {
+	utils.SetTCPQuickACK(conn)
 	if record.isExpired(time.Now()) {
 		return errLeaseNotFound
 	}
@@ -663,6 +669,7 @@ func (s *Server) bridgeLeaseConn(ctx context.Context, conn net.Conn, record *lea
 				return fmt.Errorf("open next hop stream within %s: %w", defaultClaimTimeout, errors.Join(lastErr, openCtx.Err()))
 			}
 		}
+		utils.SetTCPQuickACK(next)
 		s.proxy.bridge(conn, next, "", nil)
 		return nil
 	}
@@ -678,6 +685,7 @@ func (s *Server) bridgeLeaseConn(ctx context.Context, conn net.Conn, record *lea
 	if err != nil {
 		return fmt.Errorf("claim lease stream: %w", err)
 	}
+	utils.SetTCPQuickACK(session)
 	s.proxy.bridge(conn, session, record.Key(), s.registry.policy.BPSManager())
 	return nil
 }

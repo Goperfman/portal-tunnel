@@ -8,8 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/sync/errgroup"
-
 	"github.com/gosuda/portal-tunnel/v2/portal/policy"
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
@@ -30,18 +28,18 @@ func (p *proxy) bridge(left, right net.Conn, identityKey string, bpsManager *pol
 	defer right.Close()
 
 	throttled := bpsManager != nil && bpsManager.IdentityBPS(identityKey) > 0
-	var group errgroup.Group
-	group.Go(func() error {
-		err := p.copy(right, left, identityKey, bpsManager, throttled)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = p.copy(right, left, identityKey, bpsManager, throttled)
 		closeWrite(right)
-		return err
-	})
-	group.Go(func() error {
-		err := p.copy(left, right, identityKey, bpsManager, throttled)
-		closeWrite(left)
-		return err
-	})
-	_ = group.Wait()
+	}()
+
+	_ = p.copy(left, right, identityKey, bpsManager, throttled)
+	closeWrite(left)
+	wg.Wait()
 }
 
 func (p *proxy) activeConnectionCount() int64 {
@@ -73,15 +71,33 @@ func (p *proxy) currentTCPBPS(now time.Time) float64 {
 var proxyBufPool = utils.GlobalBufferPool(32 * 1024)
 
 func (p *proxy) copy(dst, src net.Conn, identityKey string, bpsManager *policy.BPSManager, throttled bool) error {
-	// fast path
-	if !throttled {
-		cw := countingWriter{w: dst, bytes: &p.tcpBytes}
-		_, err := io.Copy(&cw, src)
-		return err
-	}
-
 	buf := proxyBufPool.Get()
 	defer proxyBufPool.Put(buf)
+
+	if !throttled {
+		for {
+			nr, readErr := src.Read(buf)
+			if nr > 0 {
+				nw, writeErr := dst.Write(buf[:nr])
+				if nw > 0 {
+					p.tcpBytes.Add(int64(nw))
+				}
+				if writeErr != nil {
+					return writeErr
+				}
+				if nw < nr {
+					return io.ErrShortWrite
+				}
+			}
+			if readErr != nil {
+				if errors.Is(readErr, io.EOF) {
+					return nil
+				}
+				return readErr
+			}
+		}
+	}
+
 	for {
 		nr, readErr := src.Read(buf)
 		if nr > 0 {
@@ -112,26 +128,6 @@ func (p *proxy) copy(dst, src net.Conn, identityKey string, bpsManager *policy.B
 			return readErr
 		}
 	}
-}
-
-type countingWriter struct {
-	w     io.Writer
-	bytes *atomic.Int64
-}
-
-func (c *countingWriter) Write(p []byte) (int, error) {
-	n, err := c.w.Write(p)
-	if n > 0 {
-		c.bytes.Add(int64(n))
-	}
-	return n, err
-}
-
-func (c *countingWriter) ReadFrom(r io.Reader) (int64, error) {
-	buf := proxyBufPool.Get()
-	defer proxyBufPool.Put(buf)
-	n, err := io.CopyBuffer(c, r, buf)
-	return n, err
 }
 
 func closeWrite(conn net.Conn) {

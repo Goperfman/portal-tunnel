@@ -151,6 +151,7 @@ func udpLocalBufferPool() *utils.BufferPool {
 }
 
 func proxyConnection(ctx context.Context, localAddr string, relayConn net.Conn) error {
+	utils.SetTCPQuickACK(relayConn)
 	defer relayConn.Close()
 
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
@@ -158,11 +159,22 @@ func proxyConnection(ctx context.Context, localAddr string, relayConn net.Conn) 
 	if err != nil {
 		return writeEmptyHTTPResponse(relayConn)
 	}
+	utils.SetTCPQuickACK(localConn)
 	defer localConn.Close()
 
-	errCh := make(chan error, 2)
-	stopCh := make(chan struct{})
+	var firstErr error
+	var errMu sync.Mutex
+	setErr := func(err error) {
+		if err != nil {
+			errMu.Lock()
+			if firstErr == nil {
+				firstErr = err
+			}
+			errMu.Unlock()
+		}
+	}
 
+	stopCh := make(chan struct{})
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -172,32 +184,28 @@ func proxyConnection(ctx context.Context, localAddr string, relayConn net.Conn) 
 		}
 	}()
 
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		buf := tcpCopyBufferPool().Get()
 		defer tcpCopyBufferPool().Put(buf)
 		_, err := io.CopyBuffer(localConn, relayConn, buf)
 		if tcpConn, ok := localConn.(*net.TCPConn); ok {
 			_ = tcpConn.CloseWrite()
 		}
-		errCh <- err
+		setErr(err)
 	}()
 
-	go func() {
-		buf := tcpCopyBufferPool().Get()
-		defer tcpCopyBufferPool().Put(buf)
-		_, err := io.CopyBuffer(relayConn, localConn, buf)
-		_ = relayConn.Close()
-		errCh <- err
-	}()
+	buf := tcpCopyBufferPool().Get()
+	defer tcpCopyBufferPool().Put(buf)
+	_, err = io.CopyBuffer(relayConn, localConn, buf)
+	_ = relayConn.Close()
+	setErr(err)
 
-	var firstErr error
-	for range 2 {
-		if err := <-errCh; err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-
+	wg.Wait()
 	close(stopCh)
+
 	if errors.Is(firstErr, io.EOF) || errors.Is(firstErr, net.ErrClosed) {
 		return nil
 	}
