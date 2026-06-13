@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/gosuda/beaver/alloc"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	facilitatortypes "github.com/gosuda/x402-facilitator/types"
 )
@@ -40,7 +39,7 @@ func WriteAPIData(w http.ResponseWriter, status int, data any) {
 func WriteAPIDataCtx(ctx context.Context, w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	payload, err := alloc.MarshalJSON(ctx, types.APIEnvelope[any]{OK: true, Data: data})
+	payload, err := MarshalJSON(ctx, types.APIEnvelope[any]{OK: true, Data: data})
 	if err == nil {
 		_, _ = w.Write(payload)
 	} else {
@@ -60,7 +59,7 @@ func WriteAPIError(w http.ResponseWriter, status int, code, message string) {
 func WriteAPIErrorCtx(ctx context.Context, w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	payload, err := alloc.MarshalJSON(ctx, types.APIEnvelope[any]{
+	payload, err := MarshalJSON(ctx, types.APIEnvelope[any]{
 		OK:    false,
 		Error: &types.APIError{Code: code, Message: message},
 	})
