@@ -12,8 +12,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/gosuda/beaver/alloc"
-
 	"github.com/gosuda/portal-tunnel/v2/types"
 	facilitatortypes "github.com/gosuda/x402-facilitator/types"
 )
@@ -291,7 +289,7 @@ func httpJSONRequest(ctx context.Context, payload any, headers http.Header) (io.
 		return nil, reqHeaders, nil
 	}
 
-	buf, err := alloc.MarshalJSON(ctx, payload)
+	buf, err := MarshalJSON(ctx, payload)
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal payload: %w", err)
 	}

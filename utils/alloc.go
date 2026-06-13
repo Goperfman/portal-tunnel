@@ -1,3 +1,5 @@
+//go:build !windows
+
 package utils
 
 import (
@@ -238,4 +240,10 @@ func ValidateAllocatorKind(s string) error {
 		return nil
 	}
 	return fmt.Errorf("unsupported allocator kind %q", s)
+}
+
+// MarshalJSON returns the JSON encoding of v, using a beaver-backed buffer
+// when an allocator is present in ctx. Falls back to json.Marshal otherwise.
+func MarshalJSON(ctx context.Context, v any) ([]byte, error) {
+	return alloc.MarshalJSON(ctx, v)
 }
