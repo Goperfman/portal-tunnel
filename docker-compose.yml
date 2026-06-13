@@ -12,6 +12,7 @@ services:
       PORTAL_URL: ${PORTAL_URL:-https://localhost}
       NGINX_CERT_FILE: ${NGINX_CERT_FILE:-/etc/nginx/certs/fullchain.pem}
       NGINX_CERT_KEY: ${NGINX_CERT_KEY:-/etc/nginx/certs/privatekey.pem}
+      PQC: ${PQC:-false}
     volumes:
       - ./nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
       - ./.portal-certs:/etc/nginx/certs:ro
@@ -26,6 +27,24 @@ services:
 
         export NGINX_CERT_FILE="$${NGINX_CERT_FILE:-/etc/nginx/certs/fullchain.pem}"
         export NGINX_CERT_KEY="$${NGINX_CERT_KEY:-/etc/nginx/certs/privatekey.pem}"
+
+        pqc="${PQC:-false}"
+        case "$pqc" in
+          yes|true|1|on|y)
+            pqc_curves="X25519MLKEM768:X25519:P-256"
+            ;;
+          *)
+            pqc_curves="X25519:P-256"
+            ;;
+        esac
+
+        if ! grep -q '^ssl_conf = ssl_sect$' /etc/ssl/openssl.cnf; then
+          sed -i '/^\[openssl_init\]/a ssl_conf = ssl_sect' /etc/ssl/openssl.cnf
+        fi
+        if ! grep -q '^\[ssl_sect\]$' /etc/ssl/openssl.cnf; then
+          printf '\n[ssl_sect]\nsystem_default = system_default_sect\n\n[system_default_sect]\nGroups = %s\n' "$pqc_curves" >> /etc/ssl/openssl.cnf
+        fi
+
         envsubst '$$PORTAL_HOST $$NGINX_CERT_FILE $$NGINX_CERT_KEY' \
           < /etc/nginx/templates/nginx.conf.template \
           > /etc/nginx/nginx.conf
@@ -113,6 +132,7 @@ services:
       X402_PAY_TO: ${X402_PAY_TO:-}
       TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
+      PQC: ${PQC:-false}
 
       # Optional diagnostics; keep loopback unless the pprof port is protected.
       PPROF_ENABLED: ${PPROF_ENABLED:-false}
