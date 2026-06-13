@@ -103,6 +103,7 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.14 // indirect
 	github.com/googleapis/gax-go/v2 v2.21.0 // indirect
 	github.com/gorilla/websocket v1.4.2 // indirect
+	github.com/gosuda/beaver v0.0.0-20260602130001-f5537925006a // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-retryablehttp v0.7.8 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect

@@ -216,6 +216,8 @@ github.com/googleapis/gax-go/v2 v2.21.0 h1:h45NjjzEO3faG9Lg/cFrBh2PgegVVgzqKzuZl
 github.com/googleapis/gax-go/v2 v2.21.0/go.mod h1:But/NJU6TnZsrLai/xBAQLLz+Hc7fHZJt/hsCz3Fih4=
 github.com/gorilla/websocket v1.4.2 h1:+/TMaTYc4QFitKJxsQ7Yye35DkWvkdLcvGKqM+x0Ufc=
 github.com/gorilla/websocket v1.4.2/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
+github.com/gosuda/beaver v0.0.0-20260602130001-f5537925006a h1:MtyWGPm7Ls1+TpSGdNrv2Jt/0vMQOr0eTAbnSMWLGCM=
+github.com/gosuda/beaver v0.0.0-20260602130001-f5537925006a/go.mod h1:a+GclIqq7Bowow+Lh2hHEhcc02CiENyj7AXPWGz3Bus=
 github.com/gosuda/keyless_tls v0.0.2-0.20260507061030-5128be6b5008 h1:KuP/5VlPJwqZNyAV5U60C/j8Pc5O8ENkWPTgP7mEvj0=
 github.com/gosuda/keyless_tls v0.0.2-0.20260507061030-5128be6b5008/go.mod h1:BOhUZgiAAQzxKO3QcC4fCXgd/+lqxgIu1OyIYTqtta8=
 github.com/gosuda/x402-facilitator v0.0.4 h1:EMW2xG6EVlphVYc2t7mIW7aimEkpjfIzwSpZ7I+VFx4=

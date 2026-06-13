@@ -226,7 +226,7 @@ func (s *Server) supportsTCP() bool {
 	return runtime != nil && runtime.IsTCPPortEnabled()
 }
 
-func (s *Server) Start(ctx context.Context, apiMux *http.ServeMux) error {
+func (s *Server) Start(ctx context.Context, apiMux http.Handler) error {
 	if s.group != nil {
 		return errors.New("server already started")
 	}

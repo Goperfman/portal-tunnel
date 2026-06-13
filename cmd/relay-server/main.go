@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 
@@ -23,9 +24,21 @@ import (
 
 func main() {
 	log.Logger = log.Output(zerolog.NewConsoleWriter())
+
+	tuningCtx, stopTuning := utils.SignalContext()
+	defer stopTuning()
+	tuningCfg := utils.DefaultRuntimeTuningConfig()
+	tuningCfg.ApplyEnv()
+	tuning, err := utils.InitRuntimeTuning(tuningCtx, tuningCfg)
+	if err != nil {
+		log.Error().Err(err).Msg("runtime tuning init failed")
+		os.Exit(1)
+	}
+	defer tuning.Close()
+
 	if err := utils.RunCommands(os.Args[1:], os.Stdout, os.Stderr, printRootUsage, map[string]utils.CommandFunc{
-		"":      runServeCommand,
-		"serve": runServeCommand,
+		"":      func(args []string) error { return runServeCommand(args, tuning) },
+		"serve": func(args []string) error { return runServeCommand(args, tuning) },
 		"help":  runHelpCommand,
 	}); err != nil {
 		log.Error().Err(err).Msg("execute root command")
@@ -70,7 +83,7 @@ type relayServerConfig struct {
 	NjallaToken        string
 }
 
-func runServeCommand(args []string) error {
+func runServeCommand(args []string, tuning *utils.RuntimeTuning) error {
 	cfg := relayServerConfig{}
 	fs := utils.NewFlagSet("relay-server", printRootUsage)
 
@@ -152,10 +165,10 @@ func runServeCommand(args []string) error {
 	ctx, stop := utils.SignalContext()
 	defer stop()
 
-	return runServer(ctx, cfg)
+	return runServer(ctx, cfg, tuning)
 }
 
-func runServer(ctx context.Context, cfg relayServerConfig) error {
+func runServer(ctx context.Context, cfg relayServerConfig, tuning *utils.RuntimeTuning) error {
 	server, err := portal.NewServer(portal.ServerConfig{
 		PortalURL:         cfg.PortalURL,
 		IdentityPath:      cfg.IdentityPath,
@@ -216,7 +229,12 @@ func runServer(ctx context.Context, cfg relayServerConfig) error {
 			Msg("relay-owned x402 facilitator enabled")
 	}
 
-	if err := server.Start(ctx, apiMux); err != nil {
+	var apiHandler http.Handler = apiMux
+	if tuning != nil {
+		apiHandler = tuning.HTTPMiddleware()(apiHandler)
+	}
+
+	if err := server.Start(ctx, apiHandler); err != nil {
 		return fmt.Errorf("start relay server: %w", err)
 	}
 

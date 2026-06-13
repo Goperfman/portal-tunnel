@@ -25,9 +25,21 @@ import (
 
 func main() {
 	log.Logger = log.Output(zerolog.NewConsoleWriter())
+
+	tuningCtx, stopTuning := utils.SignalContext()
+	defer stopTuning()
+	tuningCfg := utils.DefaultRuntimeTuningConfig()
+	tuningCfg.ApplyEnv()
+	tuning, err := utils.InitRuntimeTuning(tuningCtx, tuningCfg)
+	if err != nil {
+		log.Error().Err(err).Msg("runtime tuning init failed")
+		os.Exit(1)
+	}
+	defer tuning.Close()
+
 	if err := utils.RunCommands(os.Args[1:], os.Stdout, os.Stderr, printRootUsage, map[string]utils.CommandFunc{
-		"expose": runExposeCommand,
-		"agent":  runAgentCommand,
+		"expose": func(args []string) error { return runExposeCommand(args, tuning) },
+		"agent":  func(args []string) error { return runAgentCommand(args, tuning) },
 		"list":   runListCommand,
 		"update": runUpdateCommand,
 		"version": func(args []string) error {
@@ -71,7 +83,7 @@ type exposeFlags struct {
 	metricsAddr     string
 }
 
-func runExposeCommand(args []string) error {
+func runExposeCommand(args []string, tuning *utils.RuntimeTuning) error {
 	installer.StartUpdateCheck(types.ReleaseVersion)
 
 	flags := exposeFlags{}
@@ -212,7 +224,15 @@ func runExposeCommand(args []string) error {
 	}
 	if len(httpRouteInputs) > 0 {
 		defer exposure.Close()
-		return exposure.RunHTTPRoutes(ctx, httpRoutes, "")
+		routes, err := sdk.NewHTTPRoutes(httpRoutes, flags.x402PayTo, flags.x402Testnet)
+		if err != nil {
+			return fmt.Errorf("create http routes: %w", err)
+		}
+		var handler http.Handler = routes
+		if tuning != nil {
+			handler = tuning.HTTPMiddleware()(handler)
+		}
+		return exposure.RunHTTP(ctx, handler, "")
 	}
 	return sdk.ProxyExposure(ctx, exposure)
 }

@@ -20,9 +20,9 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
-func runAgentCommand(args []string) error {
+func runAgentCommand(args []string, tuning *utils.RuntimeTuning) error {
 	return utils.RunCommands(args, os.Stdout, os.Stderr, printAgentUsage, map[string]utils.CommandFunc{
-		"run":       runAgentRunCommand,
+		"run":       func(args []string) error { return runAgentRunCommand(args, tuning) },
 		"dashboard": runAgentDashboardCommand,
 		"stop":      runAgentStopCommand,
 		"restart":   runAgentRestartCommand,
@@ -35,7 +35,7 @@ func runAgentCommand(args []string) error {
 	})
 }
 
-func runAgentRunCommand(args []string) error {
+func runAgentRunCommand(args []string, tuning *utils.RuntimeTuning) error {
 	var configPath string
 	var serviceMode bool
 	var foreground bool
@@ -62,11 +62,11 @@ func runAgentRunCommand(args []string) error {
 		ctx, stop := utils.SignalContext()
 		defer stop()
 		return service.Run(ctx, cfg.Agent.ServiceName, func(ctx context.Context) error {
-			return agent.Run(ctx, cfg)
+			return agent.Run(ctx, cfg, tuning)
 		})
 	}
 	if foreground {
-		return runAgentForeground(configPath, cfg)
+		return runAgentForeground(configPath, cfg, tuning)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -155,12 +155,12 @@ func startAgentService(ctx context.Context, configPath string, cfg agent.Config)
 	return waitAgentStatus(ctx, cfg.Agent.StateDir)
 }
 
-func runAgentForeground(configPath string, cfg agent.Config) error {
+func runAgentForeground(configPath string, cfg agent.Config, tuning *utils.RuntimeTuning) error {
 	ctx, stop := utils.SignalContext()
 	defer stop()
 
 	if !agentCLIInteractive() {
-		return agent.Run(ctx, cfg)
+		return agent.Run(ctx, cfg, tuning)
 	}
 
 	resolvedConfigPath, err := filepath.Abs(strings.TrimSpace(configPath))
@@ -173,7 +173,7 @@ func runAgentForeground(configPath string, cfg agent.Config) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- agent.Run(ctx, cfg)
+		errCh <- agent.Run(ctx, cfg, tuning)
 	}()
 
 	readyCtx, readyCancel := context.WithTimeout(ctx, 15*time.Second)

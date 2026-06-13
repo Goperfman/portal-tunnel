@@ -17,7 +17,7 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
-func Run(ctx context.Context, cfg Config) error {
+func Run(ctx context.Context, cfg Config, tuning *utils.RuntimeTuning) error {
 	endpointStateDir := strings.TrimSpace(cfg.Agent.StateDir)
 	if endpointStateDir == "" {
 		return errors.New("agent.state_dir is required")
@@ -62,13 +62,17 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
+	var handler http.Handler = &controlHandler{
+		manager:  manager,
+		token:    token,
+		auth:     walletAuth,
+		shutdown: cancel,
+	}
+	if tuning != nil {
+		handler = tuning.HTTPMiddleware()(handler)
+	}
 	control := &http.Server{
-		Handler: &controlHandler{
-			manager:  manager,
-			token:    token,
-			auth:     walletAuth,
-			shutdown: cancel,
-		},
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	listenAddr := listener.Addr().String()

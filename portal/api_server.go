@@ -56,7 +56,7 @@ func writeAPIErrorResponse(w http.ResponseWriter, err error) {
 	utils.InvalidRequestError(err).Write(w)
 }
 
-func (s *Server) newAPIServer(listener net.Listener, apiMux *http.ServeMux, apiTLS keyless.TLSMaterialConfig) (net.Listener, *http.Server, io.Closer, error) {
+func (s *Server) newAPIServer(listener net.Listener, apiMux http.Handler, apiTLS keyless.TLSMaterialConfig) (net.Listener, *http.Server, io.Closer, error) {
 	var keylessSignerHandler http.Handler
 	if len(apiTLS.KeyPEM) > 0 {
 		signer, err := keyless.NewSigner(apiTLS.KeyPEM)
@@ -80,10 +80,12 @@ func (s *Server) newAPIServer(listener net.Listener, apiMux *http.ServeMux, apiT
 	return tls.NewListener(listener, apiServer.TLSConfig), apiServer, apiCloser, nil
 }
 
-func (s *Server) apiHandler(base *http.ServeMux, keylessSignerHandler http.Handler) http.Handler {
+func (s *Server) apiHandler(base http.Handler, keylessSignerHandler http.Handler) http.Handler {
+	var mux *http.ServeMux
 	if base == nil {
-		base = http.NewServeMux()
-		base.HandleFunc("/{$}", s.handleRoot)
+		mux = http.NewServeMux()
+		mux.HandleFunc("/{$}", s.handleRoot)
+		base = mux
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
