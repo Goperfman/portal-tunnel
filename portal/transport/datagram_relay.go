@@ -24,8 +24,10 @@ const (
 	defaultFlowCleanupInterval = 30 * time.Second
 )
 
+var datagramRelayBufPool = utils.GlobalBufferPool(datagramEncodedSize)
+
 func datagramRelayBufferPool() *utils.BufferPool {
-	return utils.GlobalBufferPool(datagramEncodedSize)
+	return datagramRelayBufPool
 }
 
 type flowState struct {

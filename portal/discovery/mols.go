@@ -90,12 +90,12 @@ func hashToGF64(s string) uint8 {
 func molsRTTStats(states []RelayState) (mean time.Duration, cv float64) {
 	var count int
 	var sum float64
-	for _, state := range states {
-		if state.DiscoveryRTTAt.IsZero() {
+	for i := range states {
+		if states[i].DiscoveryRTTAt.IsZero() {
 			continue
 		}
 		count++
-		sum += float64(state.DiscoveryRTT)
+		sum += float64(states[i].DiscoveryRTT)
 	}
 	if count == 0 {
 		return 0, 0
@@ -105,11 +105,11 @@ func molsRTTStats(states []RelayState) (mean time.Duration, cv float64) {
 		return time.Duration(avg), 0
 	}
 	var sq float64
-	for _, state := range states {
-		if state.DiscoveryRTTAt.IsZero() {
+	for i := range states {
+		if states[i].DiscoveryRTTAt.IsZero() {
 			continue
 		}
-		d := float64(state.DiscoveryRTT) - avg
+		d := float64(states[i].DiscoveryRTT) - avg
 		sq += d * d
 	}
 	stddev := math.Sqrt(sq / float64(count))
@@ -119,17 +119,17 @@ func molsRTTStats(states []RelayState) (mean time.Duration, cv float64) {
 	return time.Duration(avg), cv
 }
 
-func isRelayFallback(state RelayState) bool {
+func isRelayFallback(state *RelayState) bool {
 	return !state.DiscoveryRTTAt.IsZero() && state.DiscoveryRTT > molsFallbackRTTThreshold
 }
 
 type molsCandidate struct {
-	state RelayState
+	state *RelayState
 	score int
 	seq   int
 }
 
-func betterMOLSCandidate(a, b molsCandidate) bool {
+func betterMOLSCandidate(a, b *molsCandidate) bool {
 	if a.score != b.score {
 		return a.score > b.score
 	}
@@ -146,19 +146,19 @@ func betterMOLSCandidate(a, b molsCandidate) bool {
 
 func selectAggregate(states []RelayState) []RelayState {
 	out := make([]RelayState, 0, len(states))
-	for _, state := range states {
-		if !state.Banned {
-			out = append(out, state)
+	for i := range states {
+		if !states[i].Banned {
+			out = append(out, states[i])
 		}
 	}
 	return out
 }
 
 func selectConfirmed(states []RelayState) []RelayState {
-	out := make([]RelayState, 0)
-	for _, state := range states {
-		if state.Confirmed {
-			out = append(out, state)
+	out := make([]RelayState, 0, len(states))
+	for i := range states {
+		if states[i].Confirmed {
+			out = append(out, states[i])
 		}
 	}
 	return out
@@ -180,7 +180,7 @@ func rankRelayPool(autoPool []RelayState, localAddress string) []string {
 	}
 
 	order := gridOrderForSize(len(autoPool))
-	scoreFor := func(state RelayState) int {
+	scoreFor := func(state *RelayState) int {
 		candidateIdx := hashToGF64(state.Descriptor.APIHTTPSAddr)
 		row := int(ingressIdx) % order
 		col := int(candidateIdx) % order
@@ -190,22 +190,24 @@ func rankRelayPool(autoPool []RelayState, localAddress string) []string {
 		return molsScore(row, col, int(m1), int(m2), order)
 	}
 
-	activeStates := make([]RelayState, 0, len(autoPool))
-	fallbackStates := make([]RelayState, 0)
-	for _, state := range autoPool {
-		if isRelayFallback(state) {
-			fallbackStates = append(fallbackStates, state)
+	activeStates := make([]int, 0, len(autoPool))
+	fallbackStates := make([]int, 0, len(autoPool))
+	for i := range autoPool {
+		if isRelayFallback(&autoPool[i]) {
+			fallbackStates = append(fallbackStates, i)
 		} else {
-			activeStates = append(activeStates, state)
+			activeStates = append(activeStates, i)
 		}
 	}
 
 	if len(activeStates) < molsMinActiveNodes && len(fallbackStates) > 0 {
-		slices.SortFunc(fallbackStates, func(a, b RelayState) int {
-			if a.DiscoveryRTT < b.DiscoveryRTT {
+		slices.SortFunc(fallbackStates, func(a, b int) int {
+			da := autoPool[a].DiscoveryRTT
+			db := autoPool[b].DiscoveryRTT
+			if da < db {
 				return -1
 			}
-			if a.DiscoveryRTT > b.DiscoveryRTT {
+			if da > db {
 				return 1
 			}
 			return 0
@@ -215,21 +217,22 @@ func rankRelayPool(autoPool []RelayState, localAddress string) []string {
 		fallbackStates = fallbackStates[promote:]
 	}
 
-	rankTier := func(states []RelayState) []string {
+	rankTier := func(states []int) []string {
 		if len(states) == 0 {
 			return nil
 		}
 		var candidates [molsCandidateDepth]molsCandidate
 		count := 0
-		for i, state := range states {
-			state.EvaluateSaturation()
+		for i, idx := range states {
+			statePtr := &autoPool[idx]
+			statePtr.EvaluateSaturation()
 			candidate := molsCandidate{
-				state: state,
-				score: scoreFor(state),
+				state: statePtr,
+				score: scoreFor(statePtr),
 				seq:   i,
 			}
 			insertAt := count
-			for insertAt > 0 && betterMOLSCandidate(candidate, candidates[insertAt-1]) {
+			for insertAt > 0 && betterMOLSCandidate(&candidate, &candidates[insertAt-1]) {
 				if insertAt < molsCandidateDepth {
 					candidates[insertAt] = candidates[insertAt-1]
 				}
@@ -277,25 +280,38 @@ func selectPriorityWithTrace(states []RelayState, cs RouteState) ([]string, tele
 		Reasons:    make(map[string]string),
 	}
 
-	for _, state := range states {
-		if state.Banned {
-			url := state.Descriptor.APIHTTPSAddr
+	hasNonBanned := false
+	for i := range states {
+		if states[i].Banned {
+			url := states[i].Descriptor.APIHTTPSAddr
 			trace.Suppressed = append(trace.Suppressed, url)
 			trace.Reasons[url] = "banned"
+		} else {
+			hasNonBanned = true
 		}
 	}
 
-	selected := selectAggregate(states)
-	if len(selected) == 0 {
+	if !hasNonBanned {
 		trace.SelectionTook = time.Since(start)
 		return nil, trace
 	}
 
 	explicit := make([]string, 0)
-	autoPool := make([]RelayState, 0, len(selected))
-	for _, state := range selected {
+	autoPool := make([]RelayState, 0, len(states))
+	for i := range states {
+		state := &states[i]
+		if state.Banned {
+			continue
+		}
 		relayURL := state.Descriptor.APIHTTPSAddr
-		if slices.Contains(cs.ExplicitRelayURLs, relayURL) {
+		isExplicit := false
+		for _, explicitURL := range cs.ExplicitRelayURLs {
+			if explicitURL == relayURL {
+				isExplicit = true
+				break
+			}
+		}
+		if isExplicit {
 			if state.hasObservedDescriptor() && state.Descriptor.ExpiresAt.After(now) {
 				if cs.RequireUDP && !state.Descriptor.SupportsUDP {
 					trace.Suppressed = append(trace.Suppressed, relayURL)
@@ -333,7 +349,7 @@ func selectPriorityWithTrace(states []RelayState, cs RouteState) ([]string, tele
 			trace.Reasons[relayURL] = "suppressed"
 			continue
 		}
-		autoPool = append(autoPool, state)
+		autoPool = append(autoPool, *state)
 	}
 
 	avgRTT, cv := molsRTTStats(autoPool)
@@ -350,18 +366,50 @@ func selectPriorityWithTrace(states []RelayState, cs RouteState) ([]string, tele
 	}
 	trace.M1, trace.M2 = m1, m2
 
-	active, fallbacks := traceFallbackPartition(autoPool)
-	trace.PoolEligible = len(autoPool)
-	trace.PoolFallback = len(fallbacks)
-	if len(active) < molsMinActiveNodes && len(fallbacks) > 0 {
-		promote := min(molsMinActiveNodes-len(active), len(fallbacks))
-		fallbacks = fallbacks[promote:]
+	numFallback := 0
+	for i := range autoPool {
+		if isRelayFallback(&autoPool[i]) {
+			numFallback++
+		}
 	}
-	demotedURLs := relayURLSet(fallbacks)
+	numActive := len(autoPool) - numFallback
+
+	trace.PoolEligible = len(autoPool)
+	trace.PoolFallback = numFallback
+
+	demotedURLs := make(map[string]bool, numFallback)
+	if numActive < molsMinActiveNodes && numFallback > 0 {
+		fallbackIndices := make([]int, 0, numFallback)
+		for i := range autoPool {
+			if isRelayFallback(&autoPool[i]) {
+				fallbackIndices = append(fallbackIndices, i)
+			}
+		}
+		slices.SortFunc(fallbackIndices, func(a, b int) int {
+			da := autoPool[a].DiscoveryRTT
+			db := autoPool[b].DiscoveryRTT
+			if da < db { return -1 }
+			if da > db { return 1 }
+			return 0
+		})
+		promote := min(molsMinActiveNodes-numActive, len(fallbackIndices))
+		demoted := fallbackIndices[promote:]
+		for _, idx := range demoted {
+			demotedURLs[autoPool[idx].Descriptor.APIHTTPSAddr] = true
+		}
+	} else {
+		for i := range autoPool {
+			if isRelayFallback(&autoPool[i]) {
+				demotedURLs[autoPool[i].Descriptor.APIHTTPSAddr] = true
+			}
+		}
+	}
 
 	ingressIdx := hashToGF64(cs.LocalAddress)
 	order := gridOrderForSize(len(autoPool))
-	for _, state := range autoPool {
+	trace.Ranked = make([]telemetry.TraceEntry, 0, len(autoPool))
+	for i := range autoPool {
+		state := &autoPool[i]
 		candidateIdx := hashToGF64(state.Descriptor.APIHTTPSAddr)
 		row := int(ingressIdx) % order
 		col := int(candidateIdx) % order
@@ -396,7 +444,7 @@ func traceFallbackPartition(autoPool []RelayState) ([]RelayState, []RelayState) 
 	active := make([]RelayState, 0, len(autoPool))
 	fallbacks := make([]RelayState, 0)
 	for _, state := range autoPool {
-		if isRelayFallback(state) {
+		if isRelayFallback(&state) {
 			fallbacks = append(fallbacks, state)
 		} else {
 			active = append(active, state)
@@ -439,22 +487,28 @@ func selectMultiHopWithTrace(states []RelayState, cs RouteState) ([]string, tele
 		return nil, trace
 	}
 
-	for _, state := range states {
-		if state.Banned {
-			url := state.Descriptor.APIHTTPSAddr
+	hasNonBanned := false
+	for i := range states {
+		if states[i].Banned {
+			url := states[i].Descriptor.APIHTTPSAddr
 			trace.Suppressed = append(trace.Suppressed, url)
 			trace.Reasons[url] = "banned"
+		} else {
+			hasNonBanned = true
 		}
 	}
 
-	selected := selectAggregate(states)
-	if len(selected) == 0 {
+	if !hasNonBanned {
 		trace.SelectionTook = time.Since(start)
 		return nil, trace
 	}
 
-	autoPool := make([]RelayState, 0, len(selected))
-	for _, state := range selected {
+	autoPool := make([]RelayState, 0, len(states))
+	for i := range states {
+		state := &states[i]
+		if state.Banned {
+			continue
+		}
 		relayURL := state.Descriptor.APIHTTPSAddr
 		if cs.RequireUDP && state.hasObservedDescriptor() && !state.Descriptor.SupportsUDP {
 			trace.Suppressed = append(trace.Suppressed, relayURL)
@@ -486,7 +540,7 @@ func selectMultiHopWithTrace(states []RelayState, cs RouteState) ([]string, tele
 			trace.Reasons[relayURL] = "suppressed"
 			continue
 		}
-		autoPool = append(autoPool, state)
+		autoPool = append(autoPool, *state)
 	}
 
 	avgRTT, cv := molsRTTStats(autoPool)
@@ -503,18 +557,50 @@ func selectMultiHopWithTrace(states []RelayState, cs RouteState) ([]string, tele
 	}
 	trace.M1, trace.M2 = m1, m2
 
-	active, fallbacks := traceFallbackPartition(autoPool)
-	trace.PoolEligible = len(autoPool)
-	trace.PoolFallback = len(fallbacks)
-	if len(active) < molsMinActiveNodes && len(fallbacks) > 0 {
-		promote := min(molsMinActiveNodes-len(active), len(fallbacks))
-		fallbacks = fallbacks[promote:]
+	numFallback := 0
+	for i := range autoPool {
+		if isRelayFallback(&autoPool[i]) {
+			numFallback++
+		}
 	}
-	demotedURLs := relayURLSet(fallbacks)
+	numActive := len(autoPool) - numFallback
+
+	trace.PoolEligible = len(autoPool)
+	trace.PoolFallback = numFallback
+
+	demotedURLs := make(map[string]bool, numFallback)
+	if numActive < molsMinActiveNodes && numFallback > 0 {
+		fallbackIndices := make([]int, 0, numFallback)
+		for i := range autoPool {
+			if isRelayFallback(&autoPool[i]) {
+				fallbackIndices = append(fallbackIndices, i)
+			}
+		}
+		slices.SortFunc(fallbackIndices, func(a, b int) int {
+			da := autoPool[a].DiscoveryRTT
+			db := autoPool[b].DiscoveryRTT
+			if da < db { return -1 }
+			if da > db { return 1 }
+			return 0
+		})
+		promote := min(molsMinActiveNodes-numActive, len(fallbackIndices))
+		demoted := fallbackIndices[promote:]
+		for _, idx := range demoted {
+			demotedURLs[autoPool[idx].Descriptor.APIHTTPSAddr] = true
+		}
+	} else {
+		for i := range autoPool {
+			if isRelayFallback(&autoPool[i]) {
+				demotedURLs[autoPool[i].Descriptor.APIHTTPSAddr] = true
+			}
+		}
+	}
 
 	ingressIdx := hashToGF64(cs.LocalAddress)
 	order := gridOrderForSize(len(autoPool))
-	for _, state := range autoPool {
+	trace.Ranked = make([]telemetry.TraceEntry, 0, len(autoPool))
+	for i := range autoPool {
+		state := &autoPool[i]
 		candidateIdx := hashToGF64(state.Descriptor.APIHTTPSAddr)
 		row := int(ingressIdx) % order
 		col := int(candidateIdx) % order

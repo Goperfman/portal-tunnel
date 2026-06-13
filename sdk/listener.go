@@ -946,6 +946,8 @@ type bufferedConn struct {
 	pool   *utils.BufferPool
 }
 
+var listenerBufPool4096 = utils.GlobalBufferPool(4096)
+
 func wrapBufferedConn(conn net.Conn, reader *bufio.Reader) net.Conn {
 	if reader == nil || reader.Buffered() == 0 {
 		return conn
@@ -954,7 +956,7 @@ func wrapBufferedConn(conn net.Conn, reader *bufio.Reader) net.Conn {
 	var buf []byte
 	var pool *utils.BufferPool
 	if buffered <= 4096 {
-		pool = utils.GlobalBufferPool(4096)
+		pool = listenerBufPool4096
 		buf = pool.Get()[:buffered]
 	} else {
 		buf = make([]byte, buffered)

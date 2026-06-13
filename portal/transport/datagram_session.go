@@ -75,10 +75,11 @@ func (s *datagramSession) hasConnection() bool {
 	return s.conn != nil && !s.closed
 }
 
+var datagramSessionBufPool = utils.GlobalBufferPool(65536)
+
 func (s *datagramSession) Send(flowID uint32, payload []byte) error {
-	bufPool := utils.GlobalBufferPool(65536)
-	buf := bufPool.Get()
-	defer bufPool.Put(buf)
+	buf := datagramSessionBufPool.Get()
+	defer datagramSessionBufPool.Put(buf)
 
 	frame := types.EncodeDatagramAppend(buf[:0], flowID, payload)
 	return s.SendFrame(frame)

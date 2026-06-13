@@ -70,6 +70,8 @@ func (p *proxy) currentTCPBPS(now time.Time) float64 {
 	return 0
 }
 
+var proxyBufPool = utils.GlobalBufferPool(32 * 1024)
+
 func (p *proxy) copy(dst, src net.Conn, identityKey string, bpsManager *policy.BPSManager, throttled bool) error {
 	// fast path
 	if !throttled {
@@ -78,8 +80,8 @@ func (p *proxy) copy(dst, src net.Conn, identityKey string, bpsManager *policy.B
 		return err
 	}
 
-	buf := utils.GlobalBufferPool(32 * 1024).Get()
-	defer utils.GlobalBufferPool(32 * 1024).Put(buf)
+	buf := proxyBufPool.Get()
+	defer proxyBufPool.Put(buf)
 	for {
 		nr, readErr := src.Read(buf)
 		if nr > 0 {
@@ -128,8 +130,8 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 func (c *countingWriter) ReadFrom(r io.Reader) (int64, error) {
 	readerFrom, ok := c.w.(io.ReaderFrom)
 	if !ok {
-		buf := utils.GlobalBufferPool(32 * 1024).Get()
-		defer utils.GlobalBufferPool(32 * 1024).Put(buf)
+		buf := proxyBufPool.Get()
+		defer proxyBufPool.Put(buf)
 		n, err := io.CopyBuffer(c, r, buf)
 		return n, err
 	}

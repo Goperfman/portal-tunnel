@@ -186,8 +186,12 @@ func (p *BufferPool) Close() {
 
 var (
 	globalPoolsMu sync.Mutex
-	globalPools   = make(map[poolKey]*BufferPool)
+	globalPools   atomic.Value // holds map[poolKey]*BufferPool
 )
+
+func init() {
+	globalPools.Store(make(map[poolKey]*BufferPool))
+}
 
 type poolKey struct {
 	size int
@@ -204,14 +208,35 @@ func GlobalBufferPool(size int) *BufferPool {
 	kind := defaultAllocatorKind
 	key := poolKey{size: size, kind: kind}
 
+	// Fast path: load the map atomically and check if the pool already exists
+	m, ok := globalPools.Load().(map[poolKey]*BufferPool)
+	if ok {
+		if p, found := m[key]; found {
+			return p
+		}
+	}
+
+	// Slow path: acquire mutex, recreate the map and store it
 	globalPoolsMu.Lock()
 	defer globalPoolsMu.Unlock()
 
-	if p, ok := globalPools[key]; ok {
-		return p
+	// Double check
+	m, _ = globalPools.Load().(map[poolKey]*BufferPool)
+	if m != nil {
+		if p, found := m[key]; found {
+			return p
+		}
 	}
+
 	p := NewBufferPool(size, kind)
-	globalPools[key] = p
+	
+	// Copy-on-write update
+	newMap := make(map[poolKey]*BufferPool, len(m)+1)
+	for k, v := range m {
+		newMap[k] = v
+	}
+	newMap[key] = p
+	globalPools.Store(newMap)
 	return p
 }
 

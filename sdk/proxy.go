@@ -137,12 +137,17 @@ func proxyRelayConnections(ctx context.Context, exposure *Exposure, localAddr st
 	}
 }
 
+var (
+	tcpCopyBufPool  = utils.GlobalBufferPool(64 * 1024)
+	udpLocalBufPool = utils.GlobalBufferPool(65535)
+)
+
 func tcpCopyBufferPool() *utils.BufferPool {
-	return utils.GlobalBufferPool(64 * 1024)
+	return tcpCopyBufPool
 }
 
 func udpLocalBufferPool() *utils.BufferPool {
-	return utils.GlobalBufferPool(65535)
+	return udpLocalBufPool
 }
 
 func proxyConnection(ctx context.Context, localAddr string, relayConn net.Conn) error {
