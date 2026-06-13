@@ -42,7 +42,7 @@ services:
           sed -i '/^\[openssl_init\]/a ssl_conf = ssl_sect' /etc/ssl/openssl.cnf
         fi
         if ! grep -q '^\[ssl_sect\]$' /etc/ssl/openssl.cnf; then
-          printf '\n[ssl_sect]\nsystem_default = system_default_sect\n\n[system_default_sect]\nGroups = %s\n' "$pqc_curves" >> /etc/ssl/openssl.cnf
+          printf '\n[ssl_sect]\nsystem_default = system_default_sect\n\n[system_default_sect]\nGroups = %s\n' "$${pqc_curves}" >> /etc/ssl/openssl.cnf
         fi
 
         envsubst '$$PORTAL_HOST $$NGINX_CERT_FILE $$NGINX_CERT_KEY' \
