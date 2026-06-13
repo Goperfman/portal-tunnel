@@ -50,11 +50,12 @@ func NewHTTPTLSClient(ctx context.Context, relayURL *url.URL, timeout time.Durat
 	}
 
 	rawTLSConfig := &tls.Config{
-		MinVersion:       tls.VersionTLS12,
-		ServerName:       serverName,
-		RootCAs:          rootCAs,
-		NextProtos:       []string{"http/1.1"},
-		CurvePreferences: CurvePreferences(pqc),
+		MinVersion:         tls.VersionTLS12,
+		ServerName:         serverName,
+		RootCAs:            rootCAs,
+		NextProtos:         []string{"http/1.1"},
+		CurvePreferences:   CurvePreferences(pqc),
+		ClientSessionCache: tls.NewLRUClientSessionCache(256),
 	}
 	httpClient := NewHTTPClient(
 		WithHTTPTLSConfig(rawTLSConfig), // will be cloned internally

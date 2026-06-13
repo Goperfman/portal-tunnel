@@ -46,6 +46,7 @@ type leaseRegistry struct {
 	udpPorts       *transport.PortAllocator
 	tcpPorts       *transport.PortAllocator
 	proxy          *proxy
+	wildcards      []*leaseRecord
 	mu             sync.RWMutex
 }
 
@@ -68,6 +69,7 @@ func newLeaseRegistry(udpEnabled, tcpPortEnabled bool, minPort, maxPort int, roo
 		byHostname:     make(map[string]int),
 		byHostnameHash: make(map[string]int),
 		byHopToken:     make(map[string]int),
+		wildcards:      make([]*leaseRecord, 0),
 		rootHostname:   utils.NormalizeHostname(rootHostname),
 		sniPort:        sniPort,
 		tokenAuthority: tokenAuthority,
@@ -92,6 +94,7 @@ func (r *leaseRegistry) CloseAll() []*leaseRecord {
 	r.byHostname = make(map[string]int)
 	r.byHostnameHash = make(map[string]int)
 	r.byHopToken = make(map[string]int)
+	r.wildcards = nil
 	r.mu.Unlock()
 
 	for _, record := range out {
@@ -121,12 +124,14 @@ func (r *leaseRegistry) Lookup(host string) (*leaseRecord, bool) {
 			return record, true
 		}
 	}
-	for _, record := range r.records {
-		if record == nil || !record.isPublicEntry() || record.isExpired(now) {
-			continue
-		}
-		if record.Hostname != host && utils.HostnameMatchesPattern(record.Hostname, host) {
-			return record, true
+	if len(r.wildcards) > 0 {
+		for _, record := range r.wildcards {
+			if record == nil || record.isExpired(now) {
+				continue
+			}
+			if record.Hostname != host && utils.HostnameMatchesPattern(record.Hostname, host) {
+				return record, true
+			}
 		}
 	}
 	return nil, false
@@ -939,6 +944,18 @@ func (r *leaseRegistry) addIndex(record *leaseRecord, i int) {
 	if record.isPublicEntry() {
 		if record.Hostname != "" {
 			r.byHostname[record.Hostname] = i
+			if strings.HasPrefix(record.Hostname, "*.") {
+				found := false
+				for _, w := range r.wildcards {
+					if w == record {
+						found = true
+						break
+					}
+				}
+				if !found {
+					r.wildcards = append(r.wildcards, record)
+				}
+			}
 		}
 		if record.HostnameHash != "" {
 			r.byHostnameHash[record.HostnameHash] = i
@@ -959,6 +976,14 @@ func (r *leaseRegistry) removeIndex(record *leaseRecord) {
 	if record.isPublicEntry() {
 		if record.Hostname != "" {
 			delete(r.byHostname, record.Hostname)
+			if strings.HasPrefix(record.Hostname, "*.") {
+				for j, w := range r.wildcards {
+					if w == record {
+						r.wildcards = append(r.wildcards[:j], r.wildcards[j+1:]...)
+						break
+					}
+				}
+			}
 		}
 		if record.HostnameHash != "" {
 			delete(r.byHostnameHash, record.HostnameHash)
