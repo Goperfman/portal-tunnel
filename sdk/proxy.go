@@ -1,7 +1,6 @@
 package sdk
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -14,6 +13,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/gosuda/portal-tunnel/v2/types"
+	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
 func ProxyExposure(ctx context.Context, exposure *Exposure) error {
@@ -137,11 +137,12 @@ func proxyRelayConnections(ctx context.Context, exposure *Exposure, localAddr st
 	}
 }
 
-var bufferPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, 64*1024)
-		return &b
-	},
+func tcpCopyBufferPool() *utils.BufferPool {
+	return utils.GlobalBufferPool(64 * 1024)
+}
+
+func udpLocalBufferPool() *utils.BufferPool {
+	return utils.GlobalBufferPool(65535)
 }
 
 func proxyConnection(ctx context.Context, localAddr string, relayConn net.Conn) error {
@@ -167,9 +168,9 @@ func proxyConnection(ctx context.Context, localAddr string, relayConn net.Conn) 
 	}()
 
 	go func() {
-		bufPtr := bufferPool.Get().(*[]byte)
-		defer bufferPool.Put(bufPtr)
-		_, err := io.CopyBuffer(localConn, relayConn, *bufPtr)
+		buf := tcpCopyBufferPool().Get()
+		defer tcpCopyBufferPool().Put(buf)
+		_, err := io.CopyBuffer(localConn, relayConn, buf)
 		if tcpConn, ok := localConn.(*net.TCPConn); ok {
 			_ = tcpConn.CloseWrite()
 		}
@@ -177,9 +178,9 @@ func proxyConnection(ctx context.Context, localAddr string, relayConn net.Conn) 
 	}()
 
 	go func() {
-		bufPtr := bufferPool.Get().(*[]byte)
-		defer bufferPool.Put(bufPtr)
-		_, err := io.CopyBuffer(relayConn, localConn, *bufPtr)
+		buf := tcpCopyBufferPool().Get()
+		defer tcpCopyBufferPool().Put(buf)
+		_, err := io.CopyBuffer(relayConn, localConn, buf)
 		_ = relayConn.Close()
 		errCh <- err
 	}()
@@ -401,7 +402,8 @@ func (m *udpFlowManager) removeFlow(key udpFlowKey) {
 }
 
 func (m *udpFlowManager) readLoop(ctx context.Context, key udpFlowKey, conn *net.UDPConn) {
-	buf := make([]byte, 65535)
+	buf := udpLocalBufferPool().Get()
+	defer udpLocalBufferPool().Put(buf)
 	for {
 		n, err := conn.Read(buf)
 		if err != nil {
@@ -426,7 +428,7 @@ func (m *udpFlowManager) readLoop(ctx context.Context, key udpFlowKey, conn *net
 		}
 		entry.lastSeen = time.Now()
 		replyFrame := entry.frame
-		replyFrame.Payload = bytes.Clone(buf[:n])
+		replyFrame.Payload = utils.CloneBytes(buf[:n])
 		m.mu.Unlock()
 
 		if sendErr := m.exposure.SendDatagram(replyFrame); sendErr != nil {

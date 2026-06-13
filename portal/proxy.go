@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/gosuda/portal-tunnel/v2/portal/policy"
+	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
 type proxy struct {
@@ -76,7 +77,8 @@ func (p *proxy) copy(dst, src net.Conn, identityKey string, bpsManager *policy.B
 		return err
 	}
 
-	buf := make([]byte, 32*1024)
+	buf := utils.GlobalBufferPool(32 * 1024).Get()
+	defer utils.GlobalBufferPool(32 * 1024).Put(buf)
 	for {
 		nr, readErr := src.Read(buf)
 		if nr > 0 {

@@ -2,6 +2,7 @@ package keyless
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdh"
 	"crypto/hkdf"
 	"crypto/sha256"
@@ -9,7 +10,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
+
+	"github.com/gosuda/beaver/alloc"
 
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
@@ -62,48 +66,53 @@ func EncryptedClientHelloMaterials(seed, publicName string) ([]tls.EncryptedClie
 		publicKey,
 	}, []byte{0}))[0]
 
-	writeUint16 := func(buf *bytes.Buffer, value uint16) {
+	a := alloc.NewArena()
+	defer a.Close()
+	ctx := alloc.WithAllocator(context.Background(), a)
+
+	writeUint16 := func(buf io.Writer, value uint16) {
 		var out [2]byte
 		binary.BigEndian.PutUint16(out[:], value)
-		buf.Write(out[:])
+		_, _ = buf.Write(out[:])
 	}
-	writeUint16LengthPrefixed := func(buf *bytes.Buffer, data []byte) {
+	writeUint16LengthPrefixed := func(buf io.Writer, data []byte) {
 		writeUint16(buf, uint16(len(data)))
-		buf.Write(data)
+		_, _ = buf.Write(data)
 	}
 
-	var body bytes.Buffer
-	body.WriteByte(configID)
-	writeUint16(&body, echKEMX25519)
-	writeUint16LengthPrefixed(&body, publicKey)
+	body := alloc.NewBuffer(ctx)
+	_, _ = body.Write([]byte{configID})
+	writeUint16(body, echKEMX25519)
+	writeUint16LengthPrefixed(body, publicKey)
 
-	var cipherSuites bytes.Buffer
-	writeUint16(&cipherSuites, echKDFHKDFSHA256)
-	writeUint16(&cipherSuites, echAEADAES128GCM)
-	writeUint16LengthPrefixed(&body, cipherSuites.Bytes())
+	cipherSuites := alloc.NewBuffer(ctx)
+	writeUint16(cipherSuites, echKDFHKDFSHA256)
+	writeUint16(cipherSuites, echAEADAES128GCM)
+	writeUint16LengthPrefixed(body, cipherSuites.Bytes())
 
-	body.WriteByte(echMaximumNameLength)
-	body.WriteByte(byte(len(publicName)))
-	body.WriteString(publicName)
-	writeUint16(&body, 0)
+	_, _ = body.Write([]byte{echMaximumNameLength})
+	_, _ = body.Write([]byte{byte(len(publicName))})
+	_, _ = body.Write([]byte(publicName))
+	writeUint16(body, 0)
 
-	var out bytes.Buffer
-	writeUint16(&out, echConfigVersion)
-	writeUint16LengthPrefixed(&out, body.Bytes())
+	out := alloc.NewBuffer(ctx)
+	writeUint16(out, echConfigVersion)
+	writeUint16LengthPrefixed(out, body.Bytes())
 
+	config := utils.CloneBytes(out.Bytes())
 	keys := []tls.EncryptedClientHelloKey{{
-		Config:      out.Bytes(),
+		Config:      config,
 		PrivateKey:  privateKey,
 		SendAsRetry: true,
 	}}
 
-	var configList bytes.Buffer
+	configList := alloc.NewBuffer(ctx)
 	var configListLength [2]byte
-	binary.BigEndian.PutUint16(configListLength[:], uint16(len(keys[0].Config)))
-	configList.Write(configListLength[:])
-	configList.Write(keys[0].Config)
+	binary.BigEndian.PutUint16(configListLength[:], uint16(len(config)))
+	_, _ = configList.Write(configListLength[:])
+	_, _ = configList.Write(config)
 
-	return keys, configList.Bytes(), nil
+	return keys, utils.CloneBytes(configList.Bytes()), nil
 }
 
 func NormalizeEncryptedClientHelloConfigList(raw []byte) ([]byte, error) {
@@ -120,5 +129,5 @@ func NormalizeEncryptedClientHelloConfigList(raw []byte) ([]byte, error) {
 	if listLength != len(raw)-2 {
 		return nil, errors.New("ech config list length prefix is invalid")
 	}
-	return bytes.Clone(raw), nil
+	return utils.CloneBytes(raw), nil
 }

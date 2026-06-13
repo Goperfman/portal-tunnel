@@ -75,6 +75,12 @@ func (s *datagramSession) hasConnection() bool {
 }
 
 func (s *datagramSession) Send(flowID uint32, payload []byte) error {
+	return s.SendFrame(types.EncodeDatagram(flowID, payload))
+}
+
+// SendFrame transmits an already-encoded datagram frame. Callers that build
+// frames with types.EncodeDatagramAppend can use this to avoid re-encoding.
+func (s *datagramSession) SendFrame(frame []byte) error {
 	s.mu.Lock()
 	conn := s.conn
 	closed := s.closed
@@ -86,7 +92,7 @@ func (s *datagramSession) Send(flowID uint32, payload []byte) error {
 	if conn == nil {
 		return errNoConnection
 	}
-	return conn.SendDatagram(types.EncodeDatagram(flowID, payload))
+	return conn.SendDatagram(frame)
 }
 
 // Clear closes the active connection but keeps the session reusable.

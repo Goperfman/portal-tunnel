@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -12,13 +13,19 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/gosuda/portal-tunnel/v2/types"
+	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
 const (
 	defaultMaxPacketSize       = 1350
+	datagramEncodedSize        = defaultMaxPacketSize + binary.MaxVarintLen32
 	defaultFlowIdleTimeout     = 30 * time.Second
 	defaultFlowCleanupInterval = 30 * time.Second
 )
+
+func datagramRelayBufferPool() *utils.BufferPool {
+	return utils.GlobalBufferPool(datagramEncodedSize)
+}
 
 type flowState struct {
 	key      string
@@ -119,13 +126,6 @@ func (d *RelayDatagram) BindBackhaul(conn *quic.Conn) error {
 		Str("remote_addr", conn.RemoteAddr().String()).
 		Msg("quic backhaul connection registered")
 	return nil
-}
-
-func (d *RelayDatagram) sendDatagram(flowID uint32, payload []byte) error {
-	if d == nil {
-		return net.ErrClosed
-	}
-	return d.session.Send(flowID, payload)
 }
 
 func (d *RelayDatagram) touchFlow(key string, reply func([]byte) error) uint32 {
@@ -240,7 +240,11 @@ func (d *RelayDatagram) forgetFlow(flowID uint32) {
 }
 
 func (d *RelayDatagram) readLoop(ctx context.Context) {
-	buf := make([]byte, defaultMaxPacketSize)
+	readBuf := datagramRelayBufferPool().Get()
+	encBuf := datagramRelayBufferPool().Get()
+	defer datagramRelayBufferPool().Put(readBuf)
+	defer datagramRelayBufferPool().Put(encBuf)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -249,7 +253,7 @@ func (d *RelayDatagram) readLoop(ctx context.Context) {
 		}
 
 		_ = d.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		n, clientAddr, err := d.conn.ReadFromUDP(buf)
+		n, clientAddr, err := d.conn.ReadFromUDP(readBuf[:defaultMaxPacketSize])
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -270,10 +274,9 @@ func (d *RelayDatagram) readLoop(ctx context.Context) {
 			_, err := d.conn.WriteToUDP(payload, clientAddr)
 			return err
 		})
-		payload := make([]byte, n)
-		copy(payload, buf[:n])
+		frame := types.EncodeDatagramAppend(encBuf[:0], flowID, readBuf[:n])
 
-		if err := d.sendDatagram(flowID, payload); err != nil {
+		if err := d.session.SendFrame(frame); err != nil {
 			log.Warn().
 				Str("component", "udp-relay").
 				Str("identity_key", d.identityKey).

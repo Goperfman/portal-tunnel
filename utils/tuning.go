@@ -35,6 +35,7 @@ type RuntimeTuningConfig struct {
 	AdaptiveInterval   time.Duration
 	BeaverEnabled      bool
 	BeaverPoolSize     int
+	BeaverAllocator    string
 }
 
 // DefaultRuntimeTuningConfig returns conservative defaults tuned for low STW.
@@ -47,6 +48,7 @@ func DefaultRuntimeTuningConfig() RuntimeTuningConfig {
 		AdaptiveInterval:   defaultAdaptiveInterval,
 		BeaverEnabled:      true,
 		BeaverPoolSize:     defaultBeaverPoolSize,
+		BeaverAllocator:    DefaultRuntimeAllocatorKind(),
 	}
 }
 
@@ -82,6 +84,11 @@ func (c *RuntimeTuningConfig) ApplyEnv() {
 			c.BeaverPoolSize = n
 		}
 	}
+	if v := os.Getenv("PORTAL_BEAVER_ALLOCATOR"); v != "" {
+		if ValidateAllocatorKind(v) == nil {
+			c.BeaverAllocator = v
+		}
+	}
 }
 
 // RuntimeTuning holds the active runtime tuning state and optional beaver-backed middleware.
@@ -115,6 +122,10 @@ func InitRuntimeTuning(ctx context.Context, cfg RuntimeTuningConfig) (*RuntimeTu
 	if cfg.BeaverPoolSize <= 0 {
 		cfg.BeaverPoolSize = defaultBeaverPoolSize
 	}
+	if cfg.BeaverAllocator == "" {
+		cfg.BeaverAllocator = DefaultRuntimeAllocatorKind()
+	}
+	SetDefaultAllocatorKind(ParseAllocatorKind(cfg.BeaverAllocator))
 
 	rt := &RuntimeTuning{cfg: cfg}
 	rt.lastGOGC.Store(int64(cfg.GOGCPercent))
@@ -158,6 +169,7 @@ func InitRuntimeTuning(ctx context.Context, cfg RuntimeTuningConfig) (*RuntimeTu
 		Bool("adaptive_gc", cfg.AdaptiveGC).
 		Bool("beaver_enabled", cfg.BeaverEnabled).
 		Int("beaver_pool_size", cfg.BeaverPoolSize).
+		Str("beaver_allocator", cfg.BeaverAllocator).
 		Msg("runtime tuning initialized")
 
 	return rt, nil

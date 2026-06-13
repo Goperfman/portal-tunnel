@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/gosuda/beaver/alloc"
+
 	"github.com/gosuda/portal-tunnel/v2/types"
 	facilitatortypes "github.com/gosuda/x402-facilitator/types"
 )
@@ -161,7 +163,7 @@ func httpDo(ctx context.Context, client *http.Client, method, rawURL string, bod
 }
 
 func HTTPDoJSON(ctx context.Context, client *http.Client, method, rawURL string, payload any, headers http.Header, out any) error {
-	body, reqHeaders, err := httpJSONRequest(payload, headers)
+	body, reqHeaders, err := httpJSONRequest(ctx, payload, headers)
 	if err != nil {
 		return err
 	}
@@ -179,7 +181,7 @@ func HTTPDoJSON(ctx context.Context, client *http.Client, method, rawURL string,
 }
 
 func HTTPDoAPIPath(ctx context.Context, client *http.Client, baseURL *url.URL, method, path string, payload any, headers http.Header, out any) error {
-	body, reqHeaders, err := httpJSONRequest(payload, headers)
+	body, reqHeaders, err := httpJSONRequest(ctx, payload, headers)
 	if err != nil {
 		return err
 	}
@@ -279,7 +281,7 @@ func decodeJSONRequestBody[T any](w http.ResponseWriter, r *http.Request, maxByt
 	return dst, nil
 }
 
-func httpJSONRequest(payload any, headers http.Header) (io.Reader, http.Header, error) {
+func httpJSONRequest(ctx context.Context, payload any, headers http.Header) (io.Reader, http.Header, error) {
 	reqHeaders := make(http.Header, len(headers))
 	for key, values := range headers {
 		reqHeaders[key] = append([]string(nil), values...)
@@ -289,7 +291,7 @@ func httpJSONRequest(payload any, headers http.Header) (io.Reader, http.Header, 
 		return nil, reqHeaders, nil
 	}
 
-	buf, err := json.Marshal(payload)
+	buf, err := alloc.MarshalJSON(ctx, payload)
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal payload: %w", err)
 	}

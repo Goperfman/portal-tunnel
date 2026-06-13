@@ -343,7 +343,7 @@ func (l *listener) acceptDatagram() (types.DatagramFrame, error) {
 		return types.DatagramFrame{}, err
 	}
 
-	frame.Payload = bytes.Clone(frame.Payload)
+	frame.Payload = utils.CloneBytes(frame.Payload)
 	if lease, ok := l.leaseSnapshot(); ok {
 		frame.UDPAddr = lease.udpAddr
 	}
@@ -940,17 +940,30 @@ func (l *listener) waitRetry(ctx context.Context, operation string, err error, r
 type bufferedConn struct {
 	net.Conn
 	reader *bytes.Reader
+	buf    []byte
+	pool   *utils.BufferPool
 }
 
 func wrapBufferedConn(conn net.Conn, reader *bufio.Reader) net.Conn {
 	if reader == nil || reader.Buffered() == 0 {
 		return conn
 	}
-	buf := make([]byte, reader.Buffered())
+	buffered := reader.Buffered()
+	var buf []byte
+	var pool *utils.BufferPool
+	if buffered <= 4096 {
+		pool = utils.GlobalBufferPool(4096)
+		buf = pool.Get()[:buffered]
+	} else {
+		buf = make([]byte, buffered)
+	}
 	if _, err := io.ReadFull(reader, buf); err != nil {
+		if pool != nil {
+			pool.Put(buf)
+		}
 		return conn
 	}
-	return &bufferedConn{Conn: conn, reader: bytes.NewReader(buf)}
+	return &bufferedConn{Conn: conn, reader: bytes.NewReader(buf), buf: buf, pool: pool}
 }
 
 func (c *bufferedConn) Read(p []byte) (int, error) {
@@ -958,4 +971,11 @@ func (c *bufferedConn) Read(p []byte) (int, error) {
 		return c.reader.Read(p)
 	}
 	return c.Conn.Read(p)
+}
+
+func (c *bufferedConn) Close() error {
+	if c.pool != nil && cap(c.buf) == 4096 {
+		c.pool.Put(c.buf)
+	}
+	return c.Conn.Close()
 }
