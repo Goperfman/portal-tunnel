@@ -277,6 +277,7 @@ func (s *Server) Start(ctx context.Context, apiMux http.Handler) error {
 		cancel()
 	}()
 	var listenConfig net.ListenConfig
+	utils.ConfigureListener(&listenConfig)
 
 	apiListener, err = listenConfig.Listen(serverCtx, "tcp", cfg.APIListenAddr)
 	if err != nil {
@@ -571,6 +572,7 @@ func (s *Server) runPublicIngress(ctx context.Context) error {
 		conn, err := s.sniListener.Accept()
 		switch {
 		case err == nil:
+			conn = utils.NewQuickACKConn(conn)
 			select {
 			case connCh <- conn:
 			default:

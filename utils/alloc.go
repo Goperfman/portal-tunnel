@@ -107,8 +107,10 @@ func NewBufferPool(size int, kind AllocatorKind) *BufferPool {
 		if a, err := p.allocPool.Get(); err == nil {
 			p.current = a
 		}
+		p.pool.New = func() any { return &pooledBuf{} }
+	} else {
+		p.pool.New = func() any { return make([]byte, size) }
 	}
-	p.pool.New = func() any { return &pooledBuf{} }
 	return p
 }
 
@@ -116,6 +118,10 @@ func NewBufferPool(size int, kind AllocatorKind) *BufferPool {
 // only insofar as the allocator guarantees; callers must overwrite it before
 // reading sensitive data out.
 func (p *BufferPool) Get() []byte {
+	if p.kind == AllocatorSyncPool {
+		return p.pool.Get().([]byte)
+	}
+
 	v := p.pool.Get()
 	if v != nil {
 		pb := v.(*pooledBuf)
@@ -166,6 +172,10 @@ func (p *BufferPool) alloc() []byte {
 // dropped so they cannot leak into a different size class.
 func (p *BufferPool) Put(buf []byte) {
 	if cap(buf) != p.size {
+		return
+	}
+	if p.kind == AllocatorSyncPool {
+		p.pool.Put(buf[:p.size])
 		return
 	}
 	pb := p.pool.Get().(*pooledBuf)

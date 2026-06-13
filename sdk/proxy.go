@@ -151,6 +151,7 @@ func udpLocalBufferPool() *utils.BufferPool {
 }
 
 func proxyConnection(ctx context.Context, localAddr string, relayConn net.Conn) error {
+	relayConn = utils.NewQuickACKConn(relayConn)
 	utils.SetTCPQuickACK(relayConn)
 	defer relayConn.Close()
 
@@ -159,6 +160,7 @@ func proxyConnection(ctx context.Context, localAddr string, relayConn net.Conn) 
 	if err != nil {
 		return writeEmptyHTTPResponse(relayConn)
 	}
+	localConn = utils.NewQuickACKConn(localConn)
 	utils.SetTCPQuickACK(localConn)
 	defer localConn.Close()
 

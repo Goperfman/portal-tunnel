@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
+
+	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
 const defaultTCPPortClaimTimeout = 10 * time.Second
@@ -109,6 +111,7 @@ func (t *RelayTCPPort) acceptLoop(ctx context.Context) {
 }
 
 func (t *RelayTCPPort) handleConn(ctx context.Context, conn net.Conn) {
+	conn = utils.NewQuickACKConn(conn)
 	claimCtx, cancel := context.WithTimeout(ctx, defaultTCPPortClaimTimeout)
 	defer cancel()
 
@@ -122,6 +125,7 @@ func (t *RelayTCPPort) handleConn(ctx context.Context, conn net.Conn) {
 			Msg("failed to claim reverse session for tcp port connection")
 		return
 	}
+	session = utils.NewQuickACKConn(session)
 
 	if t.bridge == nil {
 		_ = conn.Close()

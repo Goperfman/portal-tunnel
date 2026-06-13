@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/gosuda/portal-tunnel/v2/types"
+	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
 const defaultSessionWriteLimit = 5 * time.Second
@@ -47,6 +48,7 @@ func (b *RelayStream) OfferConn(conn net.Conn) error {
 	if conn == nil {
 		return errors.New("reverse connection is required")
 	}
+	conn = utils.NewQuickACKConn(conn)
 	session := newRelaySession(conn, b.idleInterval)
 
 	b.mu.Lock()
@@ -229,6 +231,10 @@ func (s *relaySession) SetWriteDeadline(t time.Time) error {
 
 func (s *relaySession) Done() <-chan struct{} {
 	return s.done
+}
+
+func (s *relaySession) Unwrap() net.Conn {
+	return s.conn
 }
 
 func (s *relaySession) remoteAddrString() string {

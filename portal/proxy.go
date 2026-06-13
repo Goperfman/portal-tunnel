@@ -68,7 +68,7 @@ func (p *proxy) currentTCPBPS(now time.Time) float64 {
 	return 0
 }
 
-var proxyBufPool = utils.GlobalBufferPool(32 * 1024)
+var proxyBufPool = utils.GlobalBufferPool(64 * 1024)
 
 func (p *proxy) copy(dst, src net.Conn, identityKey string, bpsManager *policy.BPSManager, throttled bool) error {
 	buf := proxyBufPool.Get()

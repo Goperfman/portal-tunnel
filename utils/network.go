@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -139,4 +140,48 @@ func FetchRelayVersion(ctx context.Context, relayURL string) string {
 		return ""
 	}
 	return envelope.Data.ReleaseVersion
+}
+
+// UnwrapConn unwraps nested net.Conn wrappers (including tls.Conn and custom wrappers)
+// to retrieve the underlying net.Conn.
+func UnwrapConn(conn net.Conn) net.Conn {
+	if conn == nil {
+		return nil
+	}
+	for {
+		// 1. Check if the connection has Unwrap() net.Conn method
+		if unwrapper, ok := conn.(interface{ Unwrap() net.Conn }); ok {
+			next := unwrapper.Unwrap()
+			if next != nil && next != conn {
+				conn = next
+				continue
+			}
+		}
+
+		// 2. Check if it's a tls.Conn or has NetConn() net.Conn method
+		if tlsConn, ok := conn.(interface{ NetConn() net.Conn }); ok {
+			next := tlsConn.NetConn()
+			if next != nil && next != conn {
+				conn = next
+				continue
+			}
+		}
+
+		// 3. Use reflection to check if there is an embedded net.Conn named "Conn"
+		val := reflect.ValueOf(conn)
+		if val.Kind() == reflect.Ptr && !val.IsNil() {
+			elem := val.Elem()
+			if elem.Kind() == reflect.Struct {
+				f := elem.FieldByName("Conn")
+				if f.IsValid() && f.CanInterface() {
+					if next, ok := f.Interface().(net.Conn); ok && next != nil && next != conn {
+						conn = next
+						continue
+					}
+				}
+			}
+		}
+		break
+	}
+	return conn
 }

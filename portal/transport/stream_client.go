@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gosuda/portal-tunnel/v2/types"
+	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
 type ClientStream struct {
@@ -35,7 +36,7 @@ func (s *ClientStream) Accept(done <-chan struct{}) (net.Conn, error) {
 		if conn == nil {
 			return nil, net.ErrClosed
 		}
-		return conn, nil
+		return utils.NewQuickACKConn(conn), nil
 	}
 }
 
