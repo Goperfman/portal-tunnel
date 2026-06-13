@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 
 	keylesstls "github.com/gosuda/keyless_tls/keyless"
 
@@ -30,13 +32,32 @@ func BuildClientTLSConfig(relayURL, hostname string, echKeys []tls.EncryptedClie
 		return nil, nil, errors.New("relay hostname is required")
 	}
 
-	certPEM, rootCAPEM, err := ResolveMaterials(context.Background(), normalizedRelayURL, serverName, pqc)
-	if err != nil {
-		return nil, nil, fmt.Errorf("prepare keyless materials: %w", err)
-	}
 	hostname = strings.TrimSpace(hostname)
 	if hostname == "" {
 		return nil, nil, errors.New("keyless hostname is required")
+	}
+
+	cacheKey := normalizedRelayURL + "|" + serverName + "|" + strconv.FormatBool(pqc)
+
+	signerCacheMu.Lock()
+	entry := signerCache[cacheKey]
+	if entry != nil {
+		entry.addRef()
+	}
+	signerCacheMu.Unlock()
+
+	if entry != nil {
+		if verifyErr := VerifyCertificateHostname(entry.certPEM, hostname); verifyErr == nil {
+			tlsConfig := entry.tlsConfig.Clone()
+			tlsConfig.CurvePreferences = utils.CurvePreferences(pqc)
+			return tlsConfig, &cachedCloser{entry: entry, key: cacheKey}, nil
+		}
+		entry.release(cacheKey)
+	}
+
+	certPEM, rootCAPEM, err := ResolveMaterials(context.Background(), normalizedRelayURL, serverName, pqc)
+	if err != nil {
+		return nil, nil, fmt.Errorf("prepare keyless materials: %w", err)
 	}
 	if verifyErr := VerifyCertificateHostname(certPEM, hostname); verifyErr != nil {
 		return nil, nil, fmt.Errorf("keyless certificate does not cover %s: %w", hostname, verifyErr)
@@ -65,11 +86,72 @@ func BuildClientTLSConfig(relayURL, hostname string, echKeys []tls.EncryptedClie
 		return nil, nil, fmt.Errorf("create keyless tls config: %w", err)
 	}
 	tlsConfig.CurvePreferences = utils.CurvePreferences(pqc)
-	return tlsConfig, remoteSigner, nil
+
+	entry = &signerCacheEntry{
+		tlsConfig: tlsConfig,
+		signer:    remoteSigner,
+		certPEM:   certPEM,
+	}
+	entry.addRef()
+
+	signerCacheMu.Lock()
+	old := signerCache[cacheKey]
+	signerCache[cacheKey] = entry
+	signerCacheMu.Unlock()
+	if old != nil {
+		old.release(cacheKey)
+	}
+
+	return tlsConfig.Clone(), &cachedCloser{entry: entry, key: cacheKey}, nil
 }
 
 type ioCloser interface {
 	Close() error
+}
+
+var (
+	signerCacheMu sync.Mutex
+	signerCache   = make(map[string]*signerCacheEntry)
+)
+
+type signerCacheEntry struct {
+	tlsConfig *tls.Config
+	signer    ioCloser
+	certPEM   []byte
+	refs      int64
+	mu        sync.Mutex
+}
+
+func (e *signerCacheEntry) addRef() {
+	e.mu.Lock()
+	e.refs++
+	e.mu.Unlock()
+}
+
+func (e *signerCacheEntry) release(key string) {
+	e.mu.Lock()
+	e.refs--
+	shouldClose := e.refs <= 0
+	e.mu.Unlock()
+	if shouldClose {
+		_ = e.signer.Close()
+		signerCacheMu.Lock()
+		if signerCache[key] == e {
+			delete(signerCache, key)
+		}
+		signerCacheMu.Unlock()
+	}
+}
+
+type cachedCloser struct {
+	entry *signerCacheEntry
+	key   string
+	once  sync.Once
+}
+
+func (c *cachedCloser) Close() error {
+	c.once.Do(func() { c.entry.release(c.key) })
+	return nil
 }
 
 func ResolveMaterials(ctx context.Context, endpoint, serverName string, pqc bool) ([]byte, []byte, error) {

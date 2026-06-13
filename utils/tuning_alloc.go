@@ -8,7 +8,6 @@ import (
 	"github.com/gosuda/beaver/alloc"
 )
 
-
 func newBeaverMiddleware(poolSize int) func(http.Handler) http.Handler {
 	factory := beaverFactory(DefaultAllocatorKind(), poolSize)
 	pool := alloc.NewPool(factory)

@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"container/list"
 	"context"
 	"errors"
 	"fmt"
@@ -26,7 +27,7 @@ var errStreamFull = errors.New("stream ready queue full")
 type RelayStream struct {
 	notify       chan struct{}
 	identityKey  string
-	ready        []*relaySession
+	ready        list.List
 	idleInterval time.Duration
 	readyLimit   int
 	closedErr    error
@@ -56,14 +57,14 @@ func (b *RelayStream) OfferConn(conn net.Conn) error {
 		return err
 	}
 
-	if b.readyLimit > 0 && len(b.ready) >= b.readyLimit {
+	if b.readyLimit > 0 && b.ready.Len() >= b.readyLimit {
 		b.mu.Unlock()
 		_ = session.Close()
 		return errStreamFull
 	}
 
+	session.elem = b.ready.PushBack(session)
 	session.StartIdle()
-	b.ready = append(b.ready, session)
 	b.signalLocked()
 	b.mu.Unlock()
 
@@ -82,40 +83,45 @@ func (b *RelayStream) claimRaw(ctx context.Context) (net.Conn, error) {
 func (b *RelayStream) claimWithMarker(ctx context.Context, marker byte) (net.Conn, error) {
 	for {
 		b.mu.Lock()
+		for b.closedErr == nil && b.ready.Len() == 0 {
+			b.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-b.notify:
+			}
+			b.mu.Lock()
+		}
 		if b.closedErr != nil {
 			err := b.closedErr
 			b.mu.Unlock()
 			return nil, err
 		}
 
-		if len(b.ready) > 0 {
-			session := b.ready[0]
-			b.ready = b.ready[1:]
-			b.mu.Unlock()
-
-			if session.IsClosed() {
-				continue
-			}
-			if err := session.activateWithMarker(marker); err != nil {
-				_ = session.Close()
-				continue
-			}
-			return session, nil
-		}
+		elem := b.ready.Front()
+		session := elem.Value.(*relaySession)
+		b.ready.Remove(elem)
+		session.elem = nil
 		b.mu.Unlock()
 
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-b.notify:
+		if session.IsClosed() {
+			continue
 		}
+		if err := session.activateWithMarker(marker); err != nil {
+			_ = session.Close()
+			continue
+		}
+		return session, nil
 	}
 }
 
 func (b *RelayStream) Close() {
 	b.mu.Lock()
-	sessions := b.ready
-	b.ready = nil
+	var sessions []*relaySession
+	for elem := b.ready.Front(); elem != nil; elem = elem.Next() {
+		sessions = append(sessions, elem.Value.(*relaySession))
+	}
+	b.ready.Init()
 	if b.closedErr == nil {
 		b.closedErr = net.ErrClosed
 	}
@@ -130,29 +136,25 @@ func (b *RelayStream) Close() {
 func (b *RelayStream) ReadyCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return len(b.ready)
+	return b.ready.Len()
 }
 
 func (b *RelayStream) watchSession(session *relaySession) {
 	<-session.Done()
 
-	var readyCount int
-
 	b.mu.Lock()
-	for i := range b.ready {
-		if b.ready[i] == session {
-			b.ready = append(b.ready[:i], b.ready[i+1:]...)
-			break
-		}
+	if session.elem != nil {
+		b.ready.Remove(session.elem)
+		session.elem = nil
 	}
-	readyCount = len(b.ready)
+	readyCount := b.ready.Len()
+	b.mu.Unlock()
+
 	log.Info().
 		Str("identity_key", b.identityKey).
 		Str("remote_addr", session.remoteAddrString()).
 		Int("ready", readyCount).
 		Msg("sdk reverse disconnected")
-	b.signalLocked()
-	b.mu.Unlock()
 }
 
 func (b *RelayStream) signalLocked() {
@@ -175,6 +177,7 @@ type relaySession struct {
 	keepaliveStop chan struct{}
 	keepaliveDone chan struct{}
 	done          chan struct{}
+	elem          *list.Element
 	idleInterval  time.Duration
 	state         sessionState
 	closeOnce     sync.Once

@@ -73,17 +73,8 @@ func (p *proxy) currentTCPBPS(now time.Time) float64 {
 func (p *proxy) copy(dst, src net.Conn, identityKey string, bpsManager *policy.BPSManager, throttled bool) error {
 	// fast path
 	if !throttled {
-		cc := countingConnPool.Get().(*countingConn)
-		cc.Conn = dst
-		cc.bytes = &p.tcpBytes
-
-		buf := utils.GlobalBufferPool(32 * 1024).Get()
-		_, err := io.CopyBuffer(cc, src, buf)
-		utils.GlobalBufferPool(32 * 1024).Put(buf)
-
-		cc.Conn = nil
-		cc.bytes = nil
-		countingConnPool.Put(cc)
+		cw := countingWriter{w: dst, bytes: &p.tcpBytes}
+		_, err := io.Copy(&cw, src)
 		return err
 	}
 
@@ -121,29 +112,26 @@ func (p *proxy) copy(dst, src net.Conn, identityKey string, bpsManager *policy.B
 	}
 }
 
-type countingConn struct {
-	net.Conn
+type countingWriter struct {
+	w     io.Writer
 	bytes *atomic.Int64
 }
 
-var countingConnPool = sync.Pool{
-	New: func() any {
-		return &countingConn{}
-	},
-}
-
-func (c *countingConn) Write(p []byte) (int, error) {
-	n, err := c.Conn.Write(p)
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
 	if n > 0 {
 		c.bytes.Add(int64(n))
 	}
 	return n, err
 }
 
-func (c *countingConn) ReadFrom(r io.Reader) (int64, error) {
-	readerFrom, ok := c.Conn.(io.ReaderFrom)
+func (c *countingWriter) ReadFrom(r io.Reader) (int64, error) {
+	readerFrom, ok := c.w.(io.ReaderFrom)
 	if !ok {
-		return io.Copy(struct{ io.Writer }{Writer: c}, r)
+		buf := utils.GlobalBufferPool(32 * 1024).Get()
+		defer utils.GlobalBufferPool(32 * 1024).Put(buf)
+		n, err := io.CopyBuffer(c, r, buf)
+		return n, err
 	}
 
 	n, err := readerFrom.ReadFrom(r)

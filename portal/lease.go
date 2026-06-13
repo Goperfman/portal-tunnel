@@ -34,6 +34,10 @@ const (
 
 type leaseRegistry struct {
 	records        []*leaseRecord
+	byKey          map[string]int
+	byHostname     map[string]int
+	byHostnameHash map[string]int
+	byHopToken     map[string]int
 	rootHostname   string
 	sniPort        int
 	tokenAuthority identity.Authority
@@ -60,6 +64,10 @@ func newLeaseRegistry(udpEnabled, tcpPortEnabled bool, minPort, maxPort int, roo
 
 	return &leaseRegistry{
 		records:        make([]*leaseRecord, 0),
+		byKey:          make(map[string]int),
+		byHostname:     make(map[string]int),
+		byHostnameHash: make(map[string]int),
+		byHopToken:     make(map[string]int),
 		rootHostname:   utils.NormalizeHostname(rootHostname),
 		sniPort:        sniPort,
 		tokenAuthority: tokenAuthority,
@@ -80,6 +88,10 @@ func (r *leaseRegistry) CloseAll() []*leaseRecord {
 		}
 	}
 	r.records = nil
+	r.byKey = make(map[string]int)
+	r.byHostname = make(map[string]int)
+	r.byHostnameHash = make(map[string]int)
+	r.byHopToken = make(map[string]int)
 	r.mu.Unlock()
 
 	for _, record := range out {
@@ -98,20 +110,14 @@ func (r *leaseRegistry) Lookup(host string) (*leaseRecord, bool) {
 	defer r.mu.RUnlock()
 
 	now := time.Now()
-	for _, record := range r.records {
-		if record == nil || !record.isPublicEntry() || record.isExpired(now) {
-			continue
-		}
-		if record.Hostname == host {
+	if i, ok := r.byHostname[host]; ok {
+		if record := r.records[i]; record != nil && record.isPublicEntry() && !record.isExpired(now) && record.Hostname == host {
 			return record, true
 		}
 	}
 	hostHash := utils.HostnameHash(host)
-	for _, record := range r.records {
-		if record == nil || !record.isPublicEntry() || record.isExpired(now) {
-			continue
-		}
-		if record.HostnameHash != "" && record.HostnameHash == hostHash {
+	if i, ok := r.byHostnameHash[hostHash]; ok {
+		if record := r.records[i]; record != nil && record.isPublicEntry() && !record.isExpired(now) && record.HostnameHash == hostHash {
 			return record, true
 		}
 	}
@@ -126,24 +132,20 @@ func (r *leaseRegistry) Lookup(host string) (*leaseRecord, bool) {
 	return nil, false
 }
 
-func (r *leaseRegistry) recordByKey(key string, now time.Time) *leaseRecord {
-	for _, record := range r.records {
-		if record == nil || record.stream == nil || record.isExpired(now) {
-			continue
-		}
-		if record.Key() == key {
+func (r *leaseRegistry) recordByKeyLocked(key string, now time.Time) *leaseRecord {
+	if i, ok := r.byKey[key]; ok {
+		record := r.records[i]
+		if record != nil && record.stream != nil && !record.isExpired(now) && record.Key() == key {
 			return record
 		}
 	}
 	return nil
 }
 
-func (r *leaseRegistry) recordByHopToken(token string, now time.Time) *leaseRecord {
-	for _, record := range r.records {
-		if record == nil || record.isExpired(now) {
-			continue
-		}
-		if (record.isHopMiddle() || record.isHopExit()) && record.hopToken == token {
+func (r *leaseRegistry) recordByHopTokenLocked(token string, now time.Time) *leaseRecord {
+	if i, ok := r.byHopToken[token]; ok {
+		record := r.records[i]
+		if record != nil && !record.isExpired(now) && (record.isHopMiddle() || record.isHopExit()) && record.hopToken == token {
 			return record
 		}
 	}
@@ -299,17 +301,17 @@ func (r *leaseRegistry) Register(req types.RegisterChallengeRequest, clientIP, r
 	replacedIndex := -1
 	r.mu.Lock()
 	now := time.Now()
+	if idx, ok := r.byKey[identityKey]; ok && r.records[idx] != nil && r.records[idx].stream != nil {
+		replaced = r.records[idx]
+		replacedIndex = idx
+	}
 	udpLeases := 0
 	tcpLeases := 0
-	for i, existing := range r.records {
+	for _, existing := range r.records {
 		if existing == nil {
 			continue
 		}
 		existingKey := existing.Key()
-		if replacedIndex < 0 && existing.stream != nil && existingKey == identityKey {
-			replaced = existing
-			replacedIndex = i
-		}
 		if existing.isExpired(now) {
 			continue
 		}
@@ -358,9 +360,9 @@ func (r *leaseRegistry) Register(req types.RegisterChallengeRequest, clientIP, r
 	}
 	if replacedIndex >= 0 {
 		r.policy.ForgetIdentity(identityKey)
-		r.records[replacedIndex] = record
+		r.replaceRecord(replacedIndex, record)
 	} else {
-		r.records = append(r.records, record)
+		r.appendRecord(record)
 	}
 	r.policy.IPFilter().RegisterIdentityIP(identityKey, record.ClientIP)
 	r.mu.Unlock()
@@ -396,7 +398,7 @@ func (r *leaseRegistry) admitLeaseByToken(token string, requireDatagram bool) (*
 		return nil, errUnauthorized
 	}
 	r.mu.RLock()
-	record := r.recordByKey(claims.Identity.Key(), now)
+	record := r.recordByKeyLocked(claims.Identity.Key(), now)
 	r.mu.RUnlock()
 	if record == nil {
 		return nil, errLeaseNotFound
@@ -426,7 +428,7 @@ func (r *leaseRegistry) Renew(req types.RenewRequest, clientIP string) (types.Re
 	leaseKey := claims.Identity.Key()
 	reportedIP := utils.SanitizeReportedIP(req.ReportedIP)
 	r.mu.Lock()
-	record := r.recordByKey(leaseKey, time.Time{})
+	record := r.recordByKeyLocked(leaseKey, time.Time{})
 	if record == nil {
 		r.mu.Unlock()
 		return types.RenewResponse{}, errLeaseNotFound
@@ -469,11 +471,9 @@ func (r *leaseRegistry) Unregister(req types.UnregisterRequest) (*leaseRecord, e
 	r.mu.Lock()
 
 	key := strings.TrimSpace(claims.Identity.Key())
-	for i, record := range r.records {
-		if record == nil || record.stream == nil || record.Key() != key {
-			continue
-		}
-		r.deleteRecord(i)
+	record := r.recordByKeyLocked(key, time.Now())
+	if record != nil {
+		r.deleteRecord(r.byKey[key])
 		r.policy.ForgetIdentity(key)
 		r.mu.Unlock()
 		record.Close()
@@ -584,14 +584,14 @@ func (r *leaseRegistry) RegisterHopRoute(route *types.HopRoute, now time.Time) (
 				continue
 			}
 			if existing.routesOverlap(record) {
-				r.records[i] = record
+				r.replaceRecord(i, record)
 				return record, nil
 			}
 		}
-		r.records = append(r.records, record)
+		r.appendRecord(record)
 		return record, nil
 	case record.isHopMiddle():
-		if existing := r.recordByHopToken(record.hopToken, now); existing != nil {
+		if existing := r.recordByHopTokenLocked(record.hopToken, now); existing != nil {
 			if !existing.isHopMiddle() || !strings.EqualFold(existing.Address, record.Address) {
 				return nil, errors.New("hop token conflict")
 			}
@@ -600,11 +600,11 @@ func (r *leaseRegistry) RegisterHopRoute(route *types.HopRoute, now time.Time) (
 			if existing != nil && existing.isHopMiddle() &&
 				existing.hopToken == record.hopToken &&
 				strings.EqualFold(existing.Address, record.Address) {
-				r.records[i] = record
+				r.replaceRecord(i, record)
 				return record, nil
 			}
 		}
-		r.records = append(r.records, record)
+		r.appendRecord(record)
 		return record, nil
 	default:
 		return nil, errors.New("invalid hop route")
@@ -662,15 +662,9 @@ func (r *leaseRegistry) promoteECHDNS(record *leaseRecord, manager *acme.Manager
 	}
 
 	go func() {
-		active := false
 		now := time.Now()
 		r.mu.RLock()
-		for _, existing := range r.records {
-			if existing == record && !existing.isExpired(now) {
-				active = true
-				break
-			}
-		}
+		active := r.recordByKeyLocked(record.Key(), now) == record
 		r.mu.RUnlock()
 		if !active {
 			return
@@ -749,7 +743,7 @@ func (r *leaseRegistry) issueRegisterChallenge(req types.RegisterChallengeReques
 	if pending >= defaultRegisterChallengeOutstandingPerIP {
 		return types.RegisterChallengeResponse{}, errRegisterChallengePending
 	}
-	r.records = append(r.records, &leaseRecord{
+	r.appendRecord(&leaseRecord{
 		ExpiresAt:         challenge.ExpiresAt,
 		ClientIP:          clientIP,
 		registerChallenge: challenge,
@@ -806,10 +800,8 @@ func (r *leaseRegistry) verifySigningAccessToken(token string) error {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	for _, record := range r.records {
-		if record == nil || record.isExpired(now) || record.Key() != claims.Identity.Key() {
-			continue
-		}
+	record := r.recordByKeyLocked(claims.Identity.Key(), now)
+	if record != nil {
 		if record.stream != nil && record.isPublicEntry() {
 			if !r.policy.IsIdentityRoutable(record.Key()) {
 				return errLeaseRejected
@@ -828,7 +820,7 @@ func (r *leaseRegistry) Touch(key, clientIP string, now time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	record := r.recordByKey(key, now)
+	record := r.recordByKeyLocked(key, now)
 	if record == nil {
 		return
 	}
@@ -922,9 +914,76 @@ func (r *leaseRegistry) PolicyLeases(now time.Time) []types.PolicyLease {
 
 func (r *leaseRegistry) deleteRecord(i int) {
 	last := len(r.records) - 1
+	if i < 0 || i > last {
+		return
+	}
+	deleted := r.records[i]
 	r.records[i] = r.records[last]
 	r.records[last] = nil
 	r.records = r.records[:last]
+	if deleted != nil {
+		r.removeIndex(deleted)
+	}
+	if i < len(r.records) && r.records[i] != nil {
+		r.addIndex(r.records[i], i)
+	}
+}
+
+func (r *leaseRegistry) addIndex(record *leaseRecord, i int) {
+	if record == nil {
+		return
+	}
+	if key := record.Key(); key != "" && record.stream != nil {
+		r.byKey[key] = i
+	}
+	if record.isPublicEntry() {
+		if record.Hostname != "" {
+			r.byHostname[record.Hostname] = i
+		}
+		if record.HostnameHash != "" {
+			r.byHostnameHash[record.HostnameHash] = i
+		}
+	}
+	if (record.isHopMiddle() || record.isHopExit()) && record.hopToken != "" {
+		r.byHopToken[record.hopToken] = i
+	}
+}
+
+func (r *leaseRegistry) removeIndex(record *leaseRecord) {
+	if record == nil {
+		return
+	}
+	if key := record.Key(); key != "" {
+		delete(r.byKey, key)
+	}
+	if record.isPublicEntry() {
+		if record.Hostname != "" {
+			delete(r.byHostname, record.Hostname)
+		}
+		if record.HostnameHash != "" {
+			delete(r.byHostnameHash, record.HostnameHash)
+		}
+	}
+	if (record.isHopMiddle() || record.isHopExit()) && record.hopToken != "" {
+		delete(r.byHopToken, record.hopToken)
+	}
+}
+
+func (r *leaseRegistry) appendRecord(record *leaseRecord) {
+	r.records = append(r.records, record)
+	r.addIndex(record, len(r.records)-1)
+}
+
+func (r *leaseRegistry) replaceRecord(i int, record *leaseRecord) {
+	if i < 0 || i >= len(r.records) {
+		return
+	}
+	old := r.records[i]
+	r.records[i] = record
+	if old != nil {
+		r.removeIndex(old)
+	}
+	r.addIndex(record, i)
 }
 
 func (r *leaseRegistry) publicLease(record *leaseRecord) types.Lease {

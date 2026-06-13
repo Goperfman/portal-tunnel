@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -545,53 +546,36 @@ func (s *Server) runPProfServer() error {
 }
 
 func (s *Server) runPublicIngress(ctx context.Context) error {
+	workers := runtime.GOMAXPROCS(0) * 4
+	if workers < 16 {
+		workers = 16
+	}
+	connCh := make(chan net.Conn, 256)
+
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for conn := range connCh {
+				s.handlePublicIngressConn(ctx, conn)
+			}
+		}()
+	}
+	defer func() {
+		close(connCh)
+		wg.Wait()
+	}()
+
 	for {
 		conn, err := s.sniListener.Accept()
 		switch {
 		case err == nil:
-			go func(conn net.Conn) {
-				clientHello, wrappedConn, err := l4.InspectClientHello(conn, defaultClientHelloWait)
-				if err != nil {
-					if wrappedConn != nil {
-						_ = wrappedConn.Close()
-					} else {
-						_ = conn.Close()
-					}
-					return
-				}
-
-				serverName := utils.NormalizeHostname(clientHello.ServerName)
-				if serverName == "" {
-					_ = wrappedConn.Close()
-					return
-				}
-
-				if serverName == s.identity.Name {
-					if s.apiListener == nil {
-						_ = wrappedConn.Close()
-						return
-					}
-					dialer := &net.Dialer{Timeout: 5 * time.Second}
-					upstream, err := dialer.DialContext(ctx, "tcp", utils.HostPortOrLoopback(s.apiListener.Addr().String()))
-					if err != nil {
-						_ = wrappedConn.Close()
-						return
-					}
-					s.proxy.bridge(wrappedConn, upstream, "", nil)
-					return
-				}
-
-				record, ok := s.registry.Lookup(serverName)
-				if !ok {
-					_ = wrappedConn.Close()
-					return
-				}
-				if err := s.bridgeLeaseConn(ctx, wrappedConn, record); err != nil {
-					log.Warn().Err(err).Msg("bridge public ingress")
-					_ = wrappedConn.Close()
-					return
-				}
-			}(conn)
+			select {
+			case connCh <- conn:
+			default:
+				_ = conn.Close()
+			}
 		case errors.Is(err, net.ErrClosed):
 			return nil
 		default:
@@ -600,6 +584,50 @@ func (s *Server) runPublicIngress(ctx context.Context) error {
 			}
 			return fmt.Errorf("accept sni connection: %w", err)
 		}
+	}
+}
+
+func (s *Server) handlePublicIngressConn(ctx context.Context, conn net.Conn) {
+	clientHello, wrappedConn, err := l4.InspectClientHello(conn, defaultClientHelloWait)
+	if err != nil {
+		if wrappedConn != nil {
+			_ = wrappedConn.Close()
+		} else {
+			_ = conn.Close()
+		}
+		return
+	}
+
+	serverName := utils.NormalizeHostname(clientHello.ServerName)
+	if serverName == "" {
+		_ = wrappedConn.Close()
+		return
+	}
+
+	if serverName == s.identity.Name {
+		if s.apiListener == nil {
+			_ = wrappedConn.Close()
+			return
+		}
+		dialer := &net.Dialer{Timeout: 5 * time.Second}
+		upstream, err := dialer.DialContext(ctx, "tcp", utils.HostPortOrLoopback(s.apiListener.Addr().String()))
+		if err != nil {
+			_ = wrappedConn.Close()
+			return
+		}
+		s.proxy.bridge(wrappedConn, upstream, "", nil)
+		return
+	}
+
+	record, ok := s.registry.Lookup(serverName)
+	if !ok {
+		_ = wrappedConn.Close()
+		return
+	}
+	if err := s.bridgeLeaseConn(ctx, wrappedConn, record); err != nil {
+		log.Warn().Err(err).Msg("bridge public ingress")
+		_ = wrappedConn.Close()
+		return
 	}
 }
 
@@ -761,7 +789,7 @@ func (s *Server) startOverlay() (*overlay.Overlay, error) {
 
 	ov.SetStreamHandler(func(ctx context.Context, stream overlay.HopStream) {
 		s.registry.mu.RLock()
-		record := s.registry.recordByHopToken(stream.Token, time.Now())
+		record := s.registry.recordByHopTokenLocked(stream.Token, time.Now())
 		s.registry.mu.RUnlock()
 		if record == nil {
 			log.Warn().Str("remote_addr", stream.RemoteAddr).Msg("hop stream rejected")
