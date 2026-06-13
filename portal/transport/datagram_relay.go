@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -28,9 +29,8 @@ func datagramRelayBufferPool() *utils.BufferPool {
 }
 
 type flowState struct {
-	key      string
+	addr     netip.AddrPort
 	lastSeen time.Time
-	reply    func([]byte) error
 }
 
 // RelayDatagram owns UDP ingress and QUIC backhaul binding for one lease.
@@ -38,8 +38,8 @@ type RelayDatagram struct {
 	identityKey string
 	port        int
 	session     *datagramSession
-	flowTable   map[uint32]*flowState
-	addrIndex   map[string]uint32
+	flowTable   map[uint32]flowState
+	addrIndex   map[netip.AddrPort]uint32
 	nextFlow    uint32
 
 	conn *net.UDPConn
@@ -60,8 +60,8 @@ func NewRelayDatagram(identityKey string, port int) *RelayDatagram {
 				Str("identity_key", identityKey).
 				Msg("quic backhaul receive loop ended")
 		}),
-		flowTable: make(map[uint32]*flowState),
-		addrIndex: make(map[string]uint32),
+		flowTable: make(map[uint32]flowState),
+		addrIndex: make(map[netip.AddrPort]uint32),
 		nextFlow:  1,
 	}
 	go d.runDispatchLoop()
@@ -128,31 +128,28 @@ func (d *RelayDatagram) BindBackhaul(conn *quic.Conn) error {
 	return nil
 }
 
-func (d *RelayDatagram) touchFlow(key string, reply func([]byte) error) uint32 {
+func (d *RelayDatagram) touchFlow(addr netip.AddrPort) uint32 {
 	now := time.Now()
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if id, ok := d.addrIndex[key]; ok {
-		if flow, exists := d.flowTable[id]; exists && flow != nil {
+	if id, ok := d.addrIndex[addr]; ok {
+		if flow, exists := d.flowTable[id]; exists {
 			flow.lastSeen = now
-			if reply != nil {
-				flow.reply = reply
-			}
+			d.flowTable[id] = flow
 			return id
 		}
-		delete(d.addrIndex, key)
+		delete(d.addrIndex, addr)
 	}
 
 	id := d.nextFlow
 	d.nextFlow++
-	d.flowTable[id] = &flowState{
-		key:      key,
+	d.flowTable[id] = flowState{
+		addr:     addr,
 		lastSeen: now,
-		reply:    reply,
 	}
-	d.addrIndex[key] = id
+	d.addrIndex[addr] = id
 	return id
 }
 
@@ -177,16 +174,17 @@ func (d *RelayDatagram) runDispatchLoop() {
 func (d *RelayDatagram) dispatch(frame types.DatagramFrame) {
 	d.mu.Lock()
 	flow, ok := d.flowTable[frame.FlowID]
-	if !ok || flow == nil || flow.reply == nil {
+	if !ok || flow.addr == (netip.AddrPort{}) {
 		d.mu.Unlock()
 		return
 	}
 
 	flow.lastSeen = time.Now()
-	reply := flow.reply
+	d.flowTable[frame.FlowID] = flow
+	addr := flow.addr
 	d.mu.Unlock()
 
-	if err := reply(frame.Payload); err != nil {
+	if _, err := d.conn.WriteToUDPAddrPort(frame.Payload, addr); err != nil {
 		log.Warn().
 			Err(err).
 			Str("component", "udp-relay").
@@ -216,10 +214,8 @@ func (d *RelayDatagram) expireIdleFlows(now time.Time) {
 	defer d.mu.Unlock()
 
 	for flowID, flow := range d.flowTable {
-		if flow == nil || now.Sub(flow.lastSeen) > defaultFlowIdleTimeout {
-			if flow != nil {
-				delete(d.addrIndex, flow.key)
-			}
+		if now.Sub(flow.lastSeen) > defaultFlowIdleTimeout {
+			delete(d.addrIndex, flow.addr)
 			delete(d.flowTable, flowID)
 		}
 	}
@@ -233,9 +229,7 @@ func (d *RelayDatagram) forgetFlow(flowID uint32) {
 	if !ok {
 		return
 	}
-	if flow != nil {
-		delete(d.addrIndex, flow.key)
-	}
+	delete(d.addrIndex, flow.addr)
 	delete(d.flowTable, flowID)
 }
 
@@ -253,7 +247,7 @@ func (d *RelayDatagram) readLoop(ctx context.Context) {
 		}
 
 		_ = d.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		n, clientAddr, err := d.conn.ReadFromUDP(readBuf[:defaultMaxPacketSize])
+		n, clientAddr, err := d.conn.ReadFromUDPAddrPort(readBuf[:defaultMaxPacketSize])
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -270,10 +264,7 @@ func (d *RelayDatagram) readLoop(ctx context.Context) {
 			return
 		}
 
-		flowID := d.touchFlow("udp:"+clientAddr.String(), func(payload []byte) error {
-			_, err := d.conn.WriteToUDP(payload, clientAddr)
-			return err
-		})
+		flowID := d.touchFlow(clientAddr)
 		frame := types.EncodeDatagramAppend(encBuf[:0], flowID, readBuf[:n])
 
 		if err := d.session.SendFrame(frame); err != nil {

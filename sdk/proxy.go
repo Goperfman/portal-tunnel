@@ -428,7 +428,7 @@ func (m *udpFlowManager) readLoop(ctx context.Context, key udpFlowKey, conn *net
 		}
 		entry.lastSeen = time.Now()
 		replyFrame := entry.frame
-		replyFrame.Payload = utils.CloneBytes(buf[:n])
+		replyFrame.Payload = buf[:n]
 		m.mu.Unlock()
 
 		if sendErr := m.exposure.SendDatagram(replyFrame); sendErr != nil {

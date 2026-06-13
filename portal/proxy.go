@@ -73,7 +73,17 @@ func (p *proxy) currentTCPBPS(now time.Time) float64 {
 func (p *proxy) copy(dst, src net.Conn, identityKey string, bpsManager *policy.BPSManager, throttled bool) error {
 	// fast path
 	if !throttled {
-		_, err := io.Copy(&countingConn{Conn: dst, bytes: &p.tcpBytes}, src)
+		cc := countingConnPool.Get().(*countingConn)
+		cc.Conn = dst
+		cc.bytes = &p.tcpBytes
+
+		buf := utils.GlobalBufferPool(32 * 1024).Get()
+		_, err := io.CopyBuffer(cc, src, buf)
+		utils.GlobalBufferPool(32 * 1024).Put(buf)
+
+		cc.Conn = nil
+		cc.bytes = nil
+		countingConnPool.Put(cc)
 		return err
 	}
 
@@ -114,6 +124,12 @@ func (p *proxy) copy(dst, src net.Conn, identityKey string, bpsManager *policy.B
 type countingConn struct {
 	net.Conn
 	bytes *atomic.Int64
+}
+
+var countingConnPool = sync.Pool{
+	New: func() any {
+		return &countingConn{}
+	},
 }
 
 func (c *countingConn) Write(p []byte) (int, error) {

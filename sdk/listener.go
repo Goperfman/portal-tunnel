@@ -343,7 +343,6 @@ func (l *listener) acceptDatagram() (types.DatagramFrame, error) {
 		return types.DatagramFrame{}, err
 	}
 
-	frame.Payload = utils.CloneBytes(frame.Payload)
 	if lease, ok := l.leaseSnapshot(); ok {
 		frame.UDPAddr = lease.udpAddr
 	}

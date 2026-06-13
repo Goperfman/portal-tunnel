@@ -15,6 +15,12 @@ import (
 
 const defaultSessionWriteLimit = 5 * time.Second
 
+var (
+	keepaliveMarker = []byte{types.MarkerKeepalive}
+	rawStartMarker  = []byte{types.MarkerRawStart}
+	tlsStartMarker  = []byte{types.MarkerTLSStart}
+)
+
 var errStreamFull = errors.New("stream ready queue full")
 
 type RelayStream struct {
@@ -283,8 +289,19 @@ func (s *relaySession) activateWithMarker(marker byte) error {
 	if s.state == sessionClosed {
 		return net.ErrClosed
 	}
+	var markerBuf []byte
+	switch marker {
+	case types.MarkerKeepalive:
+		markerBuf = keepaliveMarker
+	case types.MarkerRawStart:
+		markerBuf = rawStartMarker
+	case types.MarkerTLSStart:
+		markerBuf = tlsStartMarker
+	default:
+		markerBuf = []byte{marker}
+	}
 	_ = s.conn.SetWriteDeadline(time.Now().Add(defaultSessionWriteLimit))
-	_, err := s.conn.Write([]byte{marker})
+	_, err := s.conn.Write(markerBuf)
 	_ = s.conn.SetWriteDeadline(time.Time{})
 	if err != nil {
 		_ = s.Close()
@@ -338,7 +355,7 @@ func (s *relaySession) runKeepalive(stop <-chan struct{}, done chan<- struct{}) 
 			return
 		}
 		_ = s.conn.SetWriteDeadline(time.Now().Add(defaultSessionWriteLimit))
-		_, err := s.conn.Write([]byte{types.MarkerKeepalive})
+		_, err := s.conn.Write(keepaliveMarker)
 		_ = s.conn.SetWriteDeadline(time.Time{})
 		s.mu.Unlock()
 		if err != nil {

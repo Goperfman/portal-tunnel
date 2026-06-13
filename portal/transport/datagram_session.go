@@ -9,6 +9,7 @@ import (
 	"github.com/quic-go/quic-go"
 
 	"github.com/gosuda/portal-tunnel/v2/types"
+	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
 var errNoConnection = errors.New("no quic backhaul connection registered")
@@ -75,7 +76,12 @@ func (s *datagramSession) hasConnection() bool {
 }
 
 func (s *datagramSession) Send(flowID uint32, payload []byte) error {
-	return s.SendFrame(types.EncodeDatagram(flowID, payload))
+	bufPool := utils.GlobalBufferPool(65536)
+	buf := bufPool.Get()
+	defer bufPool.Put(buf)
+
+	frame := types.EncodeDatagramAppend(buf[:0], flowID, payload)
+	return s.SendFrame(frame)
 }
 
 // SendFrame transmits an already-encoded datagram frame. Callers that build

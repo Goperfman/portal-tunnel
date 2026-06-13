@@ -505,9 +505,13 @@ func (o *Overlay) Sync(relays []types.RelayDescriptor) error {
 	return o.stack.ApplyPeers(peers)
 }
 
-func hopYamuxConfig() *yamux.Config {
+var globalHopYamuxConfig = func() *yamux.Config {
 	cfg := yamux.DefaultConfig()
 	cfg.Logger = nil
 	cfg.MaxStreamWindowSize = 16 * 1024 * 1024
 	return cfg
+}()
+
+func hopYamuxConfig() *yamux.Config {
+	return globalHopYamuxConfig
 }
