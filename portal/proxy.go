@@ -128,18 +128,9 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 }
 
 func (c *countingWriter) ReadFrom(r io.Reader) (int64, error) {
-	readerFrom, ok := c.w.(io.ReaderFrom)
-	if !ok {
-		buf := proxyBufPool.Get()
-		defer proxyBufPool.Put(buf)
-		n, err := io.CopyBuffer(c, r, buf)
-		return n, err
-	}
-
-	n, err := readerFrom.ReadFrom(r)
-	if n > 0 {
-		c.bytes.Add(n)
-	}
+	buf := proxyBufPool.Get()
+	defer proxyBufPool.Put(buf)
+	n, err := io.CopyBuffer(c, r, buf)
 	return n, err
 }
 

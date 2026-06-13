@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/gosuda/beaver/alloc"
 	"github.com/gosuda/portal-tunnel/v2/types"
 	facilitatortypes "github.com/gosuda/x402-facilitator/types"
 )
@@ -26,10 +27,25 @@ func (resp APIErrorResponse) Write(w http.ResponseWriter) {
 	WriteAPIError(w, resp.Status, resp.Code, resp.Message)
 }
 
+func (resp APIErrorResponse) WriteCtx(ctx context.Context, w http.ResponseWriter) {
+	WriteAPIErrorCtx(ctx, w, resp.Status, resp.Code, resp.Message)
+}
+
 func WriteAPIData(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(types.APIEnvelope[any]{OK: true, Data: data})
+}
+
+func WriteAPIDataCtx(ctx context.Context, w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	payload, err := alloc.MarshalJSON(ctx, types.APIEnvelope[any]{OK: true, Data: data})
+	if err == nil {
+		_, _ = w.Write(payload)
+	} else {
+		_ = json.NewEncoder(w).Encode(types.APIEnvelope[any]{OK: true, Data: data})
+	}
 }
 
 func WriteAPIError(w http.ResponseWriter, status int, code, message string) {
@@ -39,6 +55,23 @@ func WriteAPIError(w http.ResponseWriter, status int, code, message string) {
 		OK:    false,
 		Error: &types.APIError{Code: code, Message: message},
 	})
+}
+
+func WriteAPIErrorCtx(ctx context.Context, w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	payload, err := alloc.MarshalJSON(ctx, types.APIEnvelope[any]{
+		OK:    false,
+		Error: &types.APIError{Code: code, Message: message},
+	})
+	if err == nil {
+		_, _ = w.Write(payload)
+	} else {
+		_ = json.NewEncoder(w).Encode(types.APIEnvelope[any]{
+			OK:    false,
+			Error: &types.APIError{Code: code, Message: message},
+		})
+	}
 }
 
 func WritePaymentJSON(w http.ResponseWriter, status int, value any) {

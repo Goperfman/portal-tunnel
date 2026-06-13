@@ -47,13 +47,13 @@ var (
 	errRegisterChallengePending = &apiError{types.APIErrorCodeRateLimited, "too many pending register challenges", http.StatusTooManyRequests}
 )
 
-func writeAPIErrorResponse(w http.ResponseWriter, err error) {
+func writeAPIErrorResponse(ctx context.Context, w http.ResponseWriter, err error) {
 	var ae *apiError
 	if errors.As(err, &ae) {
-		utils.WriteAPIError(w, ae.status, ae.code, ae.msg)
+		utils.WriteAPIErrorCtx(ctx, w, ae.status, ae.code, ae.msg)
 		return
 	}
-	utils.InvalidRequestError(err).Write(w)
+	utils.InvalidRequestError(err).WriteCtx(ctx, w)
 }
 
 func (s *Server) newAPIServer(listener net.Listener, apiMux http.Handler, apiTLS keyless.TLSMaterialConfig) (net.Listener, *http.Server, io.Closer, error) {
@@ -129,7 +129,7 @@ func (s *Server) apiHandler(base http.Handler, keylessSignerHandler http.Handler
 				return
 			}
 			if err := s.registry.verifySigningAccessToken(r.Header.Get(types.HeaderAccessToken)); err != nil {
-				writeAPIErrorResponse(w, err)
+				writeAPIErrorResponse(r.Context(), w, err)
 				return
 			}
 			keylessSignerHandler.ServeHTTP(w, r)
@@ -139,15 +139,15 @@ func (s *Server) apiHandler(base http.Handler, keylessSignerHandler http.Handler
 	})
 }
 
-func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
-	utils.WriteAPIData(w, http.StatusOK, map[string]any{
+func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	utils.WriteAPIDataCtx(r.Context(), w, http.StatusOK, map[string]any{
 		"service": "portal-relay",
 		"root":    s.identity.Name,
 	})
 }
 
-func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
-	utils.WriteAPIData(w, http.StatusOK, map[string]any{"status": "ok"})
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	utils.WriteAPIDataCtx(r.Context(), w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
 func (s *Server) handleRelayDiscovery(w http.ResponseWriter, r *http.Request) {
@@ -155,18 +155,18 @@ func (s *Server) handleRelayDiscovery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.relaySet == nil {
-		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, "relay discovery disabled")
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, "relay discovery disabled")
 		return
 	}
 
 	now := time.Now().UTC()
 	self, err := s.newSelfDescriptor(now)
 	if err != nil {
-		utils.WriteAPIError(w, http.StatusInternalServerError, types.APIErrorCodeInternal, err.Error())
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusInternalServerError, types.APIErrorCodeInternal, err.Error())
 		return
 	}
 
-	utils.WriteAPIData(w, http.StatusOK, types.DiscoveryResponse{
+	utils.WriteAPIDataCtx(r.Context(), w, http.StatusOK, types.DiscoveryResponse{
 		ProtocolVersion: types.DiscoveryVersion,
 		GeneratedAt:     now,
 		Relays:          s.relaySet.Descriptors(self),
@@ -178,7 +178,7 @@ func (s *Server) handleRelayDiscoveryAnnounce(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if s.relaySet == nil {
-		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, "relay discovery disabled")
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, "relay discovery disabled")
 		return
 	}
 	clientIP, ok := s.extractAllowedClientIP(w, r)
@@ -186,7 +186,7 @@ func (s *Server) handleRelayDiscoveryAnnounce(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if !s.announceLimiter.Allow(clientIP) {
-		utils.WriteAPIError(w, http.StatusTooManyRequests, types.APIErrorCodeRateLimited, "announce rate limit exceeded")
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusTooManyRequests, types.APIErrorCodeRateLimited, "announce rate limit exceeded")
 		return
 	}
 
@@ -195,14 +195,14 @@ func (s *Server) handleRelayDiscoveryAnnounce(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if req.ProtocolVersion != "" && req.ProtocolVersion != types.DiscoveryVersion {
-		utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest,
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest,
 			fmt.Sprintf("announce protocol mismatch: relay=%q client=%q", types.DiscoveryVersion, req.ProtocolVersion))
 		return
 	}
 
 	desc, err := identity.NormalizeRelayDescriptor(req.Descriptor)
 	if err != nil {
-		utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, err.Error())
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, err.Error())
 		return
 	}
 	// Self-announce guard: the relay's own URL is established locally, not
@@ -211,30 +211,30 @@ func (s *Server) handleRelayDiscoveryAnnounce(w http.ResponseWriter, r *http.Req
 	// check them later.
 	announceURL, err := url.Parse(desc.APIHTTPSAddr)
 	if err != nil {
-		utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, err.Error())
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, err.Error())
 		return
 	}
 	host := utils.NormalizeHostname(announceURL.Hostname())
 	if utils.IsLocalRelayHost(host) {
-		utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest,
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest,
 			fmt.Sprintf("self-announce rejected: host %q is local-only", host))
 		return
 	}
 	cfg := s.config()
 	if selfURL, err := utils.NormalizeRelayURL(cfg.PortalURL); err == nil && desc.APIHTTPSAddr == selfURL {
-		utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest,
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest,
 			fmt.Sprintf("self-announce rejected: %q matches receiving relay url", desc.APIHTTPSAddr))
 		return
 	}
 	if host != "" && host == utils.NormalizeHostname(s.identity.Name) {
-		utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest,
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest,
 			fmt.Sprintf("self-announce rejected: host %q matches receiving relay host", host))
 		return
 	}
 
 	now := time.Now().UTC()
 	if err := s.relaySet.InsertAnnounced(desc, now); err != nil {
-		utils.WriteAPIError(w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, err.Error())
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusBadRequest, types.APIErrorCodeInvalidRequest, err.Error())
 		return
 	}
 
@@ -243,7 +243,7 @@ func (s *Server) handleRelayDiscoveryAnnounce(w http.ResponseWriter, r *http.Req
 		Str("source_ip", clientIP).
 		Msg("relay discovery announce accepted")
 
-	utils.WriteAPIData(w, http.StatusAccepted, types.DiscoveryAnnounceResponse{
+	utils.WriteAPIDataCtx(r.Context(), w, http.StatusAccepted, types.DiscoveryAnnounceResponse{
 		ProtocolVersion: types.DiscoveryVersion,
 		Accepted:        true,
 	})
@@ -265,7 +265,7 @@ func (s *Server) handleDomain(w http.ResponseWriter, r *http.Request) {
 		x402Info.PayTo = cfg.X402PayTo
 	}
 
-	utils.WriteAPIData(w, http.StatusOK, types.DomainResponse{
+	utils.WriteAPIDataCtx(r.Context(), w, http.StatusOK, types.DomainResponse{
 		ProtocolVersion: types.SDKVersion,
 		ReleaseVersion:  types.ReleaseVersion,
 		ENS:             s.acmeManager.ENSStatus(),
@@ -292,16 +292,16 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, auth.ErrRegisterChallengeInvalidSignature):
-			utils.WriteAPIError(w, http.StatusForbidden, types.APIErrorCodeUnauthorized, err.Error())
+			utils.WriteAPIErrorCtx(r.Context(), w, http.StatusForbidden, types.APIErrorCodeUnauthorized, err.Error())
 		default:
-			utils.InvalidRequestError(err).Write(w)
+			utils.InvalidRequestError(err).WriteCtx(r.Context(), w)
 		}
 		return
 	}
 
 	record, resp, err := s.registry.Register(challenge.Request, clientIP, req.ReportedIP)
 	if err != nil {
-		writeAPIErrorResponse(w, err)
+		writeAPIErrorResponse(r.Context(), w, err)
 		return
 	}
 	dnsCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), defaultClaimTimeout)
@@ -316,12 +316,12 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(r.Context()), defaultClaimTimeout)
 		removed.deleteDNS(cleanupCtx, s.acmeManager, false)
 		cleanupCancel()
-		writeAPIErrorResponse(w, err)
+		writeAPIErrorResponse(r.Context(), w, err)
 		return
 	}
 	s.registry.promoteECHDNS(record, s.acmeManager, s.config().SNIPort)
 
-	utils.WriteAPIData(w, http.StatusCreated, resp)
+	utils.WriteAPIDataCtx(r.Context(), w, http.StatusCreated, resp)
 }
 
 func (s *Server) handleRegisterChallenge(w http.ResponseWriter, r *http.Request) {
@@ -354,25 +354,25 @@ func (s *Server) handleRegisterChallenge(w http.ResponseWriter, r *http.Request)
 	}).String()
 
 	if strings.TrimSpace(req.HopToken) != "" && s.overlay == nil {
-		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
 		return
 	}
 	if req.UDPEnabled && !s.supportsUDP() {
-		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
 		return
 	}
 	if req.TCPEnabled && !s.supportsTCP() {
-		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
 		return
 	}
 
 	resp, err := s.registry.issueRegisterChallenge(req, domain, registerURI, clientIP)
 	if err != nil {
-		writeAPIErrorResponse(w, err)
+		writeAPIErrorResponse(r.Context(), w, err)
 		return
 	}
 
-	utils.WriteAPIData(w, http.StatusCreated, resp)
+	utils.WriteAPIDataCtx(r.Context(), w, http.StatusCreated, resp)
 }
 
 func (s *Server) handleRenew(w http.ResponseWriter, r *http.Request) {
@@ -392,11 +392,11 @@ func (s *Server) handleRenew(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.registry.Renew(req, clientIP)
 	if err != nil {
-		writeAPIErrorResponse(w, err)
+		writeAPIErrorResponse(r.Context(), w, err)
 		return
 	}
 
-	utils.WriteAPIData(w, http.StatusOK, resp)
+	utils.WriteAPIDataCtx(r.Context(), w, http.StatusOK, resp)
 }
 
 func (s *Server) handleUnregister(w http.ResponseWriter, r *http.Request) {
@@ -410,25 +410,25 @@ func (s *Server) handleUnregister(w http.ResponseWriter, r *http.Request) {
 	}
 	record, err := s.registry.Unregister(req)
 	if err != nil {
-		writeAPIErrorResponse(w, err)
+		writeAPIErrorResponse(r.Context(), w, err)
 		return
 	}
 	dnsCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), defaultClaimTimeout)
 	record.deleteDNS(dnsCtx, s.acmeManager, true)
 	cancel()
 
-	utils.WriteAPIData(w, http.StatusOK, map[string]any{})
+	utils.WriteAPIDataCtx(r.Context(), w, http.StatusOK, map[string]any{})
 }
 
 func (s *Server) handleHop(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost, http.MethodDelete:
 	default:
-		utils.MethodNotAllowedError().Write(w)
+		utils.MethodNotAllowedError().WriteCtx(r.Context(), w)
 		return
 	}
 	if s.overlay == nil || s.relaySet == nil {
-		utils.WriteAPIError(w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusServiceUnavailable, types.APIErrorCodeFeatureUnavailable, errFeatureUnavailable.Error())
 		return
 	}
 	if _, ok := s.extractAllowedClientIP(w, r); !ok {
@@ -441,16 +441,16 @@ func (s *Server) handleHop(w http.ResponseWriter, r *http.Request) {
 	}
 	route, err := auth.VerifyHopRoute(r.Method, route)
 	if errors.Is(err, auth.ErrHopRouteSignatureInvalid) {
-		utils.WriteAPIError(w, http.StatusForbidden, types.APIErrorCodeUnauthorized, "hop route signature is invalid")
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusForbidden, types.APIErrorCodeUnauthorized, "hop route signature is invalid")
 		return
 	}
 	if err != nil {
-		utils.InvalidRequestError(err).Write(w)
+		utils.InvalidRequestError(err).WriteCtx(r.Context(), w)
 		return
 	}
 	cfg := s.config()
 	if route.RelayURL != cfg.PortalURL {
-		utils.WriteAPIError(w, http.StatusForbidden, types.APIErrorCodeUnauthorized, "hop route relay url does not match receiving relay")
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusForbidden, types.APIErrorCodeUnauthorized, "hop route relay url does not match receiving relay")
 		return
 	}
 	if r.Method == http.MethodDelete {
@@ -458,36 +458,36 @@ func (s *Server) handleHop(w http.ResponseWriter, r *http.Request) {
 		dnsCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), defaultClaimTimeout)
 		record.deleteDNS(dnsCtx, s.acmeManager, true)
 		cancel()
-		utils.WriteAPIData(w, http.StatusOK, map[string]any{})
+		utils.WriteAPIDataCtx(r.Context(), w, http.StatusOK, map[string]any{})
 		return
 	}
 
 	now := time.Now().UTC()
 	if !route.ExpiresAt.UTC().After(now) {
-		utils.InvalidRequestError(errors.New("route expiry must be in the future")).Write(w)
+		utils.InvalidRequestError(errors.New("route expiry must be in the future")).WriteCtx(r.Context(), w)
 		return
 	}
 	forwardRelay, err := auth.VerifyRelayDescriptor(route.ForwardRelay)
 	if err != nil {
-		utils.InvalidRequestError(fmt.Errorf("forward relay: %w", err)).Write(w)
+		utils.InvalidRequestError(fmt.Errorf("forward relay: %w", err)).WriteCtx(r.Context(), w)
 		return
 	}
 	if !forwardRelay.HasOverlayPeer() {
-		utils.InvalidRequestError(errors.New("forward relay wireguard overlay metadata is required")).Write(w)
+		utils.InvalidRequestError(errors.New("forward relay wireguard overlay metadata is required")).WriteCtx(r.Context(), w)
 		return
 	}
 	route.ForwardRelay = forwardRelay
 	if err := s.relaySet.InsertAnnounced(forwardRelay, now); err != nil {
-		utils.InvalidRequestError(fmt.Errorf("forward relay: %w", err)).Write(w)
+		utils.InvalidRequestError(fmt.Errorf("forward relay: %w", err)).WriteCtx(r.Context(), w)
 		return
 	}
 	if err := s.overlay.Sync(s.relaySet.OverlayPeerDescriptor()); err != nil {
-		utils.WriteAPIError(w, http.StatusInternalServerError, types.APIErrorCodeInternal, err.Error())
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusInternalServerError, types.APIErrorCodeInternal, err.Error())
 		return
 	}
 	record, err := s.registry.RegisterHopRoute(&route, now)
 	if err != nil {
-		writeAPIErrorResponse(w, err)
+		writeAPIErrorResponse(r.Context(), w, err)
 		return
 	}
 	dnsCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), defaultClaimTimeout)
@@ -501,7 +501,7 @@ func (s *Server) handleHop(w http.ResponseWriter, r *http.Request) {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(r.Context()), defaultClaimTimeout)
 		removed.deleteDNS(cleanupCtx, s.acmeManager, false)
 		cleanupCancel()
-		writeAPIErrorResponse(w, err)
+		writeAPIErrorResponse(r.Context(), w, err)
 		return
 	}
 	s.registry.promoteECHDNS(record, s.acmeManager, cfg.SNIPort)
@@ -509,11 +509,11 @@ func (s *Server) handleHop(w http.ResponseWriter, r *http.Request) {
 	if record.isPublicEntry() {
 		accessToken, err = s.registry.issueLeaseAccessToken(record, now)
 		if err != nil {
-			writeAPIErrorResponse(w, &apiError{types.APIErrorCodeInternal, err.Error(), http.StatusInternalServerError})
+			writeAPIErrorResponse(r.Context(), w, &apiError{types.APIErrorCodeInternal, err.Error(), http.StatusInternalServerError})
 			return
 		}
 	}
-	utils.WriteAPIData(w, http.StatusOK, types.HopRouteResponse{
+	utils.WriteAPIDataCtx(r.Context(), w, http.StatusOK, types.HopRouteResponse{
 		AccessToken: accessToken,
 		SNIPort:     cfg.SNIPort,
 	})
@@ -524,7 +524,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.ProtoMajor != 1 {
-		utils.WriteAPIError(w, http.StatusHTTPVersionNotSupported, types.APIErrorCodeHTTP11Only, "reverse connect requires HTTP/1.1")
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusHTTPVersionNotSupported, types.APIErrorCodeHTTP11Only, "reverse connect requires HTTP/1.1")
 		return
 	}
 
@@ -536,19 +536,19 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 
 	lease, err := s.registry.admitLeaseByToken(token, false)
 	if err != nil {
-		writeAPIErrorResponse(w, err)
+		writeAPIErrorResponse(r.Context(), w, err)
 		return
 	}
 
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
-		utils.WriteAPIError(w, http.StatusInternalServerError, types.APIErrorCodeHijackUnsupported, "hijacking is not supported")
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusInternalServerError, types.APIErrorCodeHijackUnsupported, "hijacking is not supported")
 		return
 	}
 
 	conn, rw, err := hijacker.Hijack()
 	if err != nil {
-		utils.WriteAPIError(w, http.StatusInternalServerError, types.APIErrorCodeHijackFailed, err.Error())
+		utils.WriteAPIErrorCtx(r.Context(), w, http.StatusInternalServerError, types.APIErrorCodeHijackFailed, err.Error())
 		return
 	}
 
@@ -589,6 +589,6 @@ func (s *Server) extractAllowedClientIP(w http.ResponseWriter, r *http.Request) 
 	if !s.registry.policy.IPFilter().IsIPBanned(clientIP) {
 		return clientIP, true
 	}
-	utils.WriteAPIError(w, http.StatusForbidden, types.APIErrorCodeIPBanned, "request denied because source IP is banned")
+	utils.WriteAPIErrorCtx(r.Context(), w, http.StatusForbidden, types.APIErrorCodeIPBanned, "request denied because source IP is banned")
 	return "", false
 }
