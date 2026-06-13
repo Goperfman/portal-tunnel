@@ -118,6 +118,7 @@ func (m *mitmManager) probeTLSPassthrough(ctx context.Context) (MITMProbeReport,
 		InsecureSkipVerify:             true,
 		MinVersion:                     keyless.MinTLSVersion(len(lease.echConfigList) > 0),
 		EncryptedClientHelloConfigList: bytes.Clone(lease.echConfigList),
+		CurvePreferences:               utils.CurvePreferences(l.pqcEnabled),
 	}
 
 	dialer := &tls.Dialer{

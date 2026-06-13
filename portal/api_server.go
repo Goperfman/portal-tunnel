@@ -57,6 +57,8 @@ func writeAPIErrorResponse(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) newAPIServer(listener net.Listener, apiMux http.Handler, apiTLS keyless.TLSMaterialConfig) (net.Listener, *http.Server, io.Closer, error) {
+	apiTLS.PQSEnabled = s.config().PQSEnabled
+
 	var keylessSignerHandler http.Handler
 	if len(apiTLS.KeyPEM) > 0 {
 		signer, err := keyless.NewSigner(apiTLS.KeyPEM)

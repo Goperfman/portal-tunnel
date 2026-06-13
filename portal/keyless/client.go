@@ -15,7 +15,7 @@ import (
 	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
-func BuildClientTLSConfig(relayURL, hostname string, echKeys []tls.EncryptedClientHelloKey, headers func() http.Header) (*tls.Config, ioCloser, error) {
+func BuildClientTLSConfig(relayURL, hostname string, echKeys []tls.EncryptedClientHelloKey, headers func() http.Header, pqc bool) (*tls.Config, ioCloser, error) {
 	normalizedRelayURL, err := utils.NormalizeRelayURL(relayURL)
 	if err != nil {
 		return nil, nil, err
@@ -30,7 +30,7 @@ func BuildClientTLSConfig(relayURL, hostname string, echKeys []tls.EncryptedClie
 		return nil, nil, errors.New("relay hostname is required")
 	}
 
-	certPEM, rootCAPEM, err := ResolveMaterials(context.Background(), normalizedRelayURL, serverName)
+	certPEM, rootCAPEM, err := ResolveMaterials(context.Background(), normalizedRelayURL, serverName, pqc)
 	if err != nil {
 		return nil, nil, fmt.Errorf("prepare keyless materials: %w", err)
 	}
@@ -64,6 +64,7 @@ func BuildClientTLSConfig(relayURL, hostname string, echKeys []tls.EncryptedClie
 		_ = remoteSigner.Close()
 		return nil, nil, fmt.Errorf("create keyless tls config: %w", err)
 	}
+	tlsConfig.CurvePreferences = utils.CurvePreferences(pqc)
 	return tlsConfig, remoteSigner, nil
 }
 
@@ -71,8 +72,8 @@ type ioCloser interface {
 	Close() error
 }
 
-func ResolveMaterials(ctx context.Context, endpoint, serverName string) ([]byte, []byte, error) {
-	chainPEM, err := utils.FetchEndpointCertificateChain(ctx, endpoint, serverName)
+func ResolveMaterials(ctx context.Context, endpoint, serverName string, pqc bool) ([]byte, []byte, error) {
+	chainPEM, err := utils.FetchEndpointCertificateChain(ctx, endpoint, serverName, pqc)
 	if err != nil {
 		return nil, nil, fmt.Errorf("fetch signer certificate chain: %w", err)
 	}

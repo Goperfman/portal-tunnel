@@ -66,6 +66,7 @@ type relayServerConfig struct {
 	X402Enabled       bool
 	X402Testnet       bool
 	X402PayTo         string
+	PQSEnabled        bool
 
 	ACMEDNSProvider    string
 	ENSGaslessEnabled  bool
@@ -109,6 +110,7 @@ func runServeCommand(args []string, tuning *utils.RuntimeTuning) error {
 	utils.BoolFlagEnv(fs, &cfg.X402Enabled, "x402-enabled", false, "enable relay-owned Sui x402 facilitator endpoints under /api/x402 for future control-plane payments", "X402_ENABLED")
 	utils.BoolFlagEnv(fs, &cfg.X402Testnet, "x402-testnet", false, "use Sui testnet for relay-owned x402 facilitator payments", "X402_TESTNET")
 	utils.StringFlagEnv(fs, &cfg.X402PayTo, "x402-pay-to", "", "Sui payment recipient address for relay-owned control-plane x402 resources", "X402_PAY_TO")
+	utils.BoolFlagEnv(fs, &cfg.PQSEnabled, "pqc", false, "enable post-quantum X25519MLKEM768 TLS key exchange", "PQC")
 
 	utils.StringFlagEnv(fs, &cfg.ACMEDNSProvider, "acme-dns-provider", "", "DNS provider for managed DNS-01/A-record sync, ECH HTTPS records, and ENS gasless DNSSEC/TXT automation (cloudflare|gcloud|hetzner|njalla|route53|vultr); leave empty to use manual fullchain.pem/privatekey.pem from IDENTITY_PATH", "ACME_DNS_PROVIDER")
 	utils.BoolFlagEnv(fs, &cfg.ENSGaslessEnabled, "ens-gasless-enabled", false, "enable ENS gasless DNS import automation for the managed DNS zone and lease hostnames", "ENS_GASLESS_ENABLED")
@@ -158,6 +160,7 @@ func runServeCommand(args []string, tuning *utils.RuntimeTuning) error {
 		Bool("x402_facilitator_enabled", cfg.X402Enabled).
 		Bool("x402_testnet", cfg.X402Testnet).
 		Bool("x402_pay_to_configured", strings.TrimSpace(cfg.X402PayTo) != "").
+		Bool("pqc_enabled", cfg.PQSEnabled).
 		Str("acme_dns_provider", cfg.ACMEDNSProvider).
 		Bool("ens_gasless_enabled", cfg.ENSGaslessEnabled).
 		Msg("configured relay server")
@@ -188,6 +191,7 @@ func runServer(ctx context.Context, cfg relayServerConfig, tuning *utils.Runtime
 		X402Enabled:       cfg.X402Enabled,
 		X402Testnet:       cfg.X402Testnet,
 		X402PayTo:         cfg.X402PayTo,
+		PQSEnabled:        cfg.PQSEnabled,
 		ACME: acme.Config{
 			KeyDir:             cfg.IdentityPath,
 			DNSProvider:        cfg.ACMEDNSProvider,

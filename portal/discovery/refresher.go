@@ -30,15 +30,17 @@ type Refresher struct {
 	overlay                OverlayRuntime
 	directRecoveryFailures int
 	lastAnnounceSuccess    map[string]bool
+	pqcEnabled             bool
 }
 
-func NewRefresher(relaySet *RelaySet, overlay OverlayRuntime) *Refresher {
+func NewRefresher(relaySet *RelaySet, overlay OverlayRuntime, pqc bool) *Refresher {
 	return &Refresher{
 		relaySet: relaySet,
 		httpClient: utils.NewHTTPClient(
 			utils.WithHTTPTLSConfig(&tls.Config{
-				MinVersion: tls.VersionTLS12,
-				NextProtos: []string{"http/1.1"},
+				MinVersion:       tls.VersionTLS12,
+				NextProtos:       []string{"http/1.1"},
+				CurvePreferences: utils.CurvePreferences(pqc),
 			}),
 			utils.WithoutHTTP2(),
 			utils.WithHTTPTimeout(defaultRequestTimeout),
@@ -46,6 +48,7 @@ func NewRefresher(relaySet *RelaySet, overlay OverlayRuntime) *Refresher {
 		overlay:                overlay,
 		directRecoveryFailures: defaultRecoveryFailures,
 		lastAnnounceSuccess:    make(map[string]bool),
+		pqcEnabled:             pqc,
 	}
 }
 
@@ -142,7 +145,7 @@ func (r *Refresher) refreshHTTPS(ctx context.Context) error {
 		client := r.httpClient
 		var closeClient func()
 		if utils.IsLocalRelayHost(baseURL.Hostname()) {
-			_, localClient, transport, err := utils.NewHTTPTLSClient(ctx, baseURL, defaultRequestTimeout)
+			_, localClient, transport, err := utils.NewHTTPTLSClient(ctx, baseURL, defaultRequestTimeout, r.pqcEnabled)
 			if err != nil {
 				if recoveryFailures > 0 {
 					r.logDiscoveryFailure(relayURL, relayURL, recoveryFailures, err)

@@ -53,7 +53,7 @@ func (l *listener) initHTTPTransport(ctx context.Context) error {
 	bootstrapCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout+defaultHandshakeTimeout)
 	defer cancel()
 
-	tlsConfig, httpClient, httpTransport, err := utils.NewHTTPTLSClient(bootstrapCtx, l.relayURL, l.requestTimeout)
+	tlsConfig, httpClient, httpTransport, err := utils.NewHTTPTLSClient(bootstrapCtx, l.relayURL, l.requestTimeout, l.pqcEnabled)
 	if err != nil {
 		return err
 	}
@@ -302,7 +302,7 @@ func (l *listener) registerHopRoutes(ctx context.Context, expiresAt time.Time, r
 		}
 
 		bootstrapCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout+defaultHandshakeTimeout)
-		_, client, transport, err := utils.NewHTTPTLSClient(bootstrapCtx, relayURL, l.requestTimeout)
+		_, client, transport, err := utils.NewHTTPTLSClient(bootstrapCtx, relayURL, l.requestTimeout, l.pqcEnabled)
 		cancel()
 		if err != nil {
 			return "", 0, err
@@ -346,7 +346,7 @@ func (l *listener) unregisterHopRoutes(ctx context.Context, routes []types.HopRo
 		}
 
 		bootstrapCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout+defaultHandshakeTimeout)
-		_, client, transport, err := utils.NewHTTPTLSClient(bootstrapCtx, relayURL, l.requestTimeout)
+		_, client, transport, err := utils.NewHTTPTLSClient(bootstrapCtx, relayURL, l.requestTimeout, l.pqcEnabled)
 		cancel()
 		if err != nil {
 			unregisterErr = errors.Join(unregisterErr, err)

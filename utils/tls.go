@@ -17,7 +17,17 @@ import (
 	"time"
 )
 
-func NewHTTPTLSClient(ctx context.Context, relayURL *url.URL, timeout time.Duration) (*tls.Config, *http.Client, *http.Transport, error) {
+// CurvePreferences returns the TLS 1.3 key-exchange groups to advertise.
+// When pqc is true, X25519MLKEM768 is preferred for post-quantum hybrid
+// protection; otherwise only classic groups are used.
+func CurvePreferences(pqc bool) []tls.CurveID {
+	if pqc {
+		return []tls.CurveID{tls.X25519MLKEM768, tls.X25519, tls.CurveP256}
+	}
+	return []tls.CurveID{tls.X25519, tls.CurveP256}
+}
+
+func NewHTTPTLSClient(ctx context.Context, relayURL *url.URL, timeout time.Duration, pqc bool) (*tls.Config, *http.Client, *http.Transport, error) {
 	if relayURL == nil {
 		return nil, nil, nil, errors.New("relay url is required")
 	}
@@ -29,7 +39,7 @@ func NewHTTPTLSClient(ctx context.Context, relayURL *url.URL, timeout time.Durat
 
 	var rootCAs *x509.CertPool
 	if IsLocalRelayHost(serverName) {
-		rootCAPEM, err := FetchEndpointCertificateChain(ctx, relayURL.String(), serverName)
+		rootCAPEM, err := FetchEndpointCertificateChain(ctx, relayURL.String(), serverName, pqc)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("bootstrap localhost relay trust: %w", err)
 		}
@@ -40,10 +50,11 @@ func NewHTTPTLSClient(ctx context.Context, relayURL *url.URL, timeout time.Durat
 	}
 
 	rawTLSConfig := &tls.Config{
-		MinVersion: tls.VersionTLS12,
-		ServerName: serverName,
-		RootCAs:    rootCAs,
-		NextProtos: []string{"http/1.1"},
+		MinVersion:       tls.VersionTLS12,
+		ServerName:       serverName,
+		RootCAs:          rootCAs,
+		NextProtos:       []string{"http/1.1"},
+		CurvePreferences: CurvePreferences(pqc),
 	}
 	httpClient := NewHTTPClient(
 		WithHTTPTLSConfig(rawTLSConfig), // will be cloned internally
@@ -53,7 +64,7 @@ func NewHTTPTLSClient(ctx context.Context, relayURL *url.URL, timeout time.Durat
 	return rawTLSConfig, httpClient, mustTransportOf(httpClient), nil
 }
 
-func FetchEndpointCertificateChain(ctx context.Context, endpoint, serverName string) ([]byte, error) {
+func FetchEndpointCertificateChain(ctx context.Context, endpoint, serverName string, pqc bool) ([]byte, error) {
 	raw := strings.TrimSpace(endpoint)
 	if raw == "" {
 		return nil, errors.New("endpoint is required")
@@ -93,6 +104,7 @@ func FetchEndpointCertificateChain(ctx context.Context, endpoint, serverName str
 		ServerName:         serverName,
 		InsecureSkipVerify: IsLocalRelayHost(host),
 		NextProtos:         []string{"http/1.1"},
+		CurvePreferences:   CurvePreferences(pqc),
 	})
 	defer tlsConn.Close()
 	if err := tlsConn.HandshakeContext(ctx); err != nil {

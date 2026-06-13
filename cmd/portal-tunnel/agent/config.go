@@ -54,6 +54,7 @@ type TunnelConfig struct {
 	MultiHopDepth   int               `koanf:"multi_hop_depth"`
 	BanMITM         *bool             `koanf:"ban_mitm"`
 	MaxActiveRelays int               `koanf:"max_active_relays"`
+	PQSEnabled      *bool             `koanf:"pqc"`
 	Description     string            `koanf:"description"`
 	Tags            []string          `koanf:"tags"`
 	Owner           string            `koanf:"owner"`
@@ -209,6 +210,9 @@ func tunnelConfigDocumentMap(cfg TunnelConfig) map[string]any {
 	}
 	if cfg.MaxActiveRelays != 0 {
 		out["max_active_relays"] = cfg.MaxActiveRelays
+	}
+	if cfg.PQSEnabled != nil {
+		out["pqc"] = *cfg.PQSEnabled
 	}
 	addStringDocumentField(out, "description", cfg.Description)
 	addStringSliceDocumentField(out, "tags", cfg.Tags)

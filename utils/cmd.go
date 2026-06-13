@@ -40,6 +40,12 @@ func resolveBoolEnv(fallback bool, envNames ...string) bool {
 		if raw == "" {
 			continue
 		}
+		switch strings.ToLower(raw) {
+		case "true", "1", "t", "yes", "y", "on":
+			return true
+		case "false", "0", "f", "no", "n", "off":
+			return false
+		}
 		parsed, err := strconv.ParseBool(raw)
 		if err != nil {
 			return fallback

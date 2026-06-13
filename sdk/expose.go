@@ -58,6 +58,7 @@ type ExposeConfig struct {
 	Metadata        types.LeaseMetadata
 	X402PayTo       string
 	X402Testnet     bool
+	PQSEnabled      bool
 }
 
 func (cfg ExposeConfig) snapshot() ExposeConfig {
@@ -168,7 +169,7 @@ func Expose(ctx context.Context, cfg ExposeConfig) (*Exposure, error) {
 	}
 
 	if cfg.Discovery || len(multiHop) > 0 || cfg.MultiHopDepth > 1 {
-		refresher := discovery.NewRefresher(exposure.relaySet, nil)
+		refresher := discovery.NewRefresher(exposure.relaySet, nil, cfg.PQSEnabled)
 		if err := refresher.Refresh(ctx, nil); err != nil {
 			_ = exposure.Close()
 			return nil, fmt.Errorf("discover relays: %w", err)
@@ -656,7 +657,7 @@ func (e *Exposure) Close() error {
 }
 
 func (e *Exposure) runDiscoveryLoop(ctx context.Context) {
-	refresher := discovery.NewRefresher(e.relaySet, nil)
+	refresher := discovery.NewRefresher(e.relaySet, nil, e.Config().PQSEnabled)
 	ticker := time.NewTicker(discovery.DiscoveryPollInterval)
 	defer ticker.Stop()
 
@@ -742,6 +743,7 @@ func (e *Exposure) reconcileRelayListeners(failOnError bool) error {
 			UDPEnabled: cfg.UDPEnabled,
 			TCPEnabled: cfg.TCPEnabled,
 			BanMITM:    cfg.BanMITM,
+			PQSEnabled: cfg.PQSEnabled,
 			Metadata: func() types.LeaseMetadata {
 				return e.Config().Metadata
 			},

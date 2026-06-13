@@ -59,6 +59,7 @@ type ServerConfig struct {
 	X402Enabled       bool
 	X402Testnet       bool
 	X402PayTo         string
+	PQSEnabled        bool
 	ACME              acme.Config
 }
 
@@ -682,7 +683,7 @@ func (s *Server) newQUICBackhaulListener(apiTLS keyless.TLSMaterialConfig) (*qui
 	if err != nil {
 		return nil, fmt.Errorf("parse quic backhaul tls keypair: %w", err)
 	}
-	return transport.ListenQUICBackhaul(s.config().SNIListenAddr, tlsCert)
+	return transport.ListenQUICBackhaul(s.config().SNIListenAddr, tlsCert, s.config().PQSEnabled)
 }
 
 func (s *Server) runQUICBackhaulListener() error {
@@ -792,7 +793,7 @@ func (s *Server) runRelayDiscoveryLoop(ctx context.Context) error {
 		<-ctx.Done()
 		return nil
 	}
-	refresher := discovery.NewRefresher(s.relaySet, s.overlay)
+	refresher := discovery.NewRefresher(s.relaySet, s.overlay, s.config().PQSEnabled)
 	ticker := time.NewTicker(discovery.DiscoveryPollInterval)
 	defer ticker.Stop()
 

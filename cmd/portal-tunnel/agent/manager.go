@@ -697,6 +697,10 @@ func (t *managedTunnel) runOnce(ctx context.Context) error {
 	if cfg.BanMITM != nil {
 		banMITM = *cfg.BanMITM
 	}
+	pqcEnabled := false
+	if cfg.PQSEnabled != nil {
+		pqcEnabled = *cfg.PQSEnabled
+	}
 	exposure, err := sdk.Expose(ctx, sdk.ExposeConfig{
 		RelayURLs:       append([]string(nil), cfg.RelayURLs...),
 		Discovery:       discovery,
@@ -711,6 +715,7 @@ func (t *managedTunnel) runOnce(ctx context.Context) error {
 		MultiHopDepth:   cfg.MultiHopDepth,
 		BanMITM:         banMITM,
 		MaxActiveRelays: cfg.MaxActiveRelays,
+		PQSEnabled:      pqcEnabled,
 		Metadata:        metadataFromTunnelConfig(cfg),
 		X402PayTo:       cfg.X402PayTo,
 		X402Testnet:     cfg.X402Testnet,

@@ -8,6 +8,8 @@ import (
 	"net/http"
 
 	keylesstls "github.com/gosuda/keyless_tls/keyless"
+
+	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
 type TLSMaterialConfig struct {
@@ -15,6 +17,7 @@ type TLSMaterialConfig struct {
 	CertPEM                  []byte
 	KeyPEM                   []byte
 	EncryptedClientHelloKeys []tls.EncryptedClientHelloKey
+	PQSEnabled               bool
 }
 
 type RemoteSignerConfig struct {
@@ -49,6 +52,7 @@ func AttachToHTTPServer(server *http.Server, cfg TLSMaterialConfig) (io.Closer, 
 		if err != nil {
 			return nil, err
 		}
+		server.TLSConfig.CurvePreferences = utils.CurvePreferences(cfg.PQSEnabled)
 		return remoteSigner, nil
 	}
 
@@ -63,6 +67,7 @@ func AttachToHTTPServer(server *http.Server, cfg TLSMaterialConfig) (io.Closer, 
 		NextProtos:               []string{"http/1.1"},
 		Certificates:             []tls.Certificate{cert},
 		EncryptedClientHelloKeys: cfg.EncryptedClientHelloKeys,
+		CurvePreferences:         utils.CurvePreferences(cfg.PQSEnabled),
 	}
 	return nil, nil
 }

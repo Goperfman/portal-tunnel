@@ -81,6 +81,7 @@ type exposeFlags struct {
 	maxActiveRelays int
 	multiHopDepth   int
 	metricsAddr     string
+	pqcEnabled      bool
 }
 
 func runExposeCommand(args []string, tuning *utils.RuntimeTuning) error {
@@ -110,6 +111,7 @@ func runExposeCommand(args []string, tuning *utils.RuntimeTuning) error {
 	utils.IntFlagEnv(fs, &flags.maxActiveRelays, "max-active-relays", 3, nil, "Maximum number of auto-selected relays to keep connected; explicit --relays are always included", "MAX_ACTIVE_RELAYS")
 	utils.IntFlagEnv(fs, &flags.multiHopDepth, "multi-hop-depth", 0, nil, "Automatically select one multi-hop route with this hop count; 0 or 1 disables multi-hop", "MULTI_HOP_DEPTH")
 	utils.StringFlag(fs, &flags.metricsAddr, "metrics-addr", "", "Optional address (host:port) to serve Prometheus /metrics. Empty = disabled.")
+	utils.BoolFlagEnv(fs, &flags.pqcEnabled, "pqc", false, "enable post-quantum X25519MLKEM768 TLS key exchange", "PQC")
 
 	if err := utils.ParseFlagSet(fs, args, printExposeUsage); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -218,6 +220,7 @@ func runExposeCommand(args []string, tuning *utils.RuntimeTuning) error {
 		},
 		X402PayTo:   flags.x402PayTo,
 		X402Testnet: flags.x402Testnet,
+		PQSEnabled:  flags.pqcEnabled,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to start relays: %w", err)

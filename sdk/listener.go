@@ -32,6 +32,7 @@ type listenerConfig struct {
 	UDPEnabled       bool
 	TCPEnabled       bool
 	BanMITM          bool
+	PQSEnabled       bool
 	Metadata         func() types.LeaseMetadata
 	DialTimeout      time.Duration
 	RequestTimeout   time.Duration
@@ -58,6 +59,7 @@ type listener struct {
 	relaySet       *discovery.RelaySet
 	udpEnabled     bool
 	tcpEnabled     bool
+	pqcEnabled     bool
 	dialTimeout    time.Duration
 	requestTimeout time.Duration
 	readyTarget    int
@@ -111,6 +113,7 @@ func newListener(ctx context.Context, route discovery.Route, cfg listenerConfig)
 		relaySet:       cfg.relaySet,
 		udpEnabled:     cfg.UDPEnabled,
 		tcpEnabled:     cfg.TCPEnabled,
+		pqcEnabled:     cfg.PQSEnabled,
 		dialTimeout:    dialTimeout,
 		requestTimeout: requestTimeout,
 		readyTarget:    readyTarget,
@@ -829,7 +832,7 @@ func (l *listener) registerAndConfigure(ctx context.Context) error {
 		}
 		headers.Set(types.HeaderAccessToken, accessToken)
 		return headers
-	})
+	}, l.pqcEnabled)
 	if err != nil {
 		_ = l.unregisterLease(context.Background(), resp.AccessToken, hopRoutes)
 		if tenantTLSCloser != nil {

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
+
+	"github.com/gosuda/portal-tunnel/v2/utils"
 )
 
 const (
@@ -34,8 +36,8 @@ type QUICBackhaulControl struct {
 	stream      *quic.Stream
 }
 
-func ListenQUICBackhaul(addr string, cert tls.Certificate) (*quic.Listener, error) {
-	listener, err := quic.ListenAddr(addr, quicBackhaulServerTLSConfig(cert), quicBackhaulConfig())
+func ListenQUICBackhaul(addr string, cert tls.Certificate, pqc bool) (*quic.Listener, error) {
+	listener, err := quic.ListenAddr(addr, quicBackhaulServerTLSConfig(cert, pqc), quicBackhaulConfig())
 	if err != nil {
 		return nil, fmt.Errorf("listen quic backhaul: %w", err)
 	}
@@ -140,19 +142,21 @@ func (c *QUICBackhaulControl) Reject(code, reason string) error {
 	return errors.Join(err, c.conn.CloseWithError(1, reason))
 }
 
-func quicBackhaulServerTLSConfig(cert tls.Certificate) *tls.Config {
+func quicBackhaulServerTLSConfig(cert tls.Certificate, pqc bool) *tls.Config {
 	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		NextProtos:   []string{quicBackhaulALPN},
-		MinVersion:   tls.VersionTLS13,
+		Certificates:     []tls.Certificate{cert},
+		NextProtos:       []string{quicBackhaulALPN},
+		MinVersion:       tls.VersionTLS13,
+		CurvePreferences: utils.CurvePreferences(pqc),
 	}
 }
 
 func quicBackhaulClientTLSConfig(base *tls.Config) *tls.Config {
 	if base == nil {
 		return &tls.Config{
-			NextProtos: []string{quicBackhaulALPN},
-			MinVersion: tls.VersionTLS13,
+			NextProtos:       []string{quicBackhaulALPN},
+			MinVersion:       tls.VersionTLS13,
+			CurvePreferences: utils.CurvePreferences(false),
 		}
 	}
 
