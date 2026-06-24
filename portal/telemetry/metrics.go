@@ -17,7 +17,7 @@ import (
 const MaxRelayLabelCardinality = 64
 
 var relayBudget = struct {
-	mu   sync.Mutex
+	mu   sync.RWMutex
 	seen map[string]struct{}
 }{
 	seen: make(map[string]struct{}),
@@ -26,8 +26,20 @@ var relayBudget = struct {
 // BoundedRelay limits relay label cardinality to MaxRelayLabelCardinality.
 // Excess URLs are returned as "other".
 func BoundedRelay(url string) string {
+	relayBudget.mu.RLock()
+	if _, ok := relayBudget.seen[url]; ok {
+		relayBudget.mu.RUnlock()
+		return url
+	}
+	if len(relayBudget.seen) >= MaxRelayLabelCardinality {
+		relayBudget.mu.RUnlock()
+		return "other"
+	}
+	relayBudget.mu.RUnlock()
+
 	relayBudget.mu.Lock()
 	defer relayBudget.mu.Unlock()
+	// Double-check after taking the write lock.
 	if _, ok := relayBudget.seen[url]; ok {
 		return url
 	}

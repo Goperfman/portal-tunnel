@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -40,15 +41,15 @@ type RelayDatagram struct {
 	identityKey string
 	port        int
 	session     *datagramSession
-	flowTable   map[uint32]flowState
+	flowTable   map[uint32]*flowState
 	addrIndex   map[netip.AddrPort]uint32
-	nextFlow    uint32
+	nextFlow    atomic.Uint32
 
 	conn *net.UDPConn
 
 	cancel    context.CancelFunc
 	closeOnce sync.Once
-	mu        sync.Mutex
+	mu        sync.RWMutex
 }
 
 func NewRelayDatagram(identityKey string, port int) *RelayDatagram {
@@ -62,10 +63,10 @@ func NewRelayDatagram(identityKey string, port int) *RelayDatagram {
 				Str("identity_key", identityKey).
 				Msg("quic backhaul receive loop ended")
 		}),
-		flowTable: make(map[uint32]flowState),
+		flowTable: make(map[uint32]*flowState),
 		addrIndex: make(map[netip.AddrPort]uint32),
-		nextFlow:  1,
 	}
+	d.nextFlow.Store(1)
 	go d.runDispatchLoop()
 	go d.runCleanupLoop()
 	return d
@@ -133,21 +134,30 @@ func (d *RelayDatagram) BindBackhaul(conn *quic.Conn) error {
 func (d *RelayDatagram) touchFlow(addr netip.AddrPort) uint32 {
 	now := time.Now()
 
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
+	d.mu.RLock()
 	if id, ok := d.addrIndex[addr]; ok {
 		if flow, exists := d.flowTable[id]; exists {
 			flow.lastSeen = now
-			d.flowTable[id] = flow
+			d.mu.RUnlock()
+			return id
+		}
+	}
+	d.mu.RUnlock()
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	// Double-check after taking the write lock.
+	if id, ok := d.addrIndex[addr]; ok {
+		if flow, exists := d.flowTable[id]; exists {
+			flow.lastSeen = now
 			return id
 		}
 		delete(d.addrIndex, addr)
 	}
 
-	id := d.nextFlow
-	d.nextFlow++
-	d.flowTable[id] = flowState{
+	id := d.nextFlow.Add(1)
+	d.flowTable[id] = &flowState{
 		addr:     addr,
 		lastSeen: now,
 	}
@@ -174,17 +184,15 @@ func (d *RelayDatagram) runDispatchLoop() {
 }
 
 func (d *RelayDatagram) dispatch(frame types.DatagramFrame) {
-	d.mu.Lock()
+	d.mu.RLock()
 	flow, ok := d.flowTable[frame.FlowID]
-	if !ok || flow.addr == (netip.AddrPort{}) {
-		d.mu.Unlock()
+	d.mu.RUnlock()
+	if !ok || flow == nil || flow.addr == (netip.AddrPort{}) {
 		return
 	}
 
 	flow.lastSeen = time.Now()
-	d.flowTable[frame.FlowID] = flow
 	addr := flow.addr
-	d.mu.Unlock()
 
 	if _, err := d.conn.WriteToUDPAddrPort(frame.Payload, addr); err != nil {
 		log.Warn().

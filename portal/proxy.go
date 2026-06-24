@@ -13,11 +13,10 @@ import (
 )
 
 type proxy struct {
-	activeConns  atomic.Int64
-	tcpBytes     atomic.Int64
-	tcpLoadMu    sync.Mutex
-	tcpLoadAt    time.Time
-	tcpLoadBytes int64
+	activeConns   atomic.Int64
+	tcpBytes      atomic.Int64
+	tcpLoadAtNano atomic.Int64
+	tcpLoadBytes  atomic.Int64
 }
 
 func (p *proxy) bridge(left, right net.Conn, identityKey string, bpsManager *policy.BPSManager) {
@@ -48,24 +47,25 @@ func (p *proxy) activeConnectionCount() int64 {
 
 func (p *proxy) currentTCPBPS(now time.Time) float64 {
 	totalTCPBytes := p.tcpBytes.Load()
+	nowNano := now.UnixNano()
+	lastNano := p.tcpLoadAtNano.Load()
+	lastBytes := p.tcpLoadBytes.Load()
 
-	p.tcpLoadMu.Lock()
-	defer p.tcpLoadMu.Unlock()
-
-	if p.tcpLoadAt.IsZero() {
-		p.tcpLoadAt = now
-		p.tcpLoadBytes = totalTCPBytes
+	if lastNano == 0 {
+		p.tcpLoadAtNano.Store(nowNano)
+		p.tcpLoadBytes.Store(totalTCPBytes)
 		return 0
 	}
 
-	if elapsed := now.Sub(p.tcpLoadAt); elapsed > 0 {
-		tcpTrafficBPS := float64(totalTCPBytes-p.tcpLoadBytes) / elapsed.Seconds()
-		p.tcpLoadAt = now
-		p.tcpLoadBytes = totalTCPBytes
-		return tcpTrafficBPS
+	elapsedSec := float64(nowNano-lastNano) / 1e9
+	if elapsedSec <= 0 {
+		return 0
 	}
 
-	return 0
+	bps := float64(totalTCPBytes-lastBytes) / elapsedSec
+	p.tcpLoadAtNano.Store(nowNano)
+	p.tcpLoadBytes.Store(totalTCPBytes)
+	return bps
 }
 
 var proxyBufPool = utils.GlobalBufferPool(64 * 1024)

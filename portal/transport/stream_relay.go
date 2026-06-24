@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -181,18 +182,19 @@ type relaySession struct {
 	done          chan struct{}
 	elem          *list.Element
 	idleInterval  time.Duration
-	state         sessionState
+	state         atomic.Int32
 	closeOnce     sync.Once
 	mu            sync.Mutex
 }
 
 func newRelaySession(conn net.Conn, idleInterval time.Duration) *relaySession {
-	return &relaySession{
+	s := &relaySession{
 		conn:         conn,
 		idleInterval: idleInterval,
-		state:        sessionIdle,
 		done:         make(chan struct{}),
 	}
+	s.state.Store(int32(sessionIdle))
+	return s
 }
 
 func (s *relaySession) Read(p []byte) (int, error) {
@@ -255,7 +257,7 @@ func (s *relaySession) IsClosed() bool {
 
 func (s *relaySession) StartIdle() {
 	s.mu.Lock()
-	if s.state != sessionIdle || s.keepaliveStop != nil {
+	if s.state.Load() != int32(sessionIdle) || s.keepaliveStop != nil {
 		s.mu.Unlock()
 		return
 	}
@@ -273,17 +275,16 @@ func (s *relaySession) Activate() error {
 }
 
 func (s *relaySession) activateWithMarker(marker byte) error {
-	s.mu.Lock()
-	if s.state != sessionIdle {
-		state := s.state
-		s.mu.Unlock()
+	if !s.state.CompareAndSwap(int32(sessionIdle), int32(sessionClaimed)) {
+		state := s.state.Load()
 		return fmt.Errorf("session not idle: %d", state)
 	}
+
+	s.mu.Lock()
 	stop := s.keepaliveStop
 	done := s.keepaliveDone
 	s.keepaliveStop = nil
 	s.keepaliveDone = nil
-	s.state = sessionClaimed
 	s.mu.Unlock()
 
 	if stop != nil {
@@ -295,7 +296,7 @@ func (s *relaySession) activateWithMarker(marker byte) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.state == sessionClosed {
+	if s.state.Load() == int32(sessionClosed) {
 		return net.ErrClosed
 	}
 	var markerBuf []byte
@@ -321,12 +322,13 @@ func (s *relaySession) activateWithMarker(marker byte) error {
 func (s *relaySession) Close() error {
 	var err error
 	s.closeOnce.Do(func() {
+		s.state.Store(int32(sessionClosed))
+
 		s.mu.Lock()
 		stop := s.keepaliveStop
 		done := s.keepaliveDone
 		s.keepaliveStop = nil
 		s.keepaliveDone = nil
-		s.state = sessionClosed
 		conn := s.conn
 		s.mu.Unlock()
 
@@ -359,7 +361,7 @@ func (s *relaySession) runKeepalive(stop <-chan struct{}, done chan<- struct{}) 
 		}
 
 		s.mu.Lock()
-		if s.state != sessionIdle {
+		if s.state.Load() != int32(sessionIdle) {
 			s.mu.Unlock()
 			return
 		}

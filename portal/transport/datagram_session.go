@@ -21,7 +21,7 @@ type datagramSession struct {
 	onReceiveError func(error)
 	done           chan struct{}
 
-	mu     sync.Mutex
+	mu     sync.RWMutex
 	conn   *quic.Conn
 	closed bool
 }
@@ -70,8 +70,8 @@ func (s *datagramSession) Done() <-chan struct{} {
 }
 
 func (s *datagramSession) hasConnection() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.conn != nil && !s.closed
 }
 
@@ -88,10 +88,10 @@ func (s *datagramSession) Send(flowID uint32, payload []byte) error {
 // SendFrame transmits an already-encoded datagram frame. Callers that build
 // frames with types.EncodeDatagramAppend can use this to avoid re-encoding.
 func (s *datagramSession) SendFrame(frame []byte) error {
-	s.mu.Lock()
+	s.mu.RLock()
 	conn := s.conn
 	closed := s.closed
-	s.mu.Unlock()
+	s.mu.RUnlock()
 
 	if closed {
 		return net.ErrClosed
