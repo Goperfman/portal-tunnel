@@ -17,13 +17,13 @@ import (
 
 const (
 	defaultGCPercent          = 100
-	defaultMemoryLimitPercent = 92
-	defaultAdaptiveInterval   = 10 * time.Second
+	defaultMemoryLimitPercent = 90
+	defaultAdaptiveInterval   = 5 * time.Second
 	defaultBeaverPoolSize     = 64 << 20
-	defaultAdaptiveGOCMin     = 10
-	defaultAdaptiveGOCMax     = 1000
-	defaultAdaptiveGOCStep    = 50
-	defaultTargetHeapRatio    = 0.88
+	defaultAdaptiveGOCMin     = 25
+	defaultAdaptiveGOCMax     = 500
+	defaultAdaptiveGOCStep    = 25
+	defaultTargetHeapRatio    = 0.75
 )
 
 // RuntimeTuningConfig controls process-wide runtime tuning knobs.
@@ -98,7 +98,6 @@ type RuntimeTuning struct {
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 	lastGOGC   atomic.Int64
-	memLimit   atomic.Int64
 }
 
 var activeTuning atomic.Pointer[RuntimeTuning]
@@ -148,23 +147,6 @@ func InitRuntimeTuning(ctx context.Context, cfg RuntimeTuningConfig) (*RuntimeTu
 			debug.SetMemoryLimit(memLimit)
 		}
 	}
-	rt.memLimit.Store(memLimit)
-
-	// Explicitly disable runtime profiling to avoid lock-contention side effects
-	// in hot paths. These are no-ops when off, but make the intent explicit.
-	runtime.SetMutexProfileFraction(0)
-	runtime.SetBlockProfileRate(0)
-
-	// Cap OS thread growth to prevent runaway thread creation under heavy I/O.
-	// Go's default is effectively unlimited; clamp to a generous but bounded
-	// value tied to CPU parallelism.
-	maxThreads := runtime.GOMAXPROCS(0) * 2048
-	if maxThreads < 8192 {
-		maxThreads = 8192
-	} else if maxThreads > 65536 {
-		maxThreads = 65536
-	}
-	debug.SetMaxThreads(maxThreads)
 
 	if cfg.BeaverEnabled {
 		rt.middleware = newBeaverMiddleware(cfg.BeaverPoolSize)
@@ -234,7 +216,7 @@ func (rt *RuntimeTuning) adaptiveLoop(ctx context.Context) {
 }
 
 func (rt *RuntimeTuning) adjustGC(lastStats *runtime.MemStats) {
-	limit := rt.memLimit.Load()
+	limit := memoryLimitFromPercent(rt.cfg.MemoryLimitPercent)
 	if limit <= 0 {
 		return
 	}

@@ -164,10 +164,15 @@ func proxyConnection(ctx context.Context, localAddr string, relayConn net.Conn) 
 	utils.SetTCPQuickACK(localConn)
 	defer localConn.Close()
 
-	var firstErr atomic.Pointer[error]
+	var firstErr error
+	var errMu sync.Mutex
 	setErr := func(err error) {
 		if err != nil {
-			firstErr.CompareAndSwap(nil, &err)
+			errMu.Lock()
+			if firstErr == nil {
+				firstErr = err
+			}
+			errMu.Unlock()
 		}
 	}
 
@@ -203,20 +208,14 @@ func proxyConnection(ctx context.Context, localAddr string, relayConn net.Conn) 
 	wg.Wait()
 	close(stopCh)
 
-	first := firstErr.Load()
-	if first == nil {
+	if errors.Is(firstErr, io.EOF) || errors.Is(firstErr, net.ErrClosed) {
 		return nil
 	}
-	if errors.Is(*first, io.EOF) || errors.Is(*first, net.ErrClosed) {
-		return nil
-	}
-	return *first
+	return firstErr
 }
 
-var unavailableResponse []byte
-
-func init() {
-	body := []byte(`<!DOCTYPE html>
+func writeEmptyHTTPResponse(conn net.Conn) error {
+	htmlBody := `<!DOCTYPE html>
 <html>
 <head><title>Service Unavailable</title></head>
 <body style="font-family:sans-serif;text-align:center;padding:50px;">
@@ -224,17 +223,13 @@ func init() {
 <p>The local service is not currently running.</p>
 <p>Please start your local application and refresh this page.</p>
 </body>
-</html>`)
-	header := fmt.Sprintf("HTTP/1.1 503 Service Unavailable\r\n"+
+</html>`
+	response := fmt.Sprintf("HTTP/1.1 503 Service Unavailable\r\n"+
 		"Content-Type: text/html; charset=utf-8\r\n"+
 		"Content-Length: %d\r\n"+
 		"Connection: close\r\n"+
-		"\r\n", len(body))
-	unavailableResponse = append([]byte(header), body...)
-}
-
-func writeEmptyHTTPResponse(conn net.Conn) error {
-	_, err := conn.Write(unavailableResponse)
+		"\r\n%s", len(htmlBody), htmlBody)
+	_, err := conn.Write([]byte(response))
 	return err
 }
 
@@ -336,7 +331,7 @@ type udpFlowEntry struct {
 type udpFlowManager struct {
 	target   *net.UDPAddr
 	exposure *Exposure
-	mu       sync.RWMutex
+	mu       sync.Mutex
 	flows    map[udpFlowKey]*udpFlowEntry
 }
 
@@ -376,13 +371,13 @@ func (m *udpFlowManager) getOrCreate(ctx context.Context, frame types.DatagramFr
 		relayURL: frame.RelayURL,
 	}
 
-	m.mu.RLock()
+	m.mu.Lock()
 	if f, ok := m.flows[key]; ok {
 		f.lastSeen = time.Now()
-		m.mu.RUnlock()
+		m.mu.Unlock()
 		return f.conn, nil
 	}
-	m.mu.RUnlock()
+	m.mu.Unlock()
 
 	localConn, err := net.DialUDP("udp", nil, m.target)
 	if err != nil {
@@ -440,16 +435,16 @@ func (m *udpFlowManager) readLoop(ctx context.Context, key udpFlowKey, conn *net
 			return
 		}
 
-		m.mu.RLock()
+		m.mu.Lock()
 		entry := m.flows[key]
 		if entry == nil {
-			m.mu.RUnlock()
+			m.mu.Unlock()
 			return
 		}
 		entry.lastSeen = time.Now()
 		replyFrame := entry.frame
 		replyFrame.Payload = buf[:n]
-		m.mu.RUnlock()
+		m.mu.Unlock()
 
 		if sendErr := m.exposure.SendDatagram(replyFrame); sendErr != nil {
 			log.Debug().

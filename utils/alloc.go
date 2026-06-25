@@ -178,12 +178,7 @@ func (p *BufferPool) Put(buf []byte) {
 		p.pool.Put(buf[:p.size])
 		return
 	}
-	var pb *pooledBuf
-	if v := p.pool.Get(); v != nil {
-		pb = v.(*pooledBuf)
-	} else {
-		pb = &pooledBuf{}
-	}
+	pb := p.pool.Get().(*pooledBuf)
 	pb.gen = p.gen.Load()
 	pb.buf = buf[:cap(buf)]
 	p.pool.Put(pb)
@@ -199,35 +194,18 @@ func (p *BufferPool) Close() {
 	p.mu.Unlock()
 }
 
-const globalPoolShards = 32
-
-type poolShard struct {
-	mu    sync.Mutex
-	pools atomic.Value // map[poolKey]*BufferPool
-}
-
-var globalPoolShardsArray [globalPoolShards]poolShard
+var (
+	globalPoolsMu sync.Mutex
+	globalPools   atomic.Value // holds map[poolKey]*BufferPool
+)
 
 func init() {
-	for i := range globalPoolShardsArray {
-		globalPoolShardsArray[i].pools.Store(make(map[poolKey]*BufferPool))
-	}
+	globalPools.Store(make(map[poolKey]*BufferPool))
 }
 
 type poolKey struct {
 	size int
 	kind AllocatorKind
-}
-
-func (k poolKey) shard() int {
-	// FNV-1a style mix; size is the dominant discriminant, kind adds a little
-	// entropy across the four allocator kinds.
-	h := uint32(k.size)
-	for i := 0; i < len(k.kind); i++ {
-		h ^= uint32(k.kind[i])
-		h *= 16777619
-	}
-	return int(h) & (globalPoolShards - 1)
 }
 
 // GlobalBufferPool returns a shared BufferPool for the requested size. The
@@ -239,22 +217,21 @@ func GlobalBufferPool(size int) *BufferPool {
 	}
 	kind := defaultAllocatorKind
 	key := poolKey{size: size, kind: kind}
-	shard := &globalPoolShardsArray[key.shard()]
 
-	// Fast path: load the map atomically and check if the pool already exists.
-	m, ok := shard.pools.Load().(map[poolKey]*BufferPool)
+	// Fast path: load the map atomically and check if the pool already exists
+	m, ok := globalPools.Load().(map[poolKey]*BufferPool)
 	if ok {
 		if p, found := m[key]; found {
 			return p
 		}
 	}
 
-	// Slow path: acquire the shard mutex, recreate the map and store it.
-	shard.mu.Lock()
-	defer shard.mu.Unlock()
+	// Slow path: acquire mutex, recreate the map and store it
+	globalPoolsMu.Lock()
+	defer globalPoolsMu.Unlock()
 
-	// Double-check after taking the lock.
-	m, _ = shard.pools.Load().(map[poolKey]*BufferPool)
+	// Double check
+	m, _ = globalPools.Load().(map[poolKey]*BufferPool)
 	if m != nil {
 		if p, found := m[key]; found {
 			return p
@@ -262,14 +239,14 @@ func GlobalBufferPool(size int) *BufferPool {
 	}
 
 	p := NewBufferPool(size, kind)
-
-	// Copy-on-write update.
+	
+	// Copy-on-write update
 	newMap := make(map[poolKey]*BufferPool, len(m)+1)
 	for k, v := range m {
 		newMap[k] = v
 	}
 	newMap[key] = p
-	shard.pools.Store(newMap)
+	globalPools.Store(newMap)
 	return p
 }
 
