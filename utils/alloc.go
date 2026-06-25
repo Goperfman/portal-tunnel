@@ -155,6 +155,7 @@ func (p *BufferPool) alloc() []byte {
 	a, err := p.allocPool.Get()
 	if err != nil {
 		p.mu.Unlock()
+		BeaverAllocatorFailures.Add(1)
 		return make([]byte, p.size)
 	}
 	p.current = a
@@ -163,6 +164,7 @@ func (p *BufferPool) alloc() []byte {
 	b, err = alloc.MakeBytes(ctx, p.size, p.size)
 	p.mu.Unlock()
 	if err != nil {
+		BeaverAllocatorFailures.Add(1)
 		return make([]byte, p.size)
 	}
 	return b
@@ -178,7 +180,12 @@ func (p *BufferPool) Put(buf []byte) {
 		p.pool.Put(buf[:p.size])
 		return
 	}
-	pb := p.pool.Get().(*pooledBuf)
+	var pb *pooledBuf
+	if v := p.pool.Get(); v != nil {
+		pb = v.(*pooledBuf)
+	} else {
+		pb = &pooledBuf{}
+	}
 	pb.gen = p.gen.Load()
 	pb.buf = buf[:cap(buf)]
 	p.pool.Put(pb)
@@ -193,6 +200,10 @@ func (p *BufferPool) Close() {
 	}
 	p.mu.Unlock()
 }
+
+// BeaverAllocatorFailures counts how many times a beaver-backed BufferPool had
+// to fall back to heap allocation because the allocator was exhausted.
+var BeaverAllocatorFailures atomic.Uint64
 
 var (
 	globalPoolsMu sync.Mutex

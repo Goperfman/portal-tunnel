@@ -20,6 +20,7 @@ const (
 	defaultMemoryLimitPercent = 90
 	defaultAdaptiveInterval   = 5 * time.Second
 	defaultBeaverPoolSize     = 64 << 20
+	maxBeaverPoolSize         = 8 << 30 // 8 GiB
 	defaultAdaptiveGOCMin     = 25
 	defaultAdaptiveGOCMax     = 500
 	defaultAdaptiveGOCStep    = 25
@@ -121,6 +122,9 @@ func InitRuntimeTuning(ctx context.Context, cfg RuntimeTuningConfig) (*RuntimeTu
 	}
 	if cfg.BeaverPoolSize <= 0 {
 		cfg.BeaverPoolSize = defaultBeaverPoolSize
+	}
+	if cfg.BeaverPoolSize > maxBeaverPoolSize {
+		cfg.BeaverPoolSize = maxBeaverPoolSize
 	}
 	if cfg.BeaverAllocator == "" {
 		cfg.BeaverAllocator = DefaultRuntimeAllocatorKind()

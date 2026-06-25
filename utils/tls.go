@@ -28,6 +28,14 @@ func CurvePreferences(pqc bool) []tls.CurveID {
 }
 
 func NewHTTPTLSClient(ctx context.Context, relayURL *url.URL, timeout time.Duration, pqc bool) (*tls.Config, *http.Client, *http.Transport, error) {
+	cfg, client, transport, err := newHTTPTLSClient(ctx, relayURL, timeout, pqc)
+	if err != nil && pqc && isHandshakeError(err) {
+		return newHTTPTLSClient(ctx, relayURL, timeout, false)
+	}
+	return cfg, client, transport, err
+}
+
+func newHTTPTLSClient(ctx context.Context, relayURL *url.URL, timeout time.Duration, pqc bool) (*tls.Config, *http.Client, *http.Transport, error) {
 	if relayURL == nil {
 		return nil, nil, nil, errors.New("relay url is required")
 	}
@@ -65,7 +73,19 @@ func NewHTTPTLSClient(ctx context.Context, relayURL *url.URL, timeout time.Durat
 	return rawTLSConfig, httpClient, mustTransportOf(httpClient), nil
 }
 
+// FetchEndpointCertificateChain fetches the certificate chain from an endpoint.
+// When pqc is true and the TLS handshake fails because the peer does not support
+// the advertised post-quantum group, it retries once with classic curves only.
+// This preserves discovery compatibility with portal-tunnel-original binaries.
 func FetchEndpointCertificateChain(ctx context.Context, endpoint, serverName string, pqc bool) ([]byte, error) {
+	chain, err := fetchEndpointCertificateChain(ctx, endpoint, serverName, pqc)
+	if err != nil && pqc && isHandshakeError(err) {
+		return fetchEndpointCertificateChain(ctx, endpoint, serverName, false)
+	}
+	return chain, err
+}
+
+func fetchEndpointCertificateChain(ctx context.Context, endpoint, serverName string, pqc bool) ([]byte, error) {
 	raw := strings.TrimSpace(endpoint)
 	if raw == "" {
 		return nil, errors.New("endpoint is required")
@@ -125,6 +145,18 @@ func FetchEndpointCertificateChain(ctx context.Context, endpoint, serverName str
 		})...)
 	}
 	return chainPEM, nil
+}
+
+// isHandshakeError reports whether err is a TLS handshake failure.
+func isHandshakeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var alert tls.AlertError
+	if errors.As(err, &alert) {
+		return true
+	}
+	return strings.Contains(err.Error(), "handshake")
 }
 
 func ParseCertificatePEM(pemData []byte) (*x509.Certificate, error) {
