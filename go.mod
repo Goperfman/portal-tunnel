@@ -31,6 +31,7 @@ require (
 	github.com/rs/zerolog v1.34.0
 	github.com/spruceid/siwe-go v0.2.1
 	github.com/tyler-smith/go-bip39 v1.1.0
+	github.com/valyala/fasthttp v1.71.0
 	github.com/vultr/govultr/v3 v3.30.0
 	golang.org/x/crypto v0.51.0
 	golang.org/x/mod v0.35.0
@@ -51,6 +52,7 @@ require (
 	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20251001021608-1fe7b43fc4d6 // indirect
 	github.com/PuerkitoBio/purell v1.1.1 // indirect
 	github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578 // indirect
+	github.com/andybalholm/brotli v1.2.1 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.21 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.21 // indirect
@@ -110,6 +112,7 @@ require (
 	github.com/iotaledger/bcs-go v0.0.0-20250716100925-71f848cac593 // indirect
 	github.com/iotaledger/hive.go/constraints v0.0.0-20240520064018-c635e5900894 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
+	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/knadh/koanf/maps v0.1.2 // indirect
 	github.com/labstack/echo/v4 v4.15.1 // indirect
 	github.com/labstack/gommon v0.4.2 // indirect

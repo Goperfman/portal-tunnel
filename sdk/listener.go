@@ -944,6 +944,7 @@ type bufferedConn struct {
 	reader *bytes.Reader
 	buf    []byte
 	pool   *utils.BufferPool
+	once   sync.Once
 }
 
 var listenerBufPool4096 = utils.GlobalBufferPool(4096)
@@ -978,8 +979,12 @@ func (c *bufferedConn) Read(p []byte) (int, error) {
 }
 
 func (c *bufferedConn) Close() error {
-	if c.pool != nil && cap(c.buf) == 4096 {
-		c.pool.Put(c.buf)
-	}
-	return c.Conn.Close()
+	var closeErr error
+	c.once.Do(func() {
+		if c.pool != nil && cap(c.buf) == 4096 {
+			c.pool.Put(c.buf)
+		}
+		closeErr = c.Conn.Close()
+	})
+	return closeErr
 }

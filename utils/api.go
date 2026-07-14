@@ -193,6 +193,12 @@ func httpDo(ctx context.Context, client *http.Client, method, rawURL string, bod
 }
 
 func HTTPDoJSON(ctx context.Context, client *http.Client, method, rawURL string, payload any, headers http.Header, out any) error {
+	if client == nil && fastHTTPEnabled() {
+		if err := fastHTTPDoJSON(ctx, method, rawURL, payload, headers, out); err == nil || !errors.Is(err, errFastHTTPUnsupported) {
+			return err
+		}
+	}
+
 	body, reqHeaders, err := httpJSONRequest(ctx, payload, headers)
 	if err != nil {
 		return err
