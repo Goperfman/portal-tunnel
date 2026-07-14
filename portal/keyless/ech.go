@@ -89,11 +89,9 @@ func EncryptedClientHelloMaterials(seed, publicName string) ([]tls.EncryptedClie
 		SendAsRetry: true,
 	}}
 
-	configList := alloc.NewBuffer(ctx)
-	var configListLength [2]byte
-	binary.BigEndian.PutUint16(configListLength[:], uint16(len(config)))
-	_, _ = configList.Write(configListLength[:])
-	_, _ = configList.Write(config)
+	configList := make([]byte, 2+len(config))
+	binary.BigEndian.PutUint16(configList[:2], uint16(len(config)))
+	copy(configList[2:], config)
 
-	return keys, utils.CloneBytes(configList.Bytes()), nil
+	return keys, configList, nil
 }
