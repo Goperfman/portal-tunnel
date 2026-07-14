@@ -839,13 +839,19 @@ func (s *Server) runRelayDiscoveryLoop(ctx context.Context) error {
 		now := time.Now().UTC()
 		self, err := s.newSelfDescriptor(now)
 		if err != nil {
-			return fmt.Errorf("build relay discovery descriptor: %w", err)
-		}
-		if err := refresher.Refresh(ctx, &self); err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
-			return err
+			log.Warn().
+				Err(err).
+				Msg("build relay discovery descriptor failed")
+		} else if err := refresher.Refresh(ctx, &self); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			log.Warn().
+				Err(err).
+				Msg("relay discovery refresh failed")
 		}
 		if ctx.Err() != nil {
 			return nil
